@@ -1,32 +1,38 @@
-# Renders the application icon, src/app.ico: the tray icon's speaker glyph from Segoe
-# Fluent Icons in the default Windows 11 accent blue. Run it again only to change the
-# icon; build.rs embeds the committed file.
+# Renders the same blue tile and selection corners as ui::icon_rgba.
+# build.rs embeds src/app.ico for Explorer and Task Manager.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
-$glyph = [string][char]0xE995
-$color = [Drawing.Color]::FromArgb(255, 0, 95, 184)
-$family = 'Segoe Fluent Icons'
-if (-not ([Drawing.Text.InstalledFontCollection]::new().Families.Name -contains $family)) {
-    throw "$family is required to render the icon."
-}
 
-$images = foreach ($size in 16, 20, 24, 32, 40, 48, 64, 256) {
+$images = foreach ($size in 16, 20, 24, 32, 40, 48, 64, 128, 256) {
     $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $graphics = [Drawing.Graphics]::FromImage($bitmap)
-    $graphics.TextRenderingHint = [Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+    $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $graphics.Clear([Drawing.Color]::Transparent)
-    $font = [Drawing.Font]::new($family, [single]$size, [Drawing.GraphicsUnit]::Pixel)
-    $format = [Drawing.StringFormat]::GenericTypographic
-    $format.Alignment = [Drawing.StringAlignment]::Center
-    $format.LineAlignment = [Drawing.StringAlignment]::Center
-    $brush = [Drawing.SolidBrush]::new($color)
-    # Lay the line out in a larger box: a line taller than the icon would be dropped.
-    $format.FormatFlags = [Drawing.StringFormatFlags]::NoClip
-    $graphics.DrawString($glyph, $font, $brush, [Drawing.RectangleF]::new(-$size, -$size, 3 * $size, 3 * $size), $format)
+    $tile = [Drawing.Drawing2D.GraphicsPath]::new()
+    $diameter = [single]($size * 0.44)
+    $edge = [single]($size - $diameter)
+    $tile.AddArc(0, 0, $diameter, $diameter, 180, 90)
+    $tile.AddArc($edge, 0, $diameter, $diameter, 270, 90)
+    $tile.AddArc($edge, $edge, $diameter, $diameter, 0, 90)
+    $tile.AddArc(0, $edge, $diameter, $diameter, 90, 90)
+    $tile.CloseFigure()
+    $brush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(0, 103, 192))
+    $graphics.FillPath($brush, $tile)
+    $pen = [Drawing.Pen]::new([Drawing.Color]::White, [single]($size * 0.08))
+    foreach ($sx in -1, 1) {
+        foreach ($sy in -1, 1) {
+            $x = [single]($size * (0.5 + $sx * 0.21))
+            $y = [single]($size * (0.5 + $sy * 0.21))
+            $innerX = [single]($x - $sx * $size * 0.09)
+            $innerY = [single]($y - $sy * $size * 0.09)
+            $graphics.DrawLine($pen, $x, $y, $innerX, $y)
+            $graphics.DrawLine($pen, $x, $y, $x, $innerY)
+        }
+    }
     $stream = [IO.MemoryStream]::new()
     $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
-    $brush.Dispose(); $font.Dispose(); $graphics.Dispose(); $bitmap.Dispose()
+    $pen.Dispose(); $tile.Dispose(); $brush.Dispose(); $graphics.Dispose(); $bitmap.Dispose()
     [pscustomobject]@{ Size = $size; Data = $stream.ToArray() }
 }
 

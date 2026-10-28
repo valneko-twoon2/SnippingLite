@@ -101,7 +101,7 @@ unsafe fn present(
     let hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         w(CLASS).as_ptr(),
-        w("Snipping Lite").as_ptr(),
+        w("Snipping Lite Notification").as_ptr(),
         WS_POPUP,
         work.right,
         work.bottom - margin - toast_height,

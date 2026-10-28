@@ -117,7 +117,7 @@ unsafe fn message(hwnd: HWND, text: &str) {
     );
 }
 // Window titles identify the window processes, so they are fixed strings.
-const SETTINGS_TITLE: &str = "Snipping Lite 設定";
+const SETTINGS_TITLE: &str = "Snipping Lite";
 const HISTORY_TITLE: &str = "Snipping Lite 履歴";
 /// The window processes started by the tray, identified by their window titles.
 const WINDOWS: [&str; 2] = [SETTINGS_TITLE, HISTORY_TITLE];
@@ -441,7 +441,7 @@ unsafe fn create_windows() -> bool {
         s.overlay = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
             w(OVERLAY).as_ptr(),
-            w("Snipping Lite").as_ptr(),
+            w(OVERLAY).as_ptr(),
             WS_POPUP,
             0,
             0,
@@ -457,7 +457,7 @@ unsafe fn create_windows() -> bool {
         s.toolbar = CreateWindowExW(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             w(TOOLBAR).as_ptr(),
-            w("Snipping Lite").as_ptr(),
+            w(TOOLBAR).as_ptr(),
             WS_POPUP,
             0,
             0,
@@ -1199,7 +1199,7 @@ unsafe fn begin_countdown(area: RECT) {
     let hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         w(COUNT).as_ptr(),
-        w("Snipping Lite").as_ptr(),
+        w(COUNT).as_ptr(),
         WS_POPUP,
         center.x - size / 2,
         center.y - size / 2,
@@ -1290,7 +1290,7 @@ unsafe fn show_frame(area: RECT) {
     let hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
         w(FRAME).as_ptr(),
-        w("Snipping Lite").as_ptr(),
+        w(FRAME).as_ptr(),
         WS_POPUP,
         area.left - thickness,
         area.top - thickness,
@@ -1329,7 +1329,7 @@ unsafe fn show_indicator(center: POINT) {
     let hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         w(RECORD).as_ptr(),
-        w("Snipping Lite").as_ptr(),
+        w(RECORD).as_ptr(),
         WS_POPUP,
         (info.rcMonitor.left + info.rcMonitor.right - width) / 2,
         info.rcMonitor.top + (12.0 * scale).round() as i32,
@@ -1731,6 +1731,7 @@ unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
     let class = WNDCLASSW {
         lpfnWndProc: proc,
         hInstance: GetModuleHandleW(null()),
+        hIcon: LoadIconW(GetModuleHandleW(null()), 1usize as PCWSTR),
         lpszClassName: class_name.as_ptr(),
         hCursor: LoadCursorW(null_mut(), cursor),
         hbrBackground: brush,
@@ -1818,7 +1819,7 @@ fn main() {
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW,
             w(MAIN).as_ptr(),
-            w("Snipping Lite").as_ptr(),
+            w(MAIN).as_ptr(),
             WS_POPUP,
             0,
             0,
@@ -1833,7 +1834,6 @@ fn main() {
             return;
         }
         create_windows();
-        launch_settings();
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);

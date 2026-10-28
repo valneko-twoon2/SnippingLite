@@ -356,13 +356,56 @@ impl eframe::App for SettingsApp {
         if !self.mica {
             ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
         }
-        let rect = ui.max_rect().shrink2(Vec2::new(MARGIN, 0.0));
+        let bounds = ui.max_rect();
+        let header = egui::Rect::from_min_size(
+            bounds.min + Vec2::new(8.0, 16.0),
+            Vec2::new(bounds.width() - 16.0, 40.0),
+        );
+        let back = egui::Rect::from_center_size(
+            pos2(header.left() + 16.0, header.center().y),
+            Vec2::splat(32.0),
+        );
+        let response = ui.interact(back, ui.make_persistent_id("settings_back"), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Back")));
+        if response.hovered() || response.has_focus() {
+            ui.painter()
+                .rect_filled(back, CornerRadius::same(4), p.field);
+        }
+        let center = back.center();
+        let stroke = Stroke::new(1.25, p.text);
+        ui.painter().line_segment(
+            [center + Vec2::new(-7.0, 0.0), center + Vec2::new(7.0, 0.0)],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [
+                center + Vec2::new(-7.0, 0.0),
+                center + Vec2::new(-1.0, -6.0),
+            ],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [center + Vec2::new(-7.0, 0.0), center + Vec2::new(-1.0, 6.0)],
+            stroke,
+        );
+        if response.on_hover_text(tr("Back")).clicked() {
+            // SAFETY: the call has no pointer arguments.
+            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
+            post(WM_COMMAND, TRAY_HISTORY);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        ui.painter().text(
+            pos2(bounds.left() + MARGIN, header.center().y),
+            Align2::LEFT_CENTER,
+            tr("Settings"),
+            semibold(20.0),
+            p.text,
+        );
+        let mut rect = bounds.shrink2(Vec2::new(MARGIN, 0.0));
+        rect.min.y = header.bottom() + 12.0;
         let mut body = ui.new_child(UiBuilder::new().max_rect(rect));
         let ui = &mut body;
         ui.spacing_mut().item_spacing = Vec2::ZERO;
-        ui.add_space(20.0);
-        ui.label(RichText::new(tr("Settings")).font(semibold(20.0)));
-        ui.add_space(16.0);
         let before = self.settings();
         let warning = self
             .notice
