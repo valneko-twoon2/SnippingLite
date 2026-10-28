@@ -53,8 +53,6 @@ const MODE_RECT: i32 = 0;
 const MODE_FREE: i32 = 1;
 const MODE_WINDOW: i32 = 2;
 const MODE_SCREEN: i32 = 3;
-/// Selects a rectangle like `MODE_RECT`, but records it as a video.
-const MODE_RECORD: i32 = 4;
 
 struct State {
     owner: HWND,
@@ -76,6 +74,7 @@ struct State {
     width: i32,
     height: i32,
     mode: i32,
+    video: bool,
     start: POINT,
     end: POINT,
     points: Vec<POINT>,
@@ -100,6 +99,7 @@ struct State {
     count_window: HWND,
     count_left: i32,
     count_area: RECT,
+    count_points: Vec<POINT>,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -384,7 +384,6 @@ fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
 }
 
 unsafe fn choose_capture_area(hwnd: HWND) {
-    let recording = state().mode == MODE_RECORD;
     let menu = CreatePopupMenu();
     if menu.is_null() {
         return;
@@ -395,14 +394,7 @@ unsafe fn choose_capture_area(hwnd: HWND) {
         (MODE_WINDOW, tr("Window")),
         (MODE_SCREEN, tr("Full screen")),
     ] {
-        if recording && mode != MODE_RECT {
-            continue;
-        }
-        let checked = if state().mode == mode || recording {
-            MF_CHECKED
-        } else {
-            0
-        };
+        let checked = if state().mode == mode { MF_CHECKED } else { 0 };
         AppendMenuW(
             menu,
             MF_STRING | checked,
@@ -428,7 +420,7 @@ unsafe fn choose_capture_area(hwnd: HWND) {
     );
     DestroyMenu(menu);
     if command > 0 {
-        set_mode(if recording { MODE_RECORD } else { command - 1 });
+        set_mode(command - 1);
     }
     if state().active {
         SetForegroundWindow(state().overlay);
@@ -533,7 +525,7 @@ unsafe fn select_window(p: POINT) -> Option<RECT> {
             && inside(&rect)
         {
             // Recording a window can leave out its title bar.
-            if state().mode == MODE_RECORD && state().skip_title {
+            if state().video && state().skip_title {
                 rect.top = rect.top.max(title_bottom(window)).min(rect.bottom - 1);
             }
             return Some(RECT {
@@ -715,9 +707,9 @@ unsafe fn refresh_overlay() {
         InvalidateRect(state().overlay, null(), 0);
     }
 }
-/// Window mode picks a window; record mode does too until the user drags.
+/// Window selection is explicit for both screenshots and recordings.
 unsafe fn hovers_windows() -> bool {
-    matches!(state().mode, MODE_WINDOW | MODE_RECORD)
+    state().mode == MODE_WINDOW
 }
 /// Where the title bar ends, in screen coordinates.
 unsafe fn title_bottom(window: HWND) -> i32 {
@@ -743,7 +735,7 @@ unsafe fn set_mode(mode: i32) {
     state().mode = mode;
     InvalidateRect(state().toolbar, null(), 0);
     if mode == MODE_SCREEN {
-        finish(
+        complete_selection(
             RECT {
                 left: 0,
                 top: 0,
@@ -955,8 +947,8 @@ unsafe fn restore_windows() {
 unsafe fn highlight() -> Option<RECT> {
     let s = state();
     match s.mode {
-        MODE_RECT | MODE_RECORD if s.dragging => Some(bounds(s.start, s.end, s.width, s.height)),
-        MODE_WINDOW | MODE_RECORD => s.hover_window,
+        MODE_RECT if s.dragging => Some(bounds(s.start, s.end, s.width, s.height)),
+        MODE_WINDOW => s.hover_window,
         _ => None,
     }
 }
@@ -1037,9 +1029,21 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
     match msg {
         WM_LBUTTONDOWN => {
             let p = point(lp);
+            if state().mode == MODE_SCREEN {
+                complete_selection(
+                    RECT {
+                        left: 0,
+                        top: 0,
+                        right: state().width,
+                        bottom: state().height,
+                    },
+                    false,
+                );
+                return 0;
+            }
             if state().mode == MODE_WINDOW {
                 if let Some(rect) = state().hover_window {
-                    finish(rect, false);
+                    complete_selection(rect, false);
                 }
                 return 0;
             }
@@ -1106,17 +1110,8 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             } else {
                 bounds(state().start, state().end, state().width, state().height)
             };
-            if state().mode == MODE_RECORD {
-                // A click without a drag records the window under the cursor.
-                let (start, end) = (state().start, state().end);
-                let clicked = (end.x - start.x).abs() < 5 && (end.y - start.y).abs() < 5;
-                match (clicked, select_window(end)) {
-                    (true, Some(window)) => start_recording(window),
-                    (true, None) => refresh_overlay(),
-                    (false, _) => start_recording(rect),
-                }
-            } else if !free || state().points.len() >= 3 {
-                finish(rect, free);
+            if !free || state().points.len() >= 3 {
+                complete_selection(rect, free);
             } else {
                 refresh_overlay();
             }
@@ -1140,11 +1135,33 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
 /// Recording indicator in DIPs: a red dot, the elapsed time and a Stop label.
 const RECORD_WIDTH: f32 = 168.0;
 const RECORD_HEIGHT: f32 = 48.0;
-/// Starts recording the selected rectangle (overlay coordinates).
-unsafe fn start_recording(rect: RECT) {
+/// Sends a selected shape to the active screenshot or recording destination.
+unsafe fn complete_selection(rect: RECT, freeform: bool) {
+    if state().video {
+        start_recording(rect, freeform);
+    } else {
+        finish(rect, freeform);
+    }
+}
+
+/// Starts recording a selected shape (overlay coordinates).
+unsafe fn start_recording(rect: RECT, freeform: bool) {
     if rect.right - rect.left < 16 || rect.bottom - rect.top < 16 {
+        refresh_overlay();
         return;
     }
+    let points = if freeform {
+        state()
+            .points
+            .iter()
+            .map(|p| POINT {
+                x: p.x - rect.left,
+                y: p.y - rect.top,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let origin = state().origin;
     let area = RECT {
         left: rect.left + origin.x,
@@ -1157,18 +1174,22 @@ unsafe fn start_recording(rect: RECT) {
     cancel();
     state().hidden = hidden;
     if state().countdown {
-        begin_countdown(area);
+        begin_countdown(area, points);
     } else {
-        begin_recording(area);
+        begin_recording(area, points);
     }
 }
-unsafe fn begin_recording(area: RECT) {
+unsafe fn begin_recording(area: RECT, points: Vec<POINT>) {
     DwmFlush();
     let started = record::video_folder()
         .map_err(|_| tr("Could not create the recordings folder.").to_string())
         .and_then(|folder| {
             let name = imaging::timestamp().map_err(|e| e.to_string())?;
-            record::start(area, folder.join(format!("Snipping Lite {name}.mp4")))
+            record::start(
+                area,
+                folder.join(format!("Snipping Lite {name}.mp4")),
+                points,
+            )
         });
     match started {
         Ok(recording) => {
@@ -1188,7 +1209,7 @@ unsafe fn begin_recording(area: RECT) {
 }
 /// A 3, 2, 1 countdown in the middle of the area; a click cancels it.
 const COUNT_SIZE: f32 = 120.0;
-unsafe fn begin_countdown(area: RECT) {
+unsafe fn begin_countdown(area: RECT, points: Vec<POINT>) {
     let center = POINT {
         x: (area.left + area.right) / 2,
         y: (area.top + area.bottom) / 2,
@@ -1211,7 +1232,7 @@ unsafe fn begin_countdown(area: RECT) {
         null(),
     );
     if hwnd.is_null() {
-        begin_recording(area);
+        begin_recording(area, points);
         return;
     }
     SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
@@ -1223,10 +1244,12 @@ unsafe fn begin_countdown(area: RECT) {
     s.count_window = hwnd;
     s.count_left = 3;
     s.count_area = area;
+    s.count_points = points;
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, COUNT_TIMER, 1000, None);
 }
 unsafe fn cancel_countdown() {
+    state().count_points.clear();
     let window = std::mem::replace(&mut state().count_window, null_mut());
     if !window.is_null() {
         DestroyWindow(window);
@@ -1261,9 +1284,10 @@ unsafe extern "system" fn count_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             state().count_left -= 1;
             if state().count_left <= 0 {
                 let area = state().count_area;
+                let points = std::mem::take(&mut state().count_points);
                 state().count_window = null_mut();
                 DestroyWindow(hwnd);
-                begin_recording(area);
+                begin_recording(area, points);
             } else {
                 InvalidateRect(hwnd, null(), 0);
             }
@@ -1483,8 +1507,7 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
     for (i, glyph) in GLYPHS.iter().enumerate() {
         let i = i as i32;
         let r = toolbar_button(i, scale);
-        let selected = (i == CAMERA_BUTTON && s.mode != MODE_RECORD)
-            || (i == VIDEO_BUTTON && s.mode == MODE_RECORD);
+        let selected = (i == CAMERA_BUTTON && !s.video) || (i == VIDEO_BUTTON && s.video);
         let fill = if i == s.pressed_button {
             theme.pressed
         } else if i == s.hover_button {
@@ -1600,12 +1623,14 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                         cancel();
                         launch_history(hit == EDIT_BUTTON);
                     }
-                    CAMERA_BUTTON => {
-                        if state().mode == MODE_RECORD {
-                            set_mode(MODE_RECT);
+                    CAMERA_BUTTON | VIDEO_BUTTON => {
+                        state().video = hit == VIDEO_BUTTON;
+                        // Refresh window bounds because recordings may exclude the title bar.
+                        if hovers_windows() {
+                            let mode = state().mode;
+                            set_mode(mode);
                         }
                     }
-                    VIDEO_BUTTON => set_mode(MODE_RECORD),
                     AREA_BUTTON => choose_capture_area(hwnd),
                     _ => {}
                 }
@@ -1772,6 +1797,7 @@ fn main() {
             width: 0,
             height: 0,
             mode: MODE_RECT,
+            video: false,
             start: POINT { x: 0, y: 0 },
             end: POINT { x: 0, y: 0 },
             points: Vec::new(),
@@ -1794,6 +1820,7 @@ fn main() {
             skip_title: settings.skip_title,
             count_window: null_mut(),
             count_left: 0,
+            count_points: Vec::new(),
             count_area: RECT {
                 left: 0,
                 top: 0,
