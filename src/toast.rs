@@ -341,7 +341,7 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 if toast.path.is_none() {
                     // Nothing was saved to a file, so open the history instead.
                     if state().history {
-                        crate::launch_history();
+                        crate::launch_history(true);
                     }
                 } else if let Some(path) = &toast.path {
                     let file: Vec<u16> =

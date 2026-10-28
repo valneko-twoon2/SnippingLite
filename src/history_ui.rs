@@ -31,7 +31,7 @@ const CELL_MIN: f32 = 200.0;
 const GAP: f32 = 12.0;
 const MARGIN: f32 = 24.0;
 
-pub fn run() {
+pub fn run(latest: bool) {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(HISTORY_TITLE)
@@ -54,7 +54,7 @@ pub fn run() {
             }
             let mica = ui::supports_mica();
             install_visuals(&cc.egui_ctx, mica);
-            Ok(Box::new(HistoryApp::new(mica)))
+            Ok(Box::new(HistoryApp::new(mica, latest)))
         }),
     );
 }
@@ -137,12 +137,16 @@ struct HistoryApp {
     /// Indexes into `annotate::COLORS` and the radius tables.
     color: usize,
     thickness: usize,
+    /// Open the newest screenshot on the first frame.
+    open_latest: bool,
     notice: Option<(Instant, &'static str)>,
 }
 
 impl HistoryApp {
-    fn new(mica: bool) -> HistoryApp {
+    fn new(mica: bool, latest: bool) -> HistoryApp {
+        let (color, thickness) = config::load_pen();
         HistoryApp {
+            open_latest: latest,
             mica,
             framed: false,
             entries: history::list(),
@@ -155,8 +159,8 @@ impl HistoryApp {
             range: Range::All,
             query: String::new(),
             tool: Tool::None,
-            color: 0,
-            thickness: 1,
+            color,
+            thickness,
             notice: None,
         }
     }
@@ -317,6 +321,11 @@ impl eframe::App for HistoryApp {
         }
         if !self.mica {
             ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
+        }
+        if std::mem::take(&mut self.open_latest) {
+            if let Some(entry) = self.entries.first().cloned() {
+                self.open(&ctx, entry);
+            }
         }
         if self.refreshed.elapsed() > Duration::from_secs(2) {
             self.refresh();
@@ -746,12 +755,14 @@ impl HistoryApp {
                 for (index, rgb) in annotate::COLORS.iter().enumerate() {
                     if swatch(ui, *rgb, self.color == index, p).clicked() {
                         self.color = index;
+                        config::save_pen(self.color, self.thickness);
                     }
                 }
                 ui.add_space(8.0);
                 for (index, label) in ["Thin", "Medium", "Thick"].into_iter().enumerate() {
                     if chip(ui, label, p, self.thickness == index).clicked() {
                         self.thickness = index;
+                        config::save_pen(self.color, self.thickness);
                     }
                     ui.add_space(6.0);
                 }

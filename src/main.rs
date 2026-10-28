@@ -101,7 +101,8 @@ unsafe fn find_window(title: &str) -> HWND {
     FindWindowW(null(), w(title).as_ptr())
 }
 /// Opens a window process (`--settings` or `--history`), or brings the running one forward.
-unsafe fn launch_window(title: &str, argument: &str) {
+/// `latest` asks a new history window to open the newest screenshot.
+unsafe fn launch_window(title: &str, argument: &str, latest: bool) {
     let window = find_window(title);
     if !window.is_null() {
         ShowWindow(window, SW_SHOW);
@@ -111,6 +112,7 @@ unsafe fn launch_window(title: &str, argument: &str) {
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::process::Command::new(exe)
             .arg(argument)
+            .args(latest.then_some("--latest"))
             .arg(if state().hotkey_ok {
                 "--hotkey-ok"
             } else {
@@ -120,10 +122,10 @@ unsafe fn launch_window(title: &str, argument: &str) {
     }
 }
 unsafe fn launch_settings() {
-    launch_window(SETTINGS_TITLE, "--settings");
+    launch_window(SETTINGS_TITLE, "--settings", false);
 }
-unsafe fn launch_history() {
-    launch_window(HISTORY_TITLE, "--history");
+unsafe fn launch_history(latest: bool) {
+    launch_window(HISTORY_TITLE, "--history", latest);
 }
 unsafe fn begin_capture() {
     if state().active || state().pending {
@@ -983,7 +985,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             match wp & 0xffff {
                 NEW => begin_capture(),
                 TRAY_SETTINGS => launch_settings(),
-                TRAY_HISTORY => launch_history(),
+                TRAY_HISTORY => launch_history(false),
                 TRAY_EXIT => {
                     DestroyWindow(hwnd);
                 }
@@ -1061,7 +1063,7 @@ unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--history") {
-        history_ui::run();
+        history_ui::run(args.iter().any(|a| a == "--latest"));
         return;
     }
     if args.iter().any(|a| a == "--settings") {

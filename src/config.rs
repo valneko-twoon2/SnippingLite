@@ -20,6 +20,32 @@ pub struct Settings {
     pub history_limit: usize,
 }
 
+/// The pen color and thickness (indexes) last used in the history editor.
+pub fn load_pen() -> (usize, usize) {
+    let text = std::env::var_os("APPDATA")
+        .map(|x| PathBuf::from(x).join("Snipping Lite").join("pen.ini"))
+        .and_then(|p| fs::read_to_string(p).ok())
+        .unwrap_or_default();
+    let value = |key: &str, limit: usize, default: usize| {
+        text.lines()
+            .find_map(|s| s.strip_prefix(key))
+            .and_then(|v| v.parse().ok())
+            .filter(|&v| v < limit)
+            .unwrap_or(default)
+    };
+    (value("color=", 5, 0), value("thickness=", 3, 1))
+}
+
+pub fn save_pen(color: usize, thickness: usize) {
+    if let Some(dir) = std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite")) {
+        let _ = fs::create_dir_all(&dir);
+        let _ = fs::write(
+            dir.join("pen.ini"),
+            format!("color={color}\r\nthickness={thickness}\r\n"),
+        );
+    }
+}
+
 fn settings_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite").join("settings.ini"))
 }
