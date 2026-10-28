@@ -252,6 +252,7 @@ struct SettingsApp {
     history: bool,
     history_limit: usize,
     countdown: bool,
+    skip_title: bool,
     freeze: bool,
     screenshot_folder: String,
     video_folder: String,
@@ -272,6 +273,7 @@ impl SettingsApp {
             history: settings.history,
             history_limit: settings.history_limit,
             countdown: settings.countdown,
+            skip_title: settings.skip_title,
             freeze: settings.freeze,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
@@ -291,6 +293,7 @@ impl SettingsApp {
             history: self.history,
             history_limit: self.history_limit,
             countdown: self.countdown,
+            skip_title: self.skip_title,
             freeze: self.freeze,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
@@ -451,6 +454,17 @@ impl eframe::App for SettingsApp {
                     row(ui, &p, title, None, |ui| {
                         switch(ui, &mut self.countdown, title, &p);
                     });
+                    divider(ui, &p);
+                    let title = tr("Leave out the title bar when recording a window");
+                    row(
+                        ui,
+                        &p,
+                        title,
+                        Some((tr("Click a window to record it"), p.secondary)),
+                        |ui| {
+                            switch(ui, &mut self.skip_title, title, &p);
+                        },
+                    );
                     divider(ui, &p);
                     let current = config::video_folder(&self.settings());
                     if let Some(action) = folder_row(ui, &p, tr("Recording folder"), &current) {

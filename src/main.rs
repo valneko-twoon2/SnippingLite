@@ -96,6 +96,7 @@ struct State {
     live: Option<ui::Canvas>,
     freeze: bool,
     countdown: bool,
+    skip_title: bool,
     count_window: HWND,
     count_left: i32,
     count_area: RECT,
@@ -242,7 +243,7 @@ unsafe fn capture(flush: bool) {
     ui::cloak(overlay, false);
     SetForegroundWindow(overlay);
     SetFocus(overlay);
-    if state().mode == MODE_WINDOW {
+    if hovers_windows() {
         hover_window(POINT {
             x: cursor.x - x,
             y: cursor.y - y,
@@ -472,6 +473,10 @@ unsafe fn select_window(p: POINT) -> Option<RECT> {
             ) == 0
             && inside(&rect)
         {
+            // Recording a window can leave out its title bar.
+            if state().mode == MODE_RECORD && state().skip_title {
+                rect.top = rect.top.max(title_bottom(window)).min(rect.bottom - 1);
+            }
             return Some(RECT {
                 left: (rect.left - state().origin.x).max(0),
                 top: (rect.top - state().origin.y).max(0),
@@ -651,6 +656,20 @@ unsafe fn refresh_overlay() {
         InvalidateRect(state().overlay, null(), 0);
     }
 }
+/// Window mode picks a window; record mode does too until the user drags.
+unsafe fn hovers_windows() -> bool {
+    matches!(state().mode, MODE_WINDOW | MODE_RECORD)
+}
+/// Where the title bar ends, in screen coordinates.
+unsafe fn title_bottom(window: HWND) -> i32 {
+    let mut rect: RECT = std::mem::zeroed();
+    GetWindowRect(window, &mut rect);
+    let dpi = GetDpiForWindow(window);
+    rect.top
+        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi)
+        + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
+        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+}
 unsafe fn hover_window(p: POINT) {
     let hover = select_window(p);
     if !same(hover, state().hover_window) {
@@ -674,7 +693,7 @@ unsafe fn set_mode(mode: i32) {
             },
             false,
         );
-    } else if mode == MODE_WINDOW {
+    } else if hovers_windows() {
         let mut cursor = POINT { x: 0, y: 0 };
         GetCursorPos(&mut cursor);
         hover_window(POINT {
@@ -878,7 +897,7 @@ unsafe fn highlight() -> Option<RECT> {
     let s = state();
     match s.mode {
         MODE_RECT | MODE_RECORD if s.dragging => Some(bounds(s.start, s.end, s.width, s.height)),
-        MODE_WINDOW => s.hover_window,
+        MODE_WINDOW | MODE_RECORD => s.hover_window,
         _ => None,
     }
 }
@@ -965,6 +984,9 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 }
                 return 0;
             }
+            if let Some(old) = state().hover_window.take() {
+                invalidate(old);
+            }
             state().start = p;
             state().end = p;
             state().points.clear();
@@ -988,7 +1010,7 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             }
             0
         }
-        WM_MOUSEMOVE if state().mode == MODE_WINDOW => {
+        WM_MOUSEMOVE if hovers_windows() => {
             hover_window(point(lp));
             0
         }
@@ -1026,7 +1048,14 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
                 bounds(state().start, state().end, state().width, state().height)
             };
             if state().mode == MODE_RECORD {
-                start_recording(rect);
+                // A click without a drag records the window under the cursor.
+                let (start, end) = (state().start, state().end);
+                let clicked = (end.x - start.x).abs() < 5 && (end.y - start.y).abs() < 5;
+                match (clicked, select_window(end)) {
+                    (true, Some(window)) => start_recording(window),
+                    (true, None) => refresh_overlay(),
+                    (false, _) => start_recording(rect),
+                }
             } else if !free || state().points.len() >= 3 {
                 finish(rect, free);
             } else {
@@ -1504,6 +1533,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().delay = settings.delay;
             state().history = settings.history;
             state().countdown = settings.countdown;
+            state().skip_title = settings.skip_title;
             state().freeze = settings.freeze;
             0
         }
@@ -1653,6 +1683,7 @@ fn main() {
             live: None,
             freeze: settings.freeze,
             countdown: settings.countdown,
+            skip_title: settings.skip_title,
             count_window: null_mut(),
             count_left: 0,
             count_area: RECT {

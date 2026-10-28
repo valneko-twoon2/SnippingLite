@@ -25,6 +25,8 @@ pub struct Settings {
     pub history_limit: usize,
     /// Count down 3, 2, 1 before a recording starts.
     pub countdown: bool,
+    /// Recording a clicked window leaves out its title bar.
+    pub skip_title: bool,
     /// Freeze and dim the screen while selecting; otherwise the screen stays live.
     pub freeze: bool,
     /// Where screenshots are saved; empty means the default folder.
@@ -91,6 +93,7 @@ pub fn parse_settings(text: &str) -> Settings {
         history: !text.lines().any(|s| s == "history=0"),
         history_limit,
         countdown: !text.lines().any(|s| s == "countdown=0"),
+        skip_title: !text.lines().any(|s| s == "skip_title=0"),
         freeze: text.lines().any(|s| s == "freeze=1"),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
@@ -176,7 +179,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_atomic(
         &path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nfreeze={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nfreeze={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
@@ -184,6 +187,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
             settings.history as u8,
             settings.history_limit,
             settings.countdown as u8,
+            settings.skip_title as u8,
             settings.freeze as u8,
             settings.screenshot_folder,
             settings.video_folder
@@ -207,13 +211,14 @@ mod tests {
                 history: true,
                 history_limit: 200,
                 countdown: true,
+                skip_title: true,
                 freeze: false,
                 screenshot_folder: String::new(),
                 video_folder: String::new()
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nfreeze=1\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nfreeze=1\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -225,6 +230,7 @@ mod tests {
                 history: false,
                 history_limit: 50,
                 countdown: false,
+                skip_title: false,
                 freeze: true,
                 screenshot_folder: "D:\\Shots".to_owned(),
                 video_folder: String::new()

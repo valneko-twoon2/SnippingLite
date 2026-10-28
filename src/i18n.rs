@@ -65,6 +65,14 @@ const JAPANESE: &[(&str, &str)] = &[
         "Turn off to keep videos and apps running while you select",
         "オフにすると、動画やアプリを動かしたまま範囲を選べます",
     ),
+    (
+        "Leave out the title bar when recording a window",
+        "ウィンドウを録画するときタイトルバーを含めない",
+    ),
+    (
+        "Click a window to record it",
+        "クリックでウィンドウを録画できます",
+    ),
     ("Open history", "履歴を開く"),
     (
         "Choose at least one destination for screenshots.",
