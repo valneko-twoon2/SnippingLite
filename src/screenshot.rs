@@ -365,7 +365,9 @@ unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
             .is_some_and(|e| e.eq_ignore_ascii_case("png"))
     });
     if errors.is_empty() {
-        toast::show(&pixels, width, height, copied, saved);
+        if state().notify {
+            toast::show(&pixels, width, height, copied, saved);
+        }
     } else {
         message(state().owner, &errors.join("\n"));
     }

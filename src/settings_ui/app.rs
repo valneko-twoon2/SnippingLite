@@ -14,6 +14,7 @@ pub(super) struct SettingsApp {
     record_cursor: bool,
     record_fps: u32,
     freeze: bool,
+    notify: bool,
     screenshot_folder: String,
     video_folder: String,
     hotkey_ok: bool,
@@ -37,6 +38,7 @@ impl SettingsApp {
             record_cursor: settings.record_cursor,
             record_fps: settings.record_fps,
             freeze: settings.freeze,
+            notify: settings.notify,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
             hotkey_ok,
@@ -59,6 +61,7 @@ impl SettingsApp {
             record_cursor: self.record_cursor,
             record_fps: self.record_fps,
             freeze: self.freeze,
+            notify: self.notify,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
         }
@@ -203,6 +206,12 @@ impl eframe::App for SettingsApp {
                     );
                     row(ui, &p, title, Some(note), |ui| {
                         switch(ui, &mut self.freeze, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Show notifications");
+                    let note = (tr("After a screenshot or recording is saved"), p.secondary);
+                    row(ui, &p, title, Some(note), |ui| {
+                        switch(ui, &mut self.notify, title, &p);
                     });
                 });
                 section(ui, &p, tr("Screen recording"), true);

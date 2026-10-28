@@ -315,7 +315,9 @@ pub(crate) unsafe fn stop_recording() {
     restore_windows();
     match result {
         Ok((path, frame)) => {
-            toast::show_recording(&frame.pixels, frame.width, frame.height, path);
+            if state().notify {
+                toast::show_recording(&frame.pixels, frame.width, frame.height, path);
+            }
             if let Some(warning) = frame.warning {
                 let text = tr("Recording ended early; the video up to that point was saved.");
                 message(state().owner, &format!("{text}\n{warning}"));

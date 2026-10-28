@@ -56,6 +56,11 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Capture delay", "撮影の遅延"),
     ("None", "なし"),
     ("{n} seconds", "{n} 秒"),
+    ("Show notifications", "通知を表示する"),
+    (
+        "After a screenshot or recording is saved",
+        "スクリーンショットや録画を保存したあとに表示します",
+    ),
     ("Countdown before recording", "録画前にカウントダウンする"),
     (
         "Include the mouse cursor in recordings",

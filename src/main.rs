@@ -104,6 +104,7 @@ struct State {
     /// The live overlay content; set instead of the frozen screen when `freeze` is off.
     live: Option<ui::Canvas>,
     freeze: bool,
+    notify: bool,
     countdown: bool,
     skip_title: bool,
     record_cursor: bool,
@@ -250,6 +251,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().record_cursor = settings.record_cursor;
             state().record_fps = settings.record_fps;
             state().freeze = settings.freeze;
+            state().notify = settings.notify;
             0
         }
         WM_COMMAND => {
@@ -400,6 +402,7 @@ fn main() {
             tray_icon: null_mut(),
             live: None,
             freeze: settings.freeze,
+            notify: settings.notify,
             countdown: settings.countdown,
             skip_title: settings.skip_title,
             record_cursor: settings.record_cursor,
