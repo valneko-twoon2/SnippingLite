@@ -298,6 +298,24 @@ unsafe fn show_indicator(center: POINT) {
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, RECORD_TIMER, 500, None);
 }
+/// Asks where to keep a finished recording; cancelling leaves it in the recording folder.
+unsafe fn choose_recording_path(path: PathBuf) -> PathBuf {
+    let (Some(folder), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+    else {
+        return path;
+    };
+    let Some(target) = imaging::choose_video_path(null_mut(), folder, name) else {
+        return path;
+    };
+    let moved = target == path
+        || std::fs::rename(&path, &target).is_ok()
+        || (std::fs::copy(&path, &target).is_ok() && std::fs::remove_file(&path).is_ok());
+    if moved {
+        target
+    } else {
+        path
+    }
+}
 /// Ends the recording, restores our windows and announces the file.
 pub(crate) unsafe fn stop_recording() {
     let Some(recording) = state().recording.take() else {
@@ -315,6 +333,11 @@ pub(crate) unsafe fn stop_recording() {
     restore_windows();
     match result {
         Ok((path, frame)) => {
+            let path = if state().ask_video {
+                choose_recording_path(path)
+            } else {
+                path
+            };
             if state().notify {
                 toast::show_recording(&frame.pixels, frame.width, frame.height, path);
             }

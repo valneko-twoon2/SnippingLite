@@ -15,6 +15,7 @@ pub(super) struct SettingsApp {
     record_fps: u32,
     freeze: bool,
     notify: bool,
+    ask_video: bool,
     screenshot_folder: String,
     video_folder: String,
     hotkey_ok: bool,
@@ -40,6 +41,7 @@ impl SettingsApp {
             record_fps: settings.record_fps,
             freeze: settings.freeze,
             notify: settings.notify,
+            ask_video: settings.ask_video,
             theme: settings.theme,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
@@ -64,6 +66,7 @@ impl SettingsApp {
             record_fps: self.record_fps,
             freeze: self.freeze,
             notify: self.notify,
+            ask_video: self.ask_video,
             theme: self.theme,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
@@ -256,6 +259,11 @@ impl eframe::App for SettingsApp {
                             switch(ui, &mut self.skip_title, title, &p);
                         },
                     );
+                    divider(ui, &p);
+                    let title = tr("Ask for a file name when saving a recording");
+                    row(ui, &p, title, None, |ui| {
+                        switch(ui, &mut self.ask_video, title, &p);
+                    });
                     divider(ui, &p);
                     let current = config::video_folder(&self.settings());
                     if let Some(action) = folder_row(ui, &p, tr("Recording folder"), &current) {

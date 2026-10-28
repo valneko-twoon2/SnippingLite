@@ -275,20 +275,20 @@ pub fn choose_folder(owner: HWND, current: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Returns the path to save to; with `ask` a Save As dialog picks it and
-/// `None` means the user cancelled.
-pub fn choose_path(owner: HWND, folder: &Path, name: &str, ask: bool) -> Option<PathBuf> {
-    if !ask {
-        return Some(folder.join(name));
-    }
+/// Shows the Save As dialog; returns the chosen path and the selected filter (1-based).
+fn save_dialog(
+    owner: HWND,
+    folder: &Path,
+    name: &str,
+    filter: &str,
+    extension: &str,
+) -> Option<(PathBuf, u32)> {
     let mut file = [0u16; 520];
     let initial: Vec<u16> = name.encode_utf16().collect();
     file[..initial.len()].copy_from_slice(&initial);
     let directory = wide(folder);
-    let filter: Vec<u16> = format!("{}\0*.png\0{}\0*.bmp\0\0", tr("PNG image"), tr("BMP image"))
-        .encode_utf16()
-        .collect();
-    let extension = w("png");
+    let filter: Vec<u16> = filter.encode_utf16().collect();
+    let extension = w(extension);
     // SAFETY: every pointer in the structure outlives the call.
     unsafe {
         let mut dialog: OPENFILENAMEW = std::mem::zeroed();
@@ -305,17 +305,37 @@ pub fn choose_path(owner: HWND, folder: &Path, name: &str, ask: bool) -> Option<
             return None;
         }
         let length = file.iter().position(|&c| c == 0).unwrap_or(file.len());
-        let path = PathBuf::from(OsString::from_wide(&file[..length]));
-        Some(if path.extension().is_none() {
-            path.with_extension(if dialog.nFilterIndex == 2 {
-                "bmp"
-            } else {
-                "png"
-            })
-        } else {
-            path
-        })
+        Some((
+            PathBuf::from(OsString::from_wide(&file[..length])),
+            dialog.nFilterIndex,
+        ))
     }
+}
+
+/// Returns the path to save to; with `ask` a Save As dialog picks it and
+/// `None` means the user cancelled.
+pub fn choose_path(owner: HWND, folder: &Path, name: &str, ask: bool) -> Option<PathBuf> {
+    if !ask {
+        return Some(folder.join(name));
+    }
+    let filter = format!("{}\0*.png\0{}\0*.bmp\0\0", tr("PNG image"), tr("BMP image"));
+    let (path, index) = save_dialog(owner, folder, name, &filter, "png")?;
+    Some(if path.extension().is_none() {
+        path.with_extension(if index == 2 { "bmp" } else { "png" })
+    } else {
+        path
+    })
+}
+
+/// Asks where to save a recording; `None` means the user cancelled.
+pub fn choose_video_path(owner: HWND, folder: &Path, name: &str) -> Option<PathBuf> {
+    let filter = format!("{}\0*.mp4\0\0", tr("MP4 video"));
+    let (path, _) = save_dialog(owner, folder, name, &filter, "mp4")?;
+    Some(if path.extension().is_none() {
+        path.with_extension("mp4")
+    } else {
+        path
+    })
 }
 
 /// Milliseconds since the Unix epoch, used for file names.

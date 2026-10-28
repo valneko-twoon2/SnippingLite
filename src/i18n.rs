@@ -63,6 +63,11 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Dark", "ダーク"),
     ("Show notifications", "通知を表示する"),
     (
+        "Ask for a file name when saving a recording",
+        "録画の保存時にファイル名を指定する",
+    ),
+    ("MP4 video", "MP4 ビデオ"),
+    (
         "After a screenshot or recording is saved",
         "スクリーンショットや録画を保存したあとに表示します",
     ),

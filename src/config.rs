@@ -73,6 +73,8 @@ pub struct Settings {
     pub freeze: bool,
     /// Show a notification after a screenshot or recording is saved.
     pub notify: bool,
+    /// Ask where to save a recording when it ends.
+    pub ask_video: bool,
     pub theme: AppTheme,
     /// Where screenshots are saved; empty means the default folder.
     pub screenshot_folder: String,
@@ -148,6 +150,7 @@ pub fn parse_settings(text: &str) -> Settings {
             .unwrap_or(DEFAULT_FRAME_RATE),
         freeze: text.lines().any(|s| s == "freeze=1"),
         notify: !text.lines().any(|s| s == "notify=0"),
+        ask_video: text.lines().any(|s| s == "ask_video=1"),
         theme: AppTheme::parse(&value(text, "theme=")),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
@@ -233,7 +236,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_atomic(
         &path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
@@ -246,6 +249,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
             settings.record_fps,
             settings.freeze as u8,
             settings.notify as u8,
+            settings.ask_video as u8,
             settings.theme.key(),
             settings.screenshot_folder,
             settings.video_folder
@@ -274,13 +278,14 @@ mod tests {
                 record_fps: 60,
                 freeze: false,
                 notify: true,
+                ask_video: false,
                 theme: AppTheme::System,
                 screenshot_folder: String::new(),
                 video_folder: String::new()
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -297,6 +302,7 @@ mod tests {
                 record_fps: 30,
                 freeze: true,
                 notify: false,
+                ask_video: true,
                 theme: AppTheme::Dark,
                 screenshot_folder: "D:\\Shots".to_owned(),
                 video_folder: String::new()

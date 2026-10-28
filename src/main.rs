@@ -105,6 +105,7 @@ struct State {
     live: Option<ui::Canvas>,
     freeze: bool,
     notify: bool,
+    ask_video: bool,
     countdown: bool,
     skip_title: bool,
     record_cursor: bool,
@@ -252,6 +253,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().record_fps = settings.record_fps;
             state().freeze = settings.freeze;
             state().notify = settings.notify;
+            state().ask_video = settings.ask_video;
             ui::set_theme_choice(settings.theme);
             0
         }
@@ -405,6 +407,7 @@ fn main() {
             live: None,
             freeze: settings.freeze,
             notify: settings.notify,
+            ask_video: settings.ask_video,
             countdown: settings.countdown,
             skip_title: settings.skip_title,
             record_cursor: settings.record_cursor,
