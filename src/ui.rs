@@ -26,13 +26,8 @@ pub struct Theme {
     pub selected: u32,
     pub divider: u32,
     pub accent: u32,
-    /// Opaque colors for the settings window (0xAARRGGBB).
-    pub bg: u32,
-    pub card: u32,
-    pub stroke: u32,
-    /// Solid text colors as COLORREF values for native controls.
+    /// Solid colors as COLORREF values for the settings window frame.
     pub text_ref: u32,
-    pub secondary_ref: u32,
     pub bg_ref: u32,
 }
 
@@ -69,11 +64,7 @@ pub fn theme() -> Theme {
             selected: 0x15ffffff,
             divider: 0x15ffffff,
             accent,
-            bg: 0xff202020,
-            card: 0xff2b2b2b,
-            stroke: 0xff1d1d1d,
             text_ref: 0x00ffffff,
-            secondary_ref: 0x00c5c5c5,
             bg_ref: 0x00202020,
         }
     } else {
@@ -86,11 +77,7 @@ pub fn theme() -> Theme {
             selected: 0x0f000000,
             divider: 0x0f000000,
             accent,
-            bg: 0xfff3f3f3,
-            card: 0xfffbfbfb,
-            stroke: 0xffe5e5e5,
             text_ref: 0x001a1a1a,
-            secondary_ref: 0x00616161,
             bg_ref: 0x00f3f3f3,
         }
     }
