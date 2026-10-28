@@ -29,6 +29,7 @@ use windows_sys::{
                     GetSaveFileNameW, OFN_EXPLORER, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
                     OPENFILENAMEW,
                 },
+                SetWindowTheme, DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_COMBOBOXEDIT, ODS_SELECTED,
                 WM_MOUSELEAVE,
             },
             HiDpi::*,
@@ -40,6 +41,7 @@ use windows_sys::{
 };
 
 const MAIN: &str = "SnippingLiteMain";
+const WINDOW_STYLE: u32 = WS_OVERLAPPEDWINDOW & !WS_THICKFRAME & !WS_MAXIMIZEBOX;
 const OVERLAY: &str = "SnippingLiteOverlay";
 const TOOLBAR: &str = "SnippingLiteToolbar";
 const NEW: usize = 100;
@@ -89,6 +91,10 @@ struct State {
     delay: u32,
     pending: bool,
     gdiplus: usize,
+    settings_scale: f32,
+    fonts: Option<Fonts>,
+    card_brush: HBRUSH,
+    field_brush: HBRUSH,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -143,45 +149,184 @@ fn save_settings(copy: bool, save: bool, ask: bool, delay: u32) -> std::io::Resu
         ),
     )
 }
-unsafe fn button(
-    parent: HWND,
-    text: &str,
-    id: usize,
-    x: i32,
-    y: i32,
-    width: i32,
-    style: u32,
-) -> HWND {
+/// Creates a child control; `layout` positions and fonts it.
+unsafe fn control(parent: HWND, class: &str, text: &str, id: usize, style: u32) -> HWND {
     CreateWindowExW(
         0,
-        w("BUTTON").as_ptr(),
+        w(class).as_ptr(),
         w(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | style,
-        x,
-        y,
-        width,
-        30,
+        WS_CHILD | WS_VISIBLE | (WS_TABSTOP * (class != "STATIC") as u32) | style,
+        0,
+        0,
+        0,
+        0,
         parent,
         id as HMENU,
         GetModuleHandleW(null()),
         null(),
     )
 }
-unsafe fn text(parent: HWND, value: &str, x: i32, y: i32, width: i32) {
-    CreateWindowExW(
-        0,
-        w("STATIC").as_ptr(),
-        w(value).as_ptr(),
-        WS_CHILD | WS_VISIBLE,
-        x,
-        y,
-        width,
-        36,
-        parent,
+
+// Settings window layout in DIPs (scaled by the monitor DPI).
+const SETTINGS_WIDTH: f32 = 440.0;
+const SETTINGS_HEIGHT: f32 = 424.0;
+const CARD: [f32; 4] = [24.0, 168.0, 392.0, 192.0];
+const ROW: f32 = 48.0;
+const TITLE: usize = 110;
+const SUBTITLE: usize = 111;
+const HEADING: usize = 112;
+const DELAY_LABEL: usize = 113;
+const FOOTNOTE: usize = 114;
+const STATUS: usize = 115;
+#[derive(Clone, Copy)]
+enum Face {
+    Title,
+    Heading,
+    Body,
+    Small,
+}
+/// Control id, rectangle (x, y, width, height) in DIPs and font.
+const CONTROLS: [(usize, [f32; 4], Face); 10] = [
+    (TITLE, [24.0, 20.0, 392.0, 30.0], Face::Title),
+    (SUBTITLE, [24.0, 52.0, 392.0, 20.0], Face::Small),
+    (NEW, [24.0, 84.0, 120.0, 32.0], Face::Body),
+    (HEADING, [24.0, 136.0, 392.0, 24.0], Face::Heading),
+    (COPY, [40.0, 180.0, 360.0, 24.0], Face::Body),
+    (SAVE, [40.0, 228.0, 360.0, 24.0], Face::Body),
+    (ASK, [40.0, 276.0, 360.0, 24.0], Face::Body),
+    (DELAY_LABEL, [40.0, 324.0, 200.0, 24.0], Face::Body),
+    (FOOTNOTE, [24.0, 372.0, 392.0, 18.0], Face::Small),
+    (STATUS, [24.0, 392.0, 392.0, 18.0], Face::Small),
+];
+struct Fonts {
+    title: ui::Font,
+    heading: ui::Font,
+    body: ui::Font,
+    small: ui::Font,
+}
+impl Fonts {
+    unsafe fn new(scale: f32) -> Fonts {
+        Fonts {
+            title: ui::Font::new(ui::TEXT_FONT, 20.0 * scale, FW_SEMIBOLD as i32),
+            heading: ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_SEMIBOLD as i32),
+            body: ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32),
+            small: ui::Font::new(ui::TEXT_FONT, 12.0 * scale, FW_NORMAL as i32),
+        }
+    }
+    fn get(&self, face: Face) -> HFONT {
+        match face {
+            Face::Title => self.title.0,
+            Face::Heading => self.heading.0,
+            Face::Body => self.body.0,
+            Face::Small => self.small.0,
+        }
+    }
+}
+/// Positions every settings control for the current DPI and applies fonts.
+unsafe fn layout(hwnd: HWND) {
+    let scale = state().settings_scale;
+    let fonts = Fonts::new(scale);
+    let px = |v: f32| (v * scale).round() as i32;
+    for (id, [x, y, width, height], face) in CONTROLS {
+        let control = GetDlgItem(hwnd, id as i32);
+        SetWindowPos(
+            control,
+            null_mut(),
+            px(x),
+            px(y),
+            px(width),
+            px(height),
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+        SendMessageW(control, WM_SETFONT, fonts.get(face) as WPARAM, 1);
+    }
+    // A combo box's height includes its drop-down list.
+    let combo = GetDlgItem(hwnd, DELAY as i32);
+    let field = px(32.0);
+    let (left, right) = (CARD[0] + CARD[2] - 16.0 - 140.0, CARD[0] + CARD[2] - 16.0);
+    SetWindowPos(
+        combo,
         null_mut(),
-        GetModuleHandleW(null()),
-        null(),
+        px(left),
+        px(CARD[1] + 3.0 * ROW + 8.0),
+        px(right - left),
+        field + px(4.0 * 32.0 + 8.0),
+        SWP_NOZORDER | SWP_NOACTIVATE,
     );
+    SendMessageW(combo, CB_SETITEMHEIGHT, -1isize as WPARAM, field as LPARAM);
+    SendMessageW(combo, CB_SETITEMHEIGHT, 0, px(32.0) as LPARAM);
+    SendMessageW(combo, WM_SETFONT, fonts.body.0 as WPARAM, 1);
+    state().fonts = Some(fonts);
+    InvalidateRect(hwnd, null(), 1);
+}
+/// Applies the light or dark theme to the window frame and controls.
+unsafe fn apply_theme(hwnd: HWND) {
+    state().theme = ui::theme();
+    ui::window_theme(hwnd, &state().theme);
+    // Check boxes sit on the card, so they are erased with its color.
+    let card = state().theme.card;
+    if !state().card_brush.is_null() {
+        DeleteObject(state().card_brush);
+    }
+    if !state().field_brush.is_null() {
+        DeleteObject(state().field_brush);
+    }
+    state().field_brush = CreateSolidBrush(if state().theme.dark {
+        0x00333333
+    } else {
+        0x00ffffff
+    });
+    state().card_brush =
+        CreateSolidBrush(((card >> 16) & 0xff) | (card & 0xff00) | ((card & 0xff) << 16));
+    let dark = state().theme.dark;
+    for (id, class) in [
+        (NEW, "DarkMode_Explorer"),
+        (COPY, "DarkMode_Explorer"),
+        (SAVE, "DarkMode_Explorer"),
+        (ASK, "DarkMode_Explorer"),
+        (DELAY, "DarkMode_Explorer"),
+    ] {
+        let name = if dark { class } else { "Explorer" };
+        SetWindowTheme(GetDlgItem(hwnd, id as i32), w(name).as_ptr(), null());
+    }
+    RedrawWindow(
+        hwnd,
+        null(),
+        null_mut(),
+        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN,
+    );
+}
+/// Paints the page background and the settings card into `dc`.
+unsafe fn paint_settings(hwnd: HWND, dc: HDC) {
+    let mut client: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut client);
+    let Some(mut canvas) = ui::Canvas::new(client.right, client.bottom) else {
+        return;
+    };
+    let s = state().settings_scale;
+    let theme = &state().theme;
+    canvas.fill_round_rect(
+        [0.0, 0.0, client.right as f32, client.bottom as f32],
+        0.0,
+        theme.bg,
+    );
+    let [x, y, width, height] = CARD.map(|v| v * s);
+    canvas.fill_round_rect([x, y, x + width, y + height], 8.0 * s, theme.stroke);
+    let line = s.round().max(1.0);
+    canvas.fill_round_rect(
+        [x + line, y + line, x + width - line, y + height - line],
+        7.0 * s,
+        theme.card,
+    );
+    for row in 1..4 {
+        let top = y + row as f32 * ROW * s;
+        canvas.fill_round_rect(
+            [x + line, top, x + width - line, top + line],
+            0.0,
+            theme.stroke,
+        );
+    }
+    canvas.present(dc);
 }
 unsafe fn begin_capture() {
     if state().active || state().pending {
@@ -1139,73 +1284,69 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     match msg {
         WM_CREATE => {
             state().owner = hwnd;
+            state().settings_scale = GetDpiForWindow(hwnd) as f32 / 96.0;
             ui::disable_transitions(hwnd);
             tray(hwnd, NIM_ADD);
-            text(
+            control(hwnd, "STATIC", "Snipping Lite", TITLE, 0);
+            control(
                 hwnd,
+                "STATIC",
                 "Capture screenshots with Alt + Shift + S",
-                24,
-                20,
-                430,
+                SUBTITLE,
+                0,
             );
-            button(hwnd, "New snip", NEW, 24, 58, 150, BS_PUSHBUTTON as u32);
-            text(hwnd, "Settings", 24, 110, 430);
-            let copy = button(
+            control(hwnd, "BUTTON", "New snip", NEW, BS_PUSHBUTTON as u32);
+            control(hwnd, "STATIC", "Settings", HEADING, 0);
+            let checkbox = BS_AUTOCHECKBOX as u32;
+            let copy = control(
                 hwnd,
+                "BUTTON",
                 "Automatically copy screenshots",
                 COPY,
-                24,
-                145,
-                350,
-                BS_AUTOCHECKBOX as u32,
+                checkbox,
             );
-            let save = button(
+            let save = control(
                 hwnd,
+                "BUTTON",
                 "Automatically save screenshots",
                 SAVE,
-                24,
-                182,
-                350,
-                BS_AUTOCHECKBOX as u32,
+                checkbox,
+            );
+            let ask = control(
+                hwnd,
+                "BUTTON",
+                "Choose a file name when saving",
+                ASK,
+                checkbox,
             );
             SendMessageW(copy, BM_SETCHECK, if state().copy { 1 } else { 0 }, 0);
             SendMessageW(save, BM_SETCHECK, if state().save { 1 } else { 0 }, 0);
-            let ask = button(
-                hwnd,
-                "Choose a file name when saving",
-                ASK,
-                24,
-                219,
-                350,
-                BS_AUTOCHECKBOX as u32,
-            );
             SendMessageW(ask, BM_SETCHECK, if state().ask { 1 } else { 0 }, 0);
-            text(hwnd, "Capture delay", 24, 262, 130);
-            let delay = CreateWindowExW(
-                0,
-                w("COMBOBOX").as_ptr(),
-                null(),
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST as u32,
-                160,
-                258,
-                150,
-                150,
+            control(
                 hwnd,
-                DELAY as HMENU,
-                GetModuleHandleW(null()),
-                null(),
+                "STATIC",
+                "Capture delay",
+                DELAY_LABEL,
+                0x200, // SS_CENTERIMAGE
+            );
+            let delay = control(
+                hwnd,
+                "COMBOBOX",
+                "",
+                DELAY,
+                WS_VSCROLL | (CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS) as u32,
             );
             for label in ["None", "3 seconds", "5 seconds", "10 seconds"] {
                 SendMessageW(delay, CB_ADDSTRING, 0, w(label).as_ptr() as LPARAM);
             }
             let selected = DELAYS.iter().position(|&d| d == state().delay).unwrap_or(0);
             SendMessageW(delay, CB_SETCURSEL, selected, 0);
-            text(
+            control(
                 hwnd,
+                "STATIC",
                 "Saved images: Pictures\\Screenshots (PNG or BMP)",
-                24,
-                298,
-                430,
+                FOOTNOTE,
+                0,
             );
             let status = if RegisterHotKey(
                 hwnd,
@@ -1218,8 +1359,106 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             } else {
                 "Shortcut unavailable: another application is using it."
             };
-            text(hwnd, status, 24, 334, 430);
+            control(hwnd, "STATIC", status, STATUS, 0);
+            layout(hwnd);
+            apply_theme(hwnd);
             0
+        }
+        WM_ERASEBKGND => {
+            paint_settings(hwnd, wp as HDC);
+            1
+        }
+        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            let dc = wp as HDC;
+            let id = GetDlgCtrlID(lp as HWND) as usize;
+            let secondary = [SUBTITLE, FOOTNOTE, STATUS].contains(&id);
+            let theme = &state().theme;
+            SetBkMode(dc, TRANSPARENT as i32);
+            SetTextColor(
+                dc,
+                if secondary {
+                    theme.secondary_ref
+                } else {
+                    theme.text_ref
+                },
+            );
+            // Themed check boxes ask for their background with WM_CTLCOLORSTATIC.
+            if [COPY, SAVE, ASK].contains(&id) {
+                state().card_brush as LRESULT
+            } else {
+                GetStockObject(NULL_BRUSH) as LRESULT
+            }
+        }
+        WM_MEASUREITEM => {
+            let item = &mut *(lp as *mut MEASUREITEMSTRUCT);
+            item.itemHeight = (32.0 * state().settings_scale).round() as u32;
+            1
+        }
+        WM_DRAWITEM => {
+            let item = &*(lp as *const DRAWITEMSTRUCT);
+            if item.CtlID as usize != DELAY || (item.itemID as i32) < 0 {
+                return 0;
+            }
+            let theme = &state().theme;
+            let selected =
+                item.itemState & ODS_SELECTED != 0 && item.itemState & ODS_COMBOBOXEDIT == 0;
+            let field = if theme.dark { 0x00333333 } else { 0x00ffffff };
+            let brush = CreateSolidBrush(if selected {
+                if theme.dark {
+                    0x00454545
+                } else {
+                    0x00f0f0f0
+                }
+            } else {
+                field
+            });
+            FillRect(item.hDC, &item.rcItem, brush);
+            DeleteObject(brush);
+            let mut label = [0u16; 32];
+            let length = SendMessageW(
+                item.hwndItem,
+                CB_GETLBTEXT,
+                item.itemID as WPARAM,
+                label.as_mut_ptr() as LPARAM,
+            );
+            let mut area = item.rcItem;
+            area.left += (10.0 * state().settings_scale) as i32;
+            SetBkMode(item.hDC, TRANSPARENT as i32);
+            SetTextColor(item.hDC, theme.text_ref);
+            DrawTextW(
+                item.hDC,
+                label.as_mut_ptr(),
+                length.max(0) as i32,
+                &mut area,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            );
+            1
+        }
+        WM_CTLCOLORLISTBOX | WM_CTLCOLOREDIT => {
+            let dc = wp as HDC;
+            let dark = state().theme.dark;
+            SetTextColor(dc, state().theme.text_ref);
+            SetBkColor(dc, if dark { 0x00333333 } else { 0x00ffffff });
+            state().field_brush as LRESULT
+        }
+        WM_DPICHANGED => {
+            state().settings_scale = ((wp >> 16) & 0xffff) as f32 / 96.0;
+            let r = &*(lp as *const RECT);
+            SetWindowPos(
+                hwnd,
+                null_mut(),
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            layout(hwnd);
+            0
+        }
+        WM_SETTINGCHANGE => {
+            apply_theme(hwnd);
+            DefWindowProcW(hwnd, msg, wp, lp)
         }
         WM_COMMAND => {
             match wp & 0xffff {
@@ -1359,26 +1598,33 @@ fn main() {
             delay,
             pending: false,
             gdiplus: 0,
+            settings_scale: 1.0,
+            fonts: None,
+            card_brush: null_mut(),
+            field_brush: null_mut(),
         });
         STATE = &mut *app;
-        register(
-            MAIN,
-            Some(main_proc),
-            (COLOR_WINDOW + 1) as HBRUSH,
-            IDC_ARROW,
-        );
+        register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
         register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
         register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
         register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
+        let dpi = GetDpiForSystem();
+        let mut frame = RECT {
+            left: 0,
+            top: 0,
+            right: (SETTINGS_WIDTH * dpi as f32 / 96.0).round() as i32,
+            bottom: (SETTINGS_HEIGHT * dpi as f32 / 96.0).round() as i32,
+        };
+        AdjustWindowRectExForDpi(&mut frame, WINDOW_STYLE, 0, 0, dpi);
         let hwnd = CreateWindowExW(
             0,
             w(MAIN).as_ptr(),
             w("Snipping Lite").as_ptr(),
-            WS_OVERLAPPEDWINDOW & !WS_THICKFRAME & !WS_MAXIMIZEBOX,
+            WINDOW_STYLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            480,
-            430,
+            frame.right - frame.left,
+            frame.bottom - frame.top,
             null_mut(),
             null_mut(),
             GetModuleHandleW(null()),
