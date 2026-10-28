@@ -91,6 +91,7 @@ struct State {
     recording: Option<record::Recording>,
     record_window: HWND,
     record_frame: HWND,
+    tray_icon: HICON,
     /// The live overlay content; set instead of the frozen screen when `freeze` is off.
     live: Option<ui::Canvas>,
     freeze: bool,
@@ -1280,7 +1281,13 @@ unsafe fn stop_recording() {
     let result = recording.stop();
     restore_windows();
     match result {
-        Ok((path, frame)) => toast::show_recording(&frame.pixels, frame.width, frame.height, path),
+        Ok((path, frame)) => {
+            toast::show_recording(&frame.pixels, frame.width, frame.height, path);
+            if let Some(warning) = frame.warning {
+                let text = tr("Recording ended early; the video up to that point was saved.");
+                message(state().owner, &format!("{text}\n{warning}"));
+            }
+        }
         Err(error) => message(state().owner, &error),
     }
 }
@@ -1570,10 +1577,17 @@ unsafe fn tray(hwnd: HWND, operation: u32) {
     data.uID = 1;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = TRAY_MESSAGE;
-    data.hIcon = ui::app_icon(32);
+    if state().tray_icon.is_null() {
+        state().tray_icon = ui::app_icon(32);
+    }
+    data.hIcon = state().tray_icon;
     let title = w("Snipping Lite");
     data.szTip[..title.len()].copy_from_slice(&title);
     Shell_NotifyIconW(operation, &data);
+    if operation == NIM_DELETE {
+        DestroyIcon(state().tray_icon);
+        state().tray_icon = null_mut();
+    }
 }
 unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
     let class_name = w(name);
@@ -1635,6 +1649,7 @@ fn main() {
             recording: None,
             record_window: null_mut(),
             record_frame: null_mut(),
+            tray_icon: null_mut(),
             live: None,
             freeze: settings.freeze,
             countdown: settings.countdown,

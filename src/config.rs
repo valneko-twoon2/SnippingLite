@@ -1,6 +1,9 @@
 //! Settings shared by the tray process and the window processes.
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::i18n::tr;
 
@@ -46,11 +49,18 @@ pub fn load_pen() -> (usize, usize) {
     (value("color=", 5, 0), value("thickness=", 3, 1))
 }
 
+/// Writes through a temporary file so a reader never sees a half-written file.
+fn write_atomic(path: &Path, contents: String) -> std::io::Result<()> {
+    let temporary = path.with_extension("tmp");
+    fs::write(&temporary, contents)?;
+    fs::rename(&temporary, path)
+}
+
 pub fn save_pen(color: usize, thickness: usize) {
     if let Some(dir) = std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite")) {
         let _ = fs::create_dir_all(&dir);
-        let _ = fs::write(
-            dir.join("pen.ini"),
+        let _ = write_atomic(
+            &dir.join("pen.ini"),
             format!("color={color}\r\nthickness={thickness}\r\n"),
         );
     }
@@ -163,8 +173,8 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
         path.parent()
             .ok_or_else(|| std::io::Error::other("Invalid settings path"))?,
     )?;
-    fs::write(
-        path,
+    write_atomic(
+        &path,
         format!(
             "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nfreeze={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
@@ -222,5 +232,18 @@ mod tests {
         );
         assert_eq!(parse_settings("delay=7").delay, 0);
         assert_eq!(parse_settings("history_limit=7").history_limit, 200);
+    }
+
+    #[test]
+    fn atomic_write_replaces_the_file_and_leaves_no_temporary() {
+        let folder =
+            std::env::temp_dir().join(format!("snipping-lite-config-{}", std::process::id()));
+        fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("settings.ini");
+        write_atomic(&path, "a".to_owned()).unwrap();
+        write_atomic(&path, "b".to_owned()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "b");
+        assert!(!path.with_extension("tmp").exists());
+        fs::remove_dir_all(&folder).unwrap();
     }
 }

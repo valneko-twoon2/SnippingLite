@@ -213,6 +213,10 @@ const JAPANESE: &[(&str, &str)] = &[
         "Could not finish the video file",
         "動画ファイルを完了できませんでした",
     ),
+    (
+        "Recording ended early; the video up to that point was saved.",
+        "録画が途中で終了しました。ここまでの動画は保存されています。",
+    ),
     // File dialog
     ("PNG image", "PNG 画像"),
     ("BMP image", "BMP 画像"),

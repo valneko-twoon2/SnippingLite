@@ -36,6 +36,8 @@ pub struct Frame {
     pub width: i32,
     pub height: i32,
     pub pixels: Vec<u8>,
+    /// Set when the recording ended early but the file up to that point was kept.
+    pub warning: Option<String>,
 }
 
 /// A recording in progress on its own thread.
@@ -322,6 +324,8 @@ unsafe fn record(
     let mut failure = write(&writer, &first, 0, duration)
         .err()
         .map(|e| format!("{}: {}", tr("Could not write a video frame"), e.message()));
+    // A failure after the first frame still leaves a playable file to keep.
+    let started = failure.is_none();
     let frame = Duration::from_nanos(1_000_000_000 / FPS as u64);
     let mut next = Instant::now();
     while failure.is_none() && !stop.load(Ordering::Acquire) {
@@ -345,14 +349,20 @@ unsafe fn record(
         }
     }
     drop(grabber);
-    let finalized = writer.sink.Finalize();
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    finalized.map_err(|e| format!("{}: {}", tr("Could not finish the video file"), e.message()))?;
+    let finalized = writer
+        .sink
+        .Finalize()
+        .map_err(|e| format!("{}: {}", tr("Could not finish the video file"), e.message()));
+    let warning = match (failure, finalized) {
+        (Some(error), Ok(())) if started => Some(error),
+        (Some(error), _) => return Err(error),
+        (None, Err(error)) => return Err(error),
+        (None, Ok(())) => None,
+    };
     Ok(Frame {
         width,
         height,
         pixels: first,
+        warning,
     })
 }

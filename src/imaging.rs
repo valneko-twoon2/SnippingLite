@@ -185,7 +185,16 @@ pub fn copy_to_clipboard(owner: HWND, pixels: &[u8], width: i32, height: i32) ->
         }
         GlobalUnlock(global);
         let mut owned = false;
-        if OpenClipboard(owner) != 0 {
+        // Another application (a clipboard manager, for example) may hold it briefly.
+        let mut opened = false;
+        for attempt in 0..10 {
+            opened = OpenClipboard(owner) != 0;
+            if opened || attempt == 9 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if opened {
             EmptyClipboard();
             owned = !SetClipboardData(17, global).is_null();
             CloseClipboard();
