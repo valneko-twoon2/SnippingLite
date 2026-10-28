@@ -35,9 +35,11 @@ const OVERLAY: &str = "SnippingLiteOverlay";
 const TOOLBAR: &str = "SnippingLiteToolbar";
 const RECORD: &str = "SnippingLiteRecord";
 const FRAME: &str = "SnippingLiteFrame";
+const COUNT: &str = "SnippingLiteCount";
 const NEW: usize = 100;
 const DELAY_TIMER: usize = 1;
 const RECORD_TIMER: usize = 2;
+const COUNT_TIMER: usize = 3;
 const HOTKEY: i32 = 1;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_RELOAD: u32 = WM_APP + 2;
@@ -87,6 +89,13 @@ struct State {
     recording: Option<record::Recording>,
     record_window: HWND,
     record_frame: HWND,
+    /// The live overlay content; set instead of the frozen screen when `freeze` is off.
+    live: Option<ui::Canvas>,
+    freeze: bool,
+    countdown: bool,
+    count_window: HWND,
+    count_left: i32,
+    count_area: RECT,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -143,6 +152,11 @@ unsafe fn begin_capture() {
         stop_recording();
         return;
     }
+    // The shortcut also cancels a running countdown.
+    if !state().count_window.is_null() {
+        cancel_countdown();
+        return;
+    }
     if state().active || state().pending {
         return;
     }
@@ -177,24 +191,13 @@ unsafe fn capture(flush: bool) {
     state().origin = POINT { x, y };
     state().width = width;
     state().height = height;
-    let dc = GetDC(null_mut());
-    let captured = !dc.is_null()
-        && store_bitmap(dc, width, height)
-        && BitBlt(
-            state().screen_dc,
-            0,
-            0,
-            width,
-            height,
-            dc,
-            x,
-            y,
-            SRCCOPY | CAPTUREBLT,
-        ) != 0;
-    let dimmed = captured && dim(width, height);
-    if !dc.is_null() {
-        ReleaseDC(null_mut(), dc);
-    }
+    let live = !state().freeze;
+    let dimmed = if live {
+        state().live = ui::Canvas::new(width, height);
+        state().live.is_some()
+    } else {
+        freeze_screen(x, y, width, height)
+    };
     if !dimmed {
         cleanup();
         restore_windows();
@@ -216,6 +219,15 @@ unsafe fn capture(flush: bool) {
     state().active = true;
     SetWindowPos(overlay, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
     place_toolbar(cursor);
+    set_layered(overlay, live);
+    if live {
+        live_draw(RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        });
+    }
     // Paint while cloaked so the first visible frame is complete and never
     // shows the previous capture.
     ui::cloak(overlay, true);
@@ -232,6 +244,28 @@ unsafe fn capture(flush: bool) {
             y: cursor.y - y,
         });
     }
+}
+/// Copies the desktop into the capture bitmap and prepares the dim layer.
+unsafe fn freeze_screen(x: i32, y: i32, width: i32, height: i32) -> bool {
+    let dc = GetDC(null_mut());
+    let captured = !dc.is_null()
+        && store_bitmap(dc, width, height)
+        && BitBlt(
+            state().screen_dc,
+            0,
+            0,
+            width,
+            height,
+            dc,
+            x,
+            y,
+            SRCCOPY | CAPTUREBLT,
+        ) != 0;
+    let dimmed = captured && dim(width, height);
+    if !dc.is_null() {
+        ReleaseDC(null_mut(), dc);
+    }
+    dimmed
 }
 /// Creates the full-screen capture bitmap selected into its own DC.
 unsafe fn store_bitmap(dc: HDC, width: i32, height: i32) -> bool {
@@ -282,6 +316,7 @@ unsafe fn cleanup() {
         s.screen = null_mut();
     }
     s.dim_canvas = None;
+    s.live = None;
     s.active = false;
     s.dragging = false;
     s.points.clear();
@@ -453,23 +488,170 @@ fn same(a: Option<RECT>, b: Option<RECT>) -> bool {
         _ => false,
     }
 }
+/// A pixel that receives mouse input while staying invisible on the live screen.
+const LIVE_BASE: u32 = 0x04000000;
+unsafe fn set_layered(hwnd: HWND, layered: bool) {
+    let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    let wanted = if layered {
+        style | WS_EX_LAYERED as isize
+    } else {
+        style & !(WS_EX_LAYERED as isize)
+    };
+    if wanted != style {
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted);
+    }
+}
+fn fill_rect(canvas: &mut ui::Canvas, r: RECT, value: u32) {
+    let (width, height) = (canvas.width, canvas.height);
+    let (left, right) = (r.left.clamp(0, width), r.right.clamp(0, width));
+    let (top, bottom) = (r.top.clamp(0, height), r.bottom.clamp(0, height));
+    if right <= left {
+        return;
+    }
+    let pixels = canvas.pixels();
+    for y in top..bottom {
+        pixels[(y * width + left) as usize..(y * width + right) as usize].fill(value);
+    }
+}
+/// Fills the four edges of a frame of thickness `t` around `r`.
+fn fill_frame(canvas: &mut ui::Canvas, r: RECT, t: i32, value: u32) {
+    for edge in [
+        RECT {
+            left: r.left - t,
+            top: r.top - t,
+            right: r.right + t,
+            bottom: r.top,
+        },
+        RECT {
+            left: r.left - t,
+            top: r.bottom,
+            right: r.right + t,
+            bottom: r.bottom + t,
+        },
+        RECT {
+            left: r.left - t,
+            top: r.top,
+            right: r.left,
+            bottom: r.bottom,
+        },
+        RECT {
+            left: r.right,
+            top: r.top,
+            right: r.right + t,
+            bottom: r.bottom,
+        },
+    ] {
+        fill_rect(canvas, edge, value);
+    }
+}
+/// Redraws the live overlay inside `dirty`: an invisible input layer with the
+/// selection (outline and a light tint) or the freeform trail on top.
+unsafe fn live_draw(dirty: RECT) {
+    let t = border();
+    let bright = highlight().filter(|r| r.right > r.left && r.bottom > r.top);
+    let s = state();
+    let Some(canvas) = s.live.as_mut() else {
+        return;
+    };
+    let dirty = RECT {
+        left: dirty.left.clamp(0, canvas.width),
+        top: dirty.top.clamp(0, canvas.height),
+        right: dirty.right.clamp(0, canvas.width),
+        bottom: dirty.bottom.clamp(0, canvas.height),
+    };
+    fill_rect(canvas, dirty, LIVE_BASE);
+    if let Some(b) = bright {
+        fill_rect(canvas, b, 0x0c0c0c0c);
+        fill_frame(canvas, inflate(b, 2), t, 0x80000000);
+        fill_frame(canvas, b, t, 0xffffffff);
+    }
+    if s.mode == MODE_FREE && s.dragging && s.points.len() > 1 {
+        for pair in s.points.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            let steps = (b.x - a.x).abs().max((b.y - a.y).abs()).max(1);
+            for i in 0..=steps {
+                let x = a.x + (b.x - a.x) * i / steps;
+                let y = a.y + (b.y - a.y) * i / steps;
+                fill_rect(
+                    canvas,
+                    RECT {
+                        left: x - t / 2,
+                        top: y - t / 2,
+                        right: x - t / 2 + t,
+                        bottom: y - t / 2 + t,
+                    },
+                    0xffffffff,
+                );
+            }
+        }
+    }
+    let mut origin = s.origin;
+    let mut size = SIZE {
+        cx: canvas.width,
+        cy: canvas.height,
+    };
+    let mut source = POINT { x: 0, y: 0 };
+    let blend = BLENDFUNCTION {
+        BlendOp: AC_SRC_OVER as u8,
+        BlendFlags: 0,
+        SourceConstantAlpha: 255,
+        AlphaFormat: AC_SRC_ALPHA as u8,
+    };
+    let info = UPDATELAYEREDWINDOWINFO {
+        cbSize: std::mem::size_of::<UPDATELAYEREDWINDOWINFO>() as u32,
+        hdcDst: null_mut(),
+        pptDst: &mut origin,
+        psize: &mut size,
+        hdcSrc: canvas.dc(),
+        pptSrc: &mut source,
+        crKey: 0,
+        pblend: &blend,
+        dwFlags: ULW_ALPHA,
+        prcDirty: &dirty,
+    };
+    UpdateLayeredWindowIndirect(s.overlay, &info);
+}
 unsafe fn border() -> i32 {
     (state().scale * 2.0).round().max(1.0) as i32
 }
 unsafe fn invalidate(r: RECT) {
-    let r = inflate(r, border() + 1);
-    InvalidateRect(state().overlay, &r, 0);
+    let r = inflate(r, border() + 3);
+    if state().live.is_some() {
+        live_draw(r);
+    } else {
+        InvalidateRect(state().overlay, &r, 0);
+    }
+}
+/// Repaints what a change from `old` to `new` touched; the state must already be updated.
+unsafe fn invalidate_change(old: Option<RECT>, new: Option<RECT>) {
+    match (old, new) {
+        (Some(a), Some(b)) => invalidate(RECT {
+            left: a.left.min(b.left),
+            top: a.top.min(b.top),
+            right: a.right.max(b.right),
+            bottom: a.bottom.max(b.bottom),
+        }),
+        (Some(r), None) | (None, Some(r)) => invalidate(r),
+        (None, None) => {}
+    }
+}
+unsafe fn refresh_overlay() {
+    if state().live.is_some() {
+        live_draw(RECT {
+            left: 0,
+            top: 0,
+            right: state().width,
+            bottom: state().height,
+        });
+    } else {
+        InvalidateRect(state().overlay, null(), 0);
+    }
 }
 unsafe fn hover_window(p: POINT) {
     let hover = select_window(p);
     if !same(hover, state().hover_window) {
-        if let Some(old) = state().hover_window {
-            invalidate(old);
-        }
-        if let Some(new) = hover {
-            invalidate(new);
-        }
-        state().hover_window = hover;
+        let old = std::mem::replace(&mut state().hover_window, hover);
+        invalidate_change(old, hover);
     }
 }
 unsafe fn set_mode(mode: i32) {
@@ -595,17 +777,25 @@ unsafe fn finish(rect: RECT, freeform: bool) {
         return;
     }
     let old = SelectObject(mem, bitmap);
-    let copied = BitBlt(
-        mem,
-        0,
-        0,
-        width,
-        height,
-        state().screen_dc,
-        rect.left,
-        rect.top,
-        SRCCOPY,
-    ) != 0;
+    let live = state().screen_dc.is_null();
+    let (source, left, top, operation) = if live {
+        // Our own overlay and toolbar must be off the screen before it is copied.
+        ShowWindow(state().toolbar, SW_HIDE);
+        ShowWindow(state().overlay, SW_HIDE);
+        DwmFlush();
+        (
+            GetDC(null_mut()),
+            rect.left + state().origin.x,
+            rect.top + state().origin.y,
+            SRCCOPY | CAPTUREBLT,
+        )
+    } else {
+        (state().screen_dc, rect.left, rect.top, SRCCOPY)
+    };
+    let copied = BitBlt(mem, 0, 0, width, height, source, left, top, operation) != 0;
+    if live {
+        ReleaseDC(null_mut(), source);
+    }
     SelectObject(mem, old);
     let mut pixels = if copied {
         read_pixels(mem, bitmap, width, height)
@@ -782,19 +972,15 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
         WM_MOUSEMOVE if state().dragging => {
             let p = point(lp);
             if state().mode == MODE_FREE {
-                if let Some(&last) = state().points.last() {
+                let last = state().points.last().copied();
+                state().points.push(p);
+                if let Some(last) = last {
                     invalidate(bounds(last, p, state().width, state().height));
                 }
-                state().points.push(p);
             } else {
                 let old = highlight();
                 state().end = p;
-                if let Some(r) = old {
-                    invalidate(r);
-                }
-                if let Some(r) = highlight() {
-                    invalidate(r);
-                }
+                invalidate_change(old, highlight());
             }
             0
         }
@@ -840,7 +1026,7 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             } else if !free || state().points.len() >= 3 {
                 finish(rect, free);
             } else {
-                InvalidateRect(hwnd, null(), 0);
+                refresh_overlay();
             }
             0
         }
@@ -874,17 +1060,24 @@ unsafe fn start_recording(rect: RECT) {
         right: rect.right + origin.x,
         bottom: rect.bottom + origin.y,
     };
-    let path = record::video_folder()
-        .and_then(|folder| Ok(folder.join(format!("Snipping Lite {}.mp4", imaging::timestamp()?))));
     // The overlay closes first; our own windows stay hidden until the recording ends.
     let hidden = std::mem::take(&mut state().hidden);
     cancel();
-    DwmFlush();
-    let started = match path {
-        Ok(path) => record::start(area, path),
-        Err(_) => Err("Could not create the recordings folder.".to_string()),
-    };
     state().hidden = hidden;
+    if state().countdown {
+        begin_countdown(area);
+    } else {
+        begin_recording(area);
+    }
+}
+unsafe fn begin_recording(area: RECT) {
+    DwmFlush();
+    let started = record::video_folder()
+        .map_err(|_| "Could not create the recordings folder.".to_string())
+        .and_then(|folder| {
+            let name = imaging::timestamp().map_err(|e| e.to_string())?;
+            record::start(area, folder.join(format!("Snipping Lite {name}.mp4")))
+        });
     match started {
         Ok(recording) => {
             state().recording = Some(recording);
@@ -899,6 +1092,96 @@ unsafe fn start_recording(rect: RECT) {
             restore_windows();
             message(state().owner, &error);
         }
+    }
+}
+/// A 3, 2, 1 countdown in the middle of the area; a click cancels it.
+const COUNT_SIZE: f32 = 120.0;
+unsafe fn begin_countdown(area: RECT) {
+    let center = POINT {
+        x: (area.left + area.right) / 2,
+        y: (area.top + area.bottom) / 2,
+    };
+    let theme = ui::theme();
+    let scale = ui::scale_at(center);
+    let size = (COUNT_SIZE * scale).round() as i32;
+    let hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        w(COUNT).as_ptr(),
+        w("Snipping Lite").as_ptr(),
+        WS_POPUP,
+        center.x - size / 2,
+        center.y - size / 2,
+        size,
+        size,
+        null_mut(),
+        null_mut(),
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if hwnd.is_null() {
+        begin_recording(area);
+        return;
+    }
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+    ui::acrylic(hwnd, theme.dark);
+    ui::disable_transitions(hwnd);
+    let s = state();
+    s.theme = theme;
+    s.scale = scale;
+    s.count_window = hwnd;
+    s.count_left = 3;
+    s.count_area = area;
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    SetTimer(hwnd, COUNT_TIMER, 1000, None);
+}
+unsafe fn cancel_countdown() {
+    let window = std::mem::replace(&mut state().count_window, null_mut());
+    if !window.is_null() {
+        DestroyWindow(window);
+    }
+    restore_windows();
+}
+unsafe extern "system" fn count_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut ps);
+            let mut client: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut client);
+            if let Some(mut canvas) = ui::Canvas::new(client.right, client.bottom) {
+                let s = state();
+                let font = ui::Font::new(ui::TEXT_FONT, 56.0 * s.scale, FW_NORMAL as i32);
+                canvas.text(
+                    &s.count_left.to_string(),
+                    &font,
+                    client,
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    s.theme.text,
+                );
+                canvas.present(dc);
+            }
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_TIMER if wp == COUNT_TIMER => {
+            state().count_left -= 1;
+            if state().count_left <= 0 {
+                let area = state().count_area;
+                state().count_window = null_mut();
+                DestroyWindow(hwnd);
+                begin_recording(area);
+            } else {
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
+        WM_LBUTTONUP => {
+            cancel_countdown();
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }
 /// Outlines the recorded area just outside of it; the frame is not captured.
@@ -1210,6 +1493,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().ask = settings.ask;
             state().delay = settings.delay;
             state().history = settings.history;
+            state().countdown = settings.countdown;
+            state().freeze = settings.freeze;
             0
         }
         WM_COMMAND => {
@@ -1347,12 +1632,24 @@ fn main() {
             recording: None,
             record_window: null_mut(),
             record_frame: null_mut(),
+            live: None,
+            freeze: settings.freeze,
+            countdown: settings.countdown,
+            count_window: null_mut(),
+            count_left: 0,
+            count_area: RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            },
         });
         STATE = &mut *app;
         register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
         register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
         register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
         register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
+        register(COUNT, Some(count_proc), null_mut(), IDC_ARROW);
         // The frame around a recording is a solid red window shaped like a ring.
         register(
             FRAME,

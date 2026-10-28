@@ -26,7 +26,7 @@ use crate::{
 
 const SEMIBOLD: &str = "semibold";
 const WIDTH: f32 = 440.0;
-const HEIGHT: f32 = 536.0;
+const HEIGHT: f32 = 648.0;
 const MARGIN: f32 = 24.0;
 const ROW: f32 = 48.0;
 
@@ -223,6 +223,8 @@ struct SettingsApp {
     delay: u32,
     history: bool,
     history_limit: usize,
+    countdown: bool,
+    freeze: bool,
     hotkey_ok: bool,
     notice: Option<Instant>,
     framed: bool,
@@ -239,6 +241,8 @@ impl SettingsApp {
             delay: settings.delay,
             history: settings.history,
             history_limit: settings.history_limit,
+            countdown: settings.countdown,
+            freeze: settings.freeze,
             hotkey_ok,
             notice: None,
             framed: false,
@@ -254,6 +258,8 @@ impl SettingsApp {
             delay: self.delay,
             history: self.history,
             history_limit: self.history_limit,
+            countdown: self.countdown,
+            freeze: self.freeze,
         }
     }
 
@@ -392,6 +398,19 @@ impl eframe::App for SettingsApp {
                                 ui.selectable_value(&mut self.delay, d, label);
                             }
                         });
+                });
+                divider(ui, &p);
+                row(ui, &p, "Countdown before recording", |ui| {
+                    toggle(ui, &mut self.countdown, "Countdown before recording", &p);
+                });
+                divider(ui, &p);
+                row(ui, &p, "Dim and freeze the screen while snipping", |ui| {
+                    toggle(
+                        ui,
+                        &mut self.freeze,
+                        "Dim and freeze the screen while snipping",
+                        &p,
+                    );
                 });
             });
         if !self.copy && !self.save {

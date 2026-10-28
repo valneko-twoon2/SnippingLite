@@ -18,6 +18,10 @@ pub struct Settings {
     pub history: bool,
     /// The oldest history entries beyond this count are deleted.
     pub history_limit: usize,
+    /// Count down 3, 2, 1 before a recording starts.
+    pub countdown: bool,
+    /// Freeze and dim the screen while selecting; otherwise the screen stays live.
+    pub freeze: bool,
 }
 
 /// The pen color and thickness (indexes) last used in the history editor.
@@ -70,6 +74,8 @@ pub fn parse_settings(text: &str) -> Settings {
         delay,
         history: !text.lines().any(|s| s == "history=0"),
         history_limit,
+        countdown: !text.lines().any(|s| s == "countdown=0"),
+        freeze: text.lines().any(|s| s == "freeze=1"),
     }
 }
 
@@ -90,13 +96,15 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     fs::write(
         path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nfreeze={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
             settings.delay,
             settings.history as u8,
-            settings.history_limit
+            settings.history_limit,
+            settings.countdown as u8,
+            settings.freeze as u8
         ),
     )
 }
@@ -115,11 +123,13 @@ mod tests {
                 ask: false,
                 delay: 0,
                 history: true,
-                history_limit: 200
+                history_limit: 200,
+                countdown: true,
+                freeze: false
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nfreeze=1\r\n",
         );
         assert_eq!(
             parsed,
@@ -129,7 +139,9 @@ mod tests {
                 ask: true,
                 delay: 5,
                 history: false,
-                history_limit: 50
+                history_limit: 50,
+                countdown: false,
+                freeze: true
             }
         );
         assert_eq!(parse_settings("delay=7").delay, 0);
