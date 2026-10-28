@@ -1,38 +1,82 @@
-# Renders the same blue tile and selection corners as ui::icon_rgba.
-# build.rs embeds src/app.ico for Explorer and Task Manager.
+# Renders src/app.svg into the executable icon and the shared 64px RGBA bitmap.
+# All application surfaces use this same capture-frame-and-scissors design.
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 $root = Split-Path $PSScriptRoot -Parent
+[xml]$source = Get-Content -LiteralPath (Join-Path $root 'src/app.svg') -Raw
+$invariant = [Globalization.CultureInfo]::InvariantCulture
+
+function Read-Number([string]$value) {
+    [single]::Parse($value, $invariant)
+}
+
+function Read-Points([string]$value) {
+    [Drawing.PointF[]]@($value.Trim() -split '\s+' | ForEach-Object {
+        $pair = $_ -split ','
+        [Drawing.PointF]::new((Read-Number $pair[0]), (Read-Number $pair[1]))
+    })
+}
 
 $images = foreach ($size in 16, 20, 24, 32, 40, 48, 64, 128, 256) {
-    $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
-    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $large = [Drawing.Bitmap]::new(($size * 4), ($size * 4), [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [Drawing.Graphics]::FromImage($large)
     $graphics.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $graphics.Clear([Drawing.Color]::Transparent)
-    $tile = [Drawing.Drawing2D.GraphicsPath]::new()
-    $diameter = [single]($size * 0.44)
-    $edge = [single]($size - $diameter)
-    $tile.AddArc(0, 0, $diameter, $diameter, 180, 90)
-    $tile.AddArc($edge, 0, $diameter, $diameter, 270, 90)
-    $tile.AddArc($edge, $edge, $diameter, $diameter, 0, 90)
-    $tile.AddArc(0, $edge, $diameter, $diameter, 90, 90)
-    $tile.CloseFigure()
-    $brush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(0, 103, 192))
-    $graphics.FillPath($brush, $tile)
-    $pen = [Drawing.Pen]::new([Drawing.Color]::White, [single]($size * 0.08))
-    foreach ($sx in -1, 1) {
-        foreach ($sy in -1, 1) {
-            $x = [single]($size * (0.5 + $sx * 0.21))
-            $y = [single]($size * (0.5 + $sy * 0.21))
-            $innerX = [single]($x - $sx * $size * 0.09)
-            $innerY = [single]($y - $sy * $size * 0.09)
-            $graphics.DrawLine($pen, $x, $y, $innerX, $y)
-            $graphics.DrawLine($pen, $x, $y, $x, $innerY)
+    $graphics.ScaleTransform([single]($size * 4 / 128), [single]($size * 4 / 128))
+    foreach ($shape in $source.DocumentElement.ChildNodes) {
+        switch ($shape.LocalName) {
+            'polyline' {
+                $pen = [Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($shape.stroke), (Read-Number $shape.'stroke-width'))
+                $pen.StartCap = $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round
+                $pen.LineJoin = [Drawing.Drawing2D.LineJoin]::Round
+                $graphics.DrawLines($pen, [Drawing.PointF[]](Read-Points $shape.points))
+                $pen.Dispose()
+            }
+            'polygon' {
+                $brush = [Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($shape.fill))
+                $graphics.FillPolygon($brush, [Drawing.PointF[]](Read-Points $shape.points))
+                $brush.Dispose()
+            }
+            'circle' {
+                $radius = Read-Number $shape.r
+                $circle = [Drawing.RectangleF]::new(((Read-Number $shape.cx) - $radius), ((Read-Number $shape.cy) - $radius), (2 * $radius), (2 * $radius))
+                if ($shape.fill -ne 'none') {
+                    $brush = [Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($shape.fill))
+                    $graphics.FillEllipse($brush, $circle)
+                    $brush.Dispose()
+                }
+                if ($shape.stroke -ne 'none') {
+                    $pen = [Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($shape.stroke), (Read-Number $shape.'stroke-width'))
+                    $graphics.DrawEllipse($pen, $circle)
+                    $pen.Dispose()
+                }
+            }
+            default { throw "Unsupported icon geometry: $($shape.LocalName)" }
         }
+    }
+    $graphics.Dispose()
+    $bitmap = [Drawing.Bitmap]::new($size, $size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+    $graphics.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+    $graphics.DrawImage($large, [Drawing.Rectangle]::new(0, 0, $size, $size))
+    if ($size -eq 64) {
+        $rgba = [byte[]]::new(64 * 64 * 4)
+        for ($y = 0; $y -lt 64; $y++) {
+            for ($x = 0; $x -lt 64; $x++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                $offset = ($y * 64 + $x) * 4
+                $rgba[$offset] = $pixel.R
+                $rgba[$offset + 1] = $pixel.G
+                $rgba[$offset + 2] = $pixel.B
+                $rgba[$offset + 3] = $pixel.A
+            }
+        }
+        [IO.File]::WriteAllBytes((Join-Path $root 'src/app.rgba'), $rgba)
     }
     $stream = [IO.MemoryStream]::new()
     $bitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
-    $pen.Dispose(); $tile.Dispose(); $brush.Dispose(); $graphics.Dispose(); $bitmap.Dispose()
+    $graphics.Dispose(); $large.Dispose(); $bitmap.Dispose()
     [pscustomobject]@{ Size = $size; Data = $stream.ToArray() }
 }
 

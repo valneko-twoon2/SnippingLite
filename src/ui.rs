@@ -7,14 +7,18 @@ use std::ptr::{null, null_mut};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
-    System::Registry::{
-        RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    System::{
+        LibraryLoader::GetModuleHandleW,
+        Registry::{
+            RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+        },
     },
     UI::{
         Controls::MARGINS,
         HiDpi::*,
         WindowsAndMessaging::{
-            CreateIcon, FindWindowExW, GetPropW, GetWindowThreadProcessId, SetPropW, HICON,
+            FindWindowExW, GetPropW, GetWindowThreadProcessId, LoadImageW, SetPropW, HICON,
+            IMAGE_ICON,
         },
     },
 };
@@ -516,73 +520,37 @@ pub fn thumbnail(pixels: &[u8], width: i32, height: i32, tw: i32, th: i32) -> Ve
     out
 }
 
-/// Draws the application icon (selection corners on a blue tile) as
-/// straight-alpha RGBA, top-down.
+/// Returns the capture-frame-and-scissors icon as straight-alpha RGBA.
+/// The shared bitmap and executable icon are generated from app.svg together.
 pub fn icon_rgba(size: u32) -> Vec<u8> {
-    let n = size as f32;
-    let mut out = vec![0u8; (size * size * 4) as usize];
-    let samples = 4;
-    for y in 0..size {
-        for x in 0..size {
-            let (mut tile, mut mark) = (0.0f32, 0.0f32);
-            for sy in 0..samples {
-                for sx in 0..samples {
-                    let px = (x as f32 + (sx as f32 + 0.5) / samples as f32) / n;
-                    let py = (y as f32 + (sy as f32 + 0.5) / samples as f32) / n;
-                    // Rounded tile.
-                    let (qx, qy) = (
-                        (px - 0.5).abs() - (0.5 - 0.22),
-                        (py - 0.5).abs() - (0.5 - 0.22),
-                    );
-                    let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt()
-                        + qx.max(qy).min(0.0)
-                        - 0.22;
-                    if d <= 0.0 {
-                        tile += 1.0;
-                    }
-                    // Four L-shaped corner brackets.
-                    let (ax, ay) = ((px - 0.5).abs(), (py - 0.5).abs());
-                    let (inner, outer, arm) = (0.17, 0.25, 0.10);
-                    let edge_x = ax > inner && ax < outer && ay > outer - arm - 0.07 && ay < outer;
-                    let edge_y = ay > inner && ay < outer && ax > outer - arm - 0.07 && ax < outer;
-                    let corner = ax > inner && ax < outer && ay > inner && ay < outer;
-                    let bracket = (edge_x || edge_y) && (corner || ax.max(ay) < outer);
-                    if bracket && d <= 0.0 {
-                        mark += 1.0;
-                    }
-                }
-            }
-            let total = (samples * samples) as f32;
-            let alpha = tile / total;
-            let white = if tile > 0.0 { mark / tile } else { 0.0 };
-            // Blend white brackets over the blue tile (0x00 0x67 0xc0).
-            let blue = [0x00 as f32, 0x67 as f32, 0xc0 as f32];
-            let i = ((y * size + x) * 4) as usize;
-            for c in 0..3 {
-                out[i + c] = (blue[c] + (255.0 - blue[c]) * white).round() as u8;
-            }
-            out[i + 3] = (alpha * 255.0).round() as u8;
+    const RGBA: &[u8; 64 * 64 * 4] = include_bytes!("app.rgba");
+    if size == 64 {
+        return RGBA.to_vec();
+    }
+    // The area filter is channel-order agnostic and returns premultiplied
+    // pixels; egui and CreateIcon require straight-alpha colors instead.
+    let mut pixels = thumbnail(RGBA, 64, 64, size as i32, size as i32);
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        let alpha = u32::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            *channel = (u32::from(*channel) * 255 + alpha / 2)
+                .checked_div(alpha)
+                .unwrap_or(0)
+                .min(255) as u8;
         }
     }
-    out
+    pixels
 }
 
-/// Creates an icon handle from `icon_rgba`; the caller keeps it for the process lifetime.
+/// Loads an owned executable icon; the caller destroys it when no longer needed.
 pub unsafe fn app_icon(size: u32) -> HICON {
-    let rgba = icon_rgba(size);
-    let mut bgra = rgba.clone();
-    for pixel in bgra.as_chunks_mut::<4>().0 {
-        pixel.swap(0, 2);
-    }
-    let mask = vec![0u8; (size * size / 8) as usize];
-    CreateIcon(
-        null_mut(),
+    LoadImageW(
+        GetModuleHandleW(null()),
+        1usize as windows_sys::core::PCWSTR,
+        IMAGE_ICON,
         size as i32,
         size as i32,
-        1,
-        32,
-        mask.as_ptr(),
-        bgra.as_ptr(),
+        0,
     )
 }
 
