@@ -5,6 +5,7 @@ mod config;
 mod history;
 mod history_ui;
 mod imaging;
+mod record;
 mod settings_ui;
 mod toast;
 mod ui;
@@ -32,18 +33,23 @@ use windows_sys::{
 const MAIN: &str = "SnippingLiteMain";
 const OVERLAY: &str = "SnippingLiteOverlay";
 const TOOLBAR: &str = "SnippingLiteToolbar";
+const RECORD: &str = "SnippingLiteRecord";
 const NEW: usize = 100;
 const DELAY_TIMER: usize = 1;
+const RECORD_TIMER: usize = 2;
 const HOTKEY: i32 = 1;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_RELOAD: u32 = WM_APP + 2;
 const TRAY_SETTINGS: usize = 201;
 const TRAY_HISTORY: usize = 203;
 const TRAY_EXIT: usize = 202;
+const TRAY_STOP: usize = 204;
 const MODE_RECT: i32 = 0;
 const MODE_FREE: i32 = 1;
 const MODE_WINDOW: i32 = 2;
 const MODE_SCREEN: i32 = 3;
+/// Selects a rectangle like `MODE_RECT`, but records it as a video.
+const MODE_RECORD: i32 = 4;
 
 struct State {
     owner: HWND,
@@ -77,6 +83,8 @@ struct State {
     pending: bool,
     history: bool,
     hotkey_ok: bool,
+    recording: Option<record::Recording>,
+    record_window: HWND,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -128,6 +136,11 @@ unsafe fn launch_history(latest: bool) {
     launch_window(HISTORY_TITLE, "--history", latest);
 }
 unsafe fn begin_capture() {
+    // The hotkey and the tray icon end a running recording.
+    if state().recording.is_some() {
+        stop_recording();
+        return;
+    }
     if state().active || state().pending {
         return;
     }
@@ -303,11 +316,14 @@ const BAR_PADDING: f32 = 4.0;
 const BAR_GAP: f32 = 4.0;
 const DIVIDER: f32 = 9.0;
 const BAR_HEIGHT: f32 = BUTTON + 2.0 * BAR_PADDING;
-const BAR_WIDTH: f32 = 2.0 * BAR_PADDING + 5.0 * BUTTON + 3.0 * BAR_GAP + DIVIDER;
-const GLYPHS: [&str; 5] = ["\u{EF20}", "\u{EA49}", "\u{E7C4}", "\u{E7F4}", "\u{E711}"];
+const BAR_WIDTH: f32 = 2.0 * BAR_PADDING + 6.0 * BUTTON + 4.0 * BAR_GAP + DIVIDER;
+const GLYPHS: [&str; 6] = [
+    "\u{EF20}", "\u{EA49}", "\u{E7C4}", "\u{E7F4}", "\u{E714}", "\u{E711}",
+];
+const CLOSE_BUTTON: i32 = 5;
 fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     let mut left = BAR_PADDING + index as f32 * (BUTTON + BAR_GAP);
-    if index == 4 {
+    if index == CLOSE_BUTTON {
         left += DIVIDER - BAR_GAP;
     }
     [
@@ -665,7 +681,7 @@ unsafe fn restore_windows() {
 unsafe fn highlight() -> Option<RECT> {
     let s = state();
     match s.mode {
-        MODE_RECT if s.dragging => Some(bounds(s.start, s.end, s.width, s.height)),
+        MODE_RECT | MODE_RECORD if s.dragging => Some(bounds(s.start, s.end, s.width, s.height)),
         MODE_WINDOW => s.hover_window,
         _ => None,
     }
@@ -817,7 +833,9 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             } else {
                 bounds(state().start, state().end, state().width, state().height)
             };
-            if !free || state().points.len() >= 3 {
+            if state().mode == MODE_RECORD {
+                start_recording(rect);
+            } else if !free || state().points.len() >= 3 {
                 finish(rect, free);
             } else {
                 InvalidateRect(hwnd, null(), 0);
@@ -834,6 +852,167 @@ unsafe extern "system" fn overlay_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let dc = BeginPaint(hwnd, &mut ps);
             paint_overlay(dc, ps.rcPaint);
             EndPaint(hwnd, &ps);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+/// Recording indicator in DIPs: a red dot, the elapsed time and a Stop label.
+const RECORD_WIDTH: f32 = 168.0;
+const RECORD_HEIGHT: f32 = 48.0;
+/// Starts recording the selected rectangle (overlay coordinates).
+unsafe fn start_recording(rect: RECT) {
+    if rect.right - rect.left < 16 || rect.bottom - rect.top < 16 {
+        return;
+    }
+    let origin = state().origin;
+    let area = RECT {
+        left: rect.left + origin.x,
+        top: rect.top + origin.y,
+        right: rect.right + origin.x,
+        bottom: rect.bottom + origin.y,
+    };
+    let path = record::video_folder()
+        .and_then(|folder| Ok(folder.join(format!("Snipping Lite {}.mp4", imaging::timestamp()?))));
+    // The overlay closes first; our own windows stay hidden until the recording ends.
+    let hidden = std::mem::take(&mut state().hidden);
+    cancel();
+    DwmFlush();
+    let started = match path {
+        Ok(path) => record::start(area, path),
+        Err(_) => Err("Could not create the recordings folder.".to_string()),
+    };
+    state().hidden = hidden;
+    match started {
+        Ok(recording) => {
+            state().recording = Some(recording);
+            let center = POINT {
+                x: (area.left + area.right) / 2,
+                y: (area.top + area.bottom) / 2,
+            };
+            show_indicator(center);
+        }
+        Err(error) => {
+            restore_windows();
+            message(state().owner, &error);
+        }
+    }
+}
+unsafe fn show_indicator(center: POINT) {
+    let theme = ui::theme();
+    let scale = ui::scale_at(center);
+    let mut info: MONITORINFO = std::mem::zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    GetMonitorInfoW(
+        MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST),
+        &mut info,
+    );
+    let width = (RECORD_WIDTH * scale).round() as i32;
+    let height = (RECORD_HEIGHT * scale).round() as i32;
+    let hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        w(RECORD).as_ptr(),
+        w("Snipping Lite").as_ptr(),
+        WS_POPUP,
+        (info.rcMonitor.left + info.rcMonitor.right - width) / 2,
+        info.rcMonitor.top + (12.0 * scale).round() as i32,
+        width,
+        height,
+        null_mut(),
+        null_mut(),
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if hwnd.is_null() {
+        return;
+    }
+    // The indicator must not appear in the video it controls.
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+    ui::acrylic(hwnd, theme.dark);
+    ui::disable_transitions(hwnd);
+    state().theme = theme;
+    state().scale = scale;
+    state().record_window = hwnd;
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    SetTimer(hwnd, RECORD_TIMER, 500, None);
+}
+/// Ends the recording, restores our windows and announces the file.
+unsafe fn stop_recording() {
+    let Some(recording) = state().recording.take() else {
+        return;
+    };
+    let window = std::mem::replace(&mut state().record_window, null_mut());
+    if !window.is_null() {
+        DestroyWindow(window);
+    }
+    let result = recording.stop();
+    restore_windows();
+    match result {
+        Ok((path, frame)) => toast::show_recording(&frame.pixels, frame.width, frame.height, path),
+        Err(error) => message(state().owner, &error),
+    }
+}
+unsafe fn paint_record(hwnd: HWND, dc: HDC) {
+    let mut client: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut client);
+    let Some(mut canvas) = ui::Canvas::new(client.right, client.bottom) else {
+        return;
+    };
+    let s = state();
+    let (theme, scale) = (&s.theme, s.scale);
+    let elapsed = s
+        .recording
+        .as_ref()
+        .map_or(0, |r| r.started.elapsed().as_secs());
+    let text = ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32);
+    canvas.fill_round_rect(
+        [14.0 * scale, 18.0 * scale, 26.0 * scale, 30.0 * scale],
+        6.0 * scale,
+        0xffe81123,
+    );
+    canvas.text(
+        &format!("{:02}:{:02}", elapsed / 60, elapsed % 60),
+        &text,
+        ui::rect(36.0 * scale, 0.0, 92.0 * scale, client.bottom as f32),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        theme.text,
+    );
+    canvas.fill_round_rect(
+        [100.0 * scale, 8.0 * scale, 160.0 * scale, 40.0 * scale],
+        4.0 * scale,
+        theme.selected,
+    );
+    canvas.fill_round_rect(
+        [110.0 * scale, 18.0 * scale, 122.0 * scale, 30.0 * scale],
+        2.0 * scale,
+        theme.text,
+    );
+    canvas.text(
+        "Stop",
+        &text,
+        ui::rect(128.0 * scale, 0.0, 160.0 * scale, client.bottom as f32),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        theme.text,
+    );
+    canvas.present(dc);
+}
+unsafe extern "system" fn record_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match msg {
+        WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut ps);
+            paint_record(hwnd, dc);
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_TIMER if wp == RECORD_TIMER => {
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_LBUTTONUP => {
+            stop_recording();
             0
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
@@ -889,7 +1068,8 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
             theme.text,
         );
     }
-    let divider = toolbar_button(3, scale)[2] + (DIVIDER / 2.0 + BAR_GAP / 2.0 - 0.5) * scale;
+    let divider =
+        toolbar_button(MODE_RECORD, scale)[2] + (DIVIDER / 2.0 + BAR_GAP / 2.0 - 0.5) * scale;
     canvas.fill_round_rect(
         [
             divider,
@@ -945,7 +1125,7 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let hit = toolbar_hit(point(lp));
             let pressed = std::mem::replace(&mut state().pressed_button, -1);
             if hit >= 0 && hit == pressed {
-                if hit == 4 {
+                if hit == CLOSE_BUTTON {
                     cancel();
                 } else {
                     set_mode(hit);
@@ -986,6 +1166,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 NEW => begin_capture(),
                 TRAY_SETTINGS => launch_settings(),
                 TRAY_HISTORY => launch_history(false),
+                TRAY_STOP => stop_recording(),
                 TRAY_EXIT => {
                     DestroyWindow(hwnd);
                 }
@@ -999,6 +1180,9 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             }
             if lp as u32 == WM_RBUTTONUP {
                 let menu = CreatePopupMenu();
+                if state().recording.is_some() {
+                    AppendMenuW(menu, MF_STRING, TRAY_STOP, w("Stop recording").as_ptr());
+                }
                 AppendMenuW(menu, MF_STRING, NEW, w("New snip").as_ptr());
                 AppendMenuW(menu, MF_STRING, TRAY_HISTORY, w("History").as_ptr());
                 AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Settings").as_ptr());
@@ -1027,6 +1211,10 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             0
         }
         WM_DESTROY => {
+            // Finish the video file so a recording is not lost when the app exits.
+            if let Some(recording) = state().recording.take() {
+                let _ = recording.stop();
+            }
             toast::close();
             tray(hwnd, NIM_DELETE);
             UnregisterHotKey(hwnd, HOTKEY);
@@ -1105,11 +1293,14 @@ fn main() {
             pending: false,
             history: settings.history,
             hotkey_ok: false,
+            recording: None,
+            record_window: null_mut(),
         });
         STATE = &mut *app;
         register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
         register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
         register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
+        register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
         register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
         // The tray window is never shown; it receives the tray, hotkey and timer messages.
         let hwnd = CreateWindowExW(

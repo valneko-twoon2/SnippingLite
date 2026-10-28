@@ -59,17 +59,6 @@ fn layout(scale: f32, thumb_height: i32) -> (f32, f32, f32) {
 
 /// Shows a notification for a finished capture, replacing an existing one.
 pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: Option<PathBuf>) {
-    close();
-    let mut work: RECT = std::mem::zeroed();
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
-    let scale = ui::scale_at(POINT {
-        x: work.right - 1,
-        y: work.bottom - 1,
-    });
-    let inner = (WIDTH - 2.0 * PADDING) * scale;
-    let fit = (inner / width as f32).min(IMAGE_MAX * scale / height as f32);
-    let thumb_width = ((width as f32 * fit).round() as i32).max(1);
-    let thumb_height = ((height as f32 * fit).round() as i32).max(1);
     let (title, body) = match (copied, &path) {
         (true, Some(p)) => (
             "Snip copied to clipboard",
@@ -82,6 +71,34 @@ pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: O
         (false, Some(p)) => ("Snip saved", display_name(p)),
         (false, None) => return,
     };
+    present(pixels, width, height, title, body, path);
+}
+
+/// Shows a notification for a finished recording; `pixels` is its first frame.
+pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathBuf) {
+    let body = display_name(&path);
+    present(pixels, width, height, "Recording saved", body, Some(path));
+}
+
+unsafe fn present(
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    title: &'static str,
+    body: String,
+    path: Option<PathBuf>,
+) {
+    close();
+    let mut work: RECT = std::mem::zeroed();
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
+    let scale = ui::scale_at(POINT {
+        x: work.right - 1,
+        y: work.bottom - 1,
+    });
+    let inner = (WIDTH - 2.0 * PADDING) * scale;
+    let fit = (inner / width as f32).min(IMAGE_MAX * scale / height as f32);
+    let thumb_width = ((width as f32 * fit).round() as i32).max(1);
+    let thumb_height = ((height as f32 * fit).round() as i32).max(1);
     let (_, _, toast_height) = layout(scale, thumb_height);
     let toast_width = (WIDTH * scale).round() as i32;
     let toast_height = (toast_height * scale).round() as i32;
