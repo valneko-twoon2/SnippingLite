@@ -1,7 +1,10 @@
 //! Screen recording to MP4: GDI frames go through the Media Foundation sink
 //! writer, which encodes H.264 (hardware when available). Only video is recorded.
 
-use crate::i18n::tr;
+use crate::{
+    i18n::tr,
+    window_capture::{Target, WindowCapture},
+};
 use std::{
     ops::Range,
     path::{Path, PathBuf},
@@ -33,6 +36,7 @@ use windows_sys::Win32::{
 pub struct Options {
     pub fps: u32,
     pub cursor: bool,
+    pub window: Option<Target>,
 }
 /// Hundreds of nanoseconds per second, the unit of Media Foundation times.
 const TICKS: i64 = 10_000_000;
@@ -58,6 +62,8 @@ pub struct Recording {
     thread: JoinHandle<Result<Frame, String>>,
     started: Arc<OnceLock<Instant>>,
     pub path: PathBuf,
+    area: RECT,
+    target: Option<Target>,
 }
 
 /// The recording folder from the settings, created when missing.
@@ -69,7 +75,8 @@ pub fn video_folder() -> std::io::Result<PathBuf> {
 
 /// Starts recording `area` (screen coordinates); the size is rounded down to
 /// even numbers as H.264 requires. `points` is an optional freeform polygon
-/// relative to the top-left of `area`.
+/// relative to the top-left of `area`. A window target overrides `area` with
+/// its own bounds and never reads desktop pixels.
 pub fn start(
     area: RECT,
     path: PathBuf,
@@ -79,6 +86,10 @@ pub fn start(
     if !crate::config::FRAME_RATES.contains(&options.fps) {
         return Err(tr("Unsupported recording frame rate.").into());
     }
+    let area = options
+        .window
+        .map_or(Ok(area), Target::bounds)
+        .map_err(|_| tr("Could not capture the selected window.").to_string())?;
     let width = (area.right - area.left) & !1;
     let height = (area.bottom - area.top) & !1;
     if width < 16 || height < 16 {
@@ -101,10 +112,23 @@ pub fn start(
         thread,
         started,
         path,
+        area,
+        target: options.window,
     })
 }
 
 impl Recording {
+    /// Current on-screen bounds for the recording outline, independent of pixels.
+    pub fn display_area(&self) -> Option<RECT> {
+        self.target.map_or(Some(self.area), |target| {
+            target.bounds().ok().map(|mut rect| {
+                rect.right = rect.right.min(rect.left + self.area.right - self.area.left);
+                rect.bottom = rect.bottom.min(rect.top + self.area.bottom - self.area.top);
+                rect
+            })
+        })
+    }
+
     /// Encoder warm-up is excluded from both the file timeline and the UI timer.
     pub fn elapsed(&self) -> Duration {
         self.started.get().map(Instant::elapsed).unwrap_or_default()
@@ -376,6 +400,39 @@ impl Drop for Grabber {
     }
 }
 
+enum Source {
+    Screen(Grabber),
+    Window(WindowCapture),
+}
+
+impl Source {
+    unsafe fn new(area: RECT, points: &[POINT], options: Options) -> Result<Self, String> {
+        if let Some(target) = options.window {
+            WindowCapture::new(
+                target,
+                area.right - area.left,
+                area.bottom - area.top,
+                options.cursor,
+            )
+            .map(Self::Window)
+            .map_err(|_| tr("Could not capture the selected window.").to_string())
+        } else {
+            Grabber::new(area, points, options.cursor)
+                .map(Self::Screen)
+                .ok_or_else(|| tr("Could not prepare the screen capture.").to_string())
+        }
+    }
+
+    unsafe fn grab(&mut self) -> Result<&[u8], String> {
+        match self {
+            Self::Screen(grabber) => Ok(grabber.grab()),
+            Self::Window(capture) => capture
+                .grab()
+                .map_err(|_| tr("Could not capture the selected window.").to_string()),
+        }
+    }
+}
+
 fn run(
     area: RECT,
     path: &Path,
@@ -411,8 +468,7 @@ unsafe fn record(
     options: Options,
 ) -> Result<Frame, String> {
     let (width, height) = (area.right - area.left, area.bottom - area.top);
-    let mut grabber = Grabber::new(area, points, options.cursor)
-        .ok_or(tr("Could not prepare the screen capture."))?;
+    let mut grabber = Source::new(area, points, options)?;
     let writer = open(path, width, height, options.fps).map_err(|e| {
         format!(
             "{}: {}",
@@ -421,7 +477,7 @@ unsafe fn record(
         )
     })?;
     // Capture only after opening the encoder so the first image is current.
-    let mut first = grabber.grab().to_vec();
+    let mut first = grabber.grab()?.to_vec();
     first
         .as_chunks_mut::<4>()
         .0
@@ -445,7 +501,13 @@ unsafe fn record(
     while failure.is_none() && !stop.load(Ordering::Acquire) {
         #[cfg(test)]
         let capture_begin = Instant::now();
-        let pixels = grabber.grab();
+        let pixels = match grabber.grab() {
+            Ok(pixels) => pixels,
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
+        };
         #[cfg(test)]
         {
             captured_frames += 1;
@@ -508,6 +570,59 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "Requires an unlocked Windows desktop and Windows Graphics Capture"]
+    fn records_covered_window_without_other_windows() {
+        use crate::window_capture::test_support::{center, CoveredWindow};
+        let fixture = CoveredWindow::new();
+        assert!(fixture.desktop_is_red());
+        let path = std::env::temp_dir().join(format!(
+            "snippinglite-window-test-{}.mp4",
+            std::process::id()
+        ));
+        let options = Options {
+            fps: 60,
+            cursor: false,
+            window: Some(Target::new(fixture.target, true)),
+        };
+        let recording = start(
+            RECT {
+                left: 80,
+                top: 80,
+                right: 400,
+                bottom: 320,
+            },
+            path.clone(),
+            Vec::new(),
+            options,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while recording.started.get().is_none() && !recording.failed() && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let (_, frame) = recording
+            .stop()
+            .expect("Record the fully covered target window");
+        assert!(frame.warning.is_none(), "{:?}", frame.warning);
+        let pixels = center(&frame.pixels, frame.width, frame.height);
+        assert!(
+            u16::from(pixels[1]) > u16::from(pixels[0]) + 60
+                && u16::from(pixels[1]) > u16::from(pixels[2]) + 60,
+            "A different window was included in the video: {pixels:?}"
+        );
+        let data = std::fs::read(&path).unwrap();
+        if let Some(folder) = std::env::var_os("SNIPPINGLITE_RECORDING_TEST_OUTPUT") {
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(PathBuf::from(folder).join("covered-window.mp4"), &data).unwrap();
+        }
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(&data[4..8], b"ftyp");
+        assert!(fixture.desktop_is_red());
+    }
+
+    #[test]
     #[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
     fn recording_throughput() {
         // SAFETY: the benchmark owns its capture DC and bitmap on this thread.
@@ -548,7 +663,11 @@ mod tests {
                 },
                 path.clone(),
                 Vec::new(),
-                Options { fps, cursor: true },
+                Options {
+                    fps,
+                    cursor: true,
+                    window: None,
+                },
             )
             .unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
@@ -580,6 +699,7 @@ mod tests {
             let options = Options {
                 fps: if freeform { 60 } else { 30 },
                 cursor: freeform,
+                window: None,
             };
             let path = std::env::temp_dir().join(format!(
                 "snippinglite-recording-test-{}-{freeform}.mp4",

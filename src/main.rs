@@ -10,6 +10,7 @@ mod record;
 mod settings_ui;
 mod toast;
 mod ui;
+mod window_capture;
 
 use i18n::tr;
 use std::{
@@ -67,6 +68,7 @@ struct State {
     hover_button: i32,
     pressed_button: i32,
     hover_window: Option<RECT>,
+    hover_hwnd: HWND,
     scale: f32,
     theme: ui::Theme,
     toast: Option<Box<toast::Toast>>,
@@ -101,6 +103,7 @@ struct State {
     count_window: HWND,
     count_left: i32,
     count_area: RECT,
+    count_target: Option<window_capture::Target>,
     count_points: Vec<POINT>,
 }
 static mut STATE: *mut State = null_mut();
@@ -214,6 +217,7 @@ unsafe fn capture(flush: bool) {
     }
     state().points.clear();
     state().hover_window = None;
+    state().hover_hwnd = null_mut();
     state().theme = ui::theme();
     let mut cursor = POINT { x: 0, y: 0 };
     GetCursorPos(&mut cursor);
@@ -330,6 +334,7 @@ unsafe fn cleanup() {
     s.points.clear();
     s.points.shrink_to_fit();
     s.hover_window = None;
+    s.hover_hwnd = null_mut();
     s.hover_button = -1;
     s.pressed_button = -1;
 }
@@ -492,7 +497,7 @@ unsafe fn place_toolbar(cursor: POINT) {
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
 }
-unsafe fn select_window(p: POINT) -> Option<RECT> {
+unsafe fn select_window(p: POINT) -> Option<(HWND, RECT)> {
     let absolute = POINT {
         x: p.x + state().origin.x,
         y: p.y + state().origin.y,
@@ -529,14 +534,17 @@ unsafe fn select_window(p: POINT) -> Option<RECT> {
         {
             // Recording a window can leave out its title bar.
             if state().video && state().skip_title {
-                rect.top = rect.top.max(title_bottom(window)).min(rect.bottom - 1);
+                rect = window_capture::Target::new(window, true).bounds().ok()?;
             }
-            return Some(RECT {
-                left: (rect.left - state().origin.x).max(0),
-                top: (rect.top - state().origin.y).max(0),
-                right: (rect.right - state().origin.x).min(state().width),
-                bottom: (rect.bottom - state().origin.y).min(state().height),
-            });
+            return Some((
+                window,
+                RECT {
+                    left: (rect.left - state().origin.x).max(0),
+                    top: (rect.top - state().origin.y).max(0),
+                    right: (rect.right - state().origin.x).min(state().width),
+                    bottom: (rect.bottom - state().origin.y).min(state().height),
+                },
+            ));
         }
         window = GetWindow(window, GW_HWNDNEXT);
     }
@@ -714,18 +722,10 @@ unsafe fn refresh_overlay() {
 unsafe fn hovers_windows() -> bool {
     state().mode == MODE_WINDOW
 }
-/// Where the title bar ends, in screen coordinates.
-unsafe fn title_bottom(window: HWND) -> i32 {
-    let mut rect: RECT = std::mem::zeroed();
-    GetWindowRect(window, &mut rect);
-    let dpi = GetDpiForWindow(window);
-    rect.top
-        + GetSystemMetricsForDpi(SM_CYCAPTION, dpi)
-        + GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi)
-        + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
-}
 unsafe fn hover_window(p: POINT) {
-    let hover = select_window(p);
+    let selected = select_window(p);
+    state().hover_hwnd = selected.map_or(null_mut(), |(window, _)| window);
+    let hover = selected.map(|(_, rect)| rect);
     if !same(hover, state().hover_window) {
         let old = std::mem::replace(&mut state().hover_window, hover);
         invalidate_change(old, hover);
@@ -735,6 +735,7 @@ unsafe fn set_mode(mode: i32) {
     if let Some(old) = state().hover_window.take() {
         invalidate(old);
     }
+    state().hover_hwnd = null_mut();
     state().mode = mode;
     InvalidateRect(state().toolbar, null(), 0);
     if mode == MODE_SCREEN {
@@ -833,6 +834,16 @@ unsafe fn save_image(
     Ok(Some(path))
 }
 unsafe fn finish(rect: RECT, freeform: bool) {
+    if state().mode == MODE_WINDOW {
+        let image =
+            window_capture::snapshot(window_capture::Target::new(state().hover_hwnd, false));
+        cancel();
+        match image {
+            Ok(image) => deliver_capture(image.pixels, image.width, image.height),
+            Err(_) => message(state().owner, tr("Could not capture the selected window.")),
+        }
+        return;
+    }
     let width = rect.right - rect.left;
     let height = rect.bottom - rect.top;
     if width < 1 || height < 1 {
@@ -907,6 +918,10 @@ unsafe fn finish(rect: RECT, freeform: bool) {
         message(state().owner, tr("Could not copy the selected pixels."));
         return;
     };
+    deliver_capture(pixels, width, height);
+}
+
+unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
     let mut errors = Vec::new();
     let mut saved = None;
     if state().save {
@@ -1149,10 +1164,6 @@ unsafe fn complete_selection(rect: RECT, freeform: bool) {
 
 /// Starts recording a selected shape (overlay coordinates).
 unsafe fn start_recording(rect: RECT, freeform: bool) {
-    if rect.right - rect.left < 16 || rect.bottom - rect.top < 16 {
-        refresh_overlay();
-        return;
-    }
     let points = if freeform {
         state()
             .points
@@ -1166,23 +1177,39 @@ unsafe fn start_recording(rect: RECT, freeform: bool) {
         Vec::new()
     };
     let origin = state().origin;
-    let area = RECT {
+    let mut area = RECT {
         left: rect.left + origin.x,
         top: rect.top + origin.y,
         right: rect.right + origin.x,
         bottom: rect.bottom + origin.y,
     };
+    let target = (state().mode == MODE_WINDOW)
+        .then(|| window_capture::Target::new(state().hover_hwnd, state().skip_title));
+    if let Some(window) = target {
+        match window.bounds() {
+            Ok(bounds) => area = bounds,
+            Err(_) => {
+                cancel();
+                message(state().owner, tr("Could not capture the selected window."));
+                return;
+            }
+        }
+    }
+    if area.right - area.left < 16 || area.bottom - area.top < 16 {
+        refresh_overlay();
+        return;
+    }
     // The overlay closes first; our own windows stay hidden until the recording ends.
     let hidden = std::mem::take(&mut state().hidden);
     cancel();
     state().hidden = hidden;
     if state().countdown {
-        begin_countdown(area, points);
+        begin_countdown(area, points, target);
     } else {
-        begin_recording(area, points);
+        begin_recording(area, points, target);
     }
 }
-unsafe fn begin_recording(area: RECT, points: Vec<POINT>) {
+unsafe fn begin_recording(area: RECT, points: Vec<POINT>, target: Option<window_capture::Target>) {
     DwmFlush();
     let started = record::video_folder()
         .map_err(|_| tr("Could not create the recordings folder.").to_string())
@@ -1195,11 +1222,13 @@ unsafe fn begin_recording(area: RECT, points: Vec<POINT>) {
                 record::Options {
                     fps: state().record_fps,
                     cursor: state().record_cursor,
+                    window: target,
                 },
             )
         });
     match started {
         Ok(recording) => {
+            let area = recording.display_area().unwrap_or(area);
             state().recording = Some(recording);
             let center = POINT {
                 x: (area.left + area.right) / 2,
@@ -1216,7 +1245,7 @@ unsafe fn begin_recording(area: RECT, points: Vec<POINT>) {
 }
 /// A 3, 2, 1 countdown in the middle of the area; a click cancels it.
 const COUNT_SIZE: f32 = 120.0;
-unsafe fn begin_countdown(area: RECT, points: Vec<POINT>) {
+unsafe fn begin_countdown(area: RECT, points: Vec<POINT>, target: Option<window_capture::Target>) {
     let center = POINT {
         x: (area.left + area.right) / 2,
         y: (area.top + area.bottom) / 2,
@@ -1239,7 +1268,7 @@ unsafe fn begin_countdown(area: RECT, points: Vec<POINT>) {
         null(),
     );
     if hwnd.is_null() {
-        begin_recording(area, points);
+        begin_recording(area, points, target);
         return;
     }
     SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
@@ -1251,12 +1280,14 @@ unsafe fn begin_countdown(area: RECT, points: Vec<POINT>) {
     s.count_window = hwnd;
     s.count_left = 3;
     s.count_area = area;
+    s.count_target = target;
     s.count_points = points;
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, COUNT_TIMER, 1000, None);
 }
 unsafe fn cancel_countdown() {
     state().count_points.clear();
+    state().count_target = None;
     let window = std::mem::replace(&mut state().count_window, null_mut());
     if !window.is_null() {
         DestroyWindow(window);
@@ -1292,9 +1323,10 @@ unsafe extern "system" fn count_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             if state().count_left <= 0 {
                 let area = state().count_area;
                 let points = std::mem::take(&mut state().count_points);
+                let target = state().count_target.take();
                 state().count_window = null_mut();
                 DestroyWindow(hwnd);
-                begin_recording(area, points);
+                begin_recording(area, points, target);
             } else {
                 InvalidateRect(hwnd, null(), 0);
             }
@@ -1318,23 +1350,48 @@ unsafe fn show_frame(area: RECT) {
         area.right - area.left + 2 * thickness,
         area.bottom - area.top + 2 * thickness,
     );
-    let hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
-        w(FRAME).as_ptr(),
-        w(FRAME).as_ptr(),
-        WS_POPUP,
+    let previous = state().record_frame;
+    if !previous.is_null() {
+        let mut bounds: RECT = std::mem::zeroed();
+        GetWindowRect(previous, &mut bounds);
+        if bounds.left == area.left - thickness
+            && bounds.top == area.top - thickness
+            && bounds.right == area.right + thickness
+            && bounds.bottom == area.bottom + thickness
+        {
+            return;
+        }
+    }
+    let hwnd = if previous.is_null() {
+        CreateWindowExW(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            w(FRAME).as_ptr(),
+            w(FRAME).as_ptr(),
+            WS_POPUP,
+            area.left - thickness,
+            area.top - thickness,
+            width,
+            height,
+            null_mut(),
+            null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        )
+    } else {
+        previous
+    };
+    if hwnd.is_null() {
+        return;
+    }
+    SetWindowPos(
+        hwnd,
+        null_mut(),
         area.left - thickness,
         area.top - thickness,
         width,
         height,
-        null_mut(),
-        null_mut(),
-        GetModuleHandleW(null()),
-        null(),
+        SWP_NOACTIVATE | SWP_NOZORDER,
     );
-    if hwnd.is_null() {
-        return;
-    }
     let outer = CreateRectRgn(0, 0, width, height);
     let inner = CreateRectRgn(thickness, thickness, width - thickness, height - thickness);
     CombineRgn(outer, outer, inner, RGN_DIFF);
@@ -1467,6 +1524,13 @@ unsafe extern "system" fn record_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             if state().recording.as_ref().is_some_and(|r| r.failed()) {
                 stop_recording();
             } else {
+                if let Some(area) = state()
+                    .recording
+                    .as_ref()
+                    .and_then(|recording| recording.display_area())
+                {
+                    show_frame(area);
+                }
                 InvalidateRect(hwnd, null(), 0);
             }
             0
@@ -1796,6 +1860,7 @@ fn main() {
             hover_button: -1,
             pressed_button: -1,
             hover_window: None,
+            hover_hwnd: null_mut(),
             scale: 1.0,
             theme: ui::theme(),
             toast: None,
@@ -1829,6 +1894,7 @@ fn main() {
             count_window: null_mut(),
             count_left: 0,
             count_points: Vec::new(),
+            count_target: None,
             count_area: RECT {
                 left: 0,
                 top: 0,
