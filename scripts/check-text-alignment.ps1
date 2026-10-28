@@ -7,10 +7,14 @@ $anchors = 'LEFT_TOP|LEFT_BOTTOM|RIGHT_TOP|RIGHT_BOTTOM|CENTER_TOP|CENTER_BOTTOM
 
 function Line-Of([string]$Text, [int]$Index) { ($Text.Substring(0, $Index) -split "`n").Count }
 
-foreach ($file in Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.rs') {
+$src = Join-Path $root 'src'
+$build = Join-Path $src 'target'
+$sources = Get-ChildItem -LiteralPath $src -Filter '*.rs' -Recurse |
+    Where-Object { !$_.FullName.StartsWith($build + [IO.Path]::DirectorySeparatorChar) }
+foreach ($file in $sources) {
     $text = [IO.File]::ReadAllText($file.FullName)
     $lines = $text -split "`r?`n"
-    $relative = "src/$($file.Name)"
+    $relative = 'src/' + $file.FullName.Substring($src.Length + 1).Replace('\', '/')
 
     # egui: text anchors must be centered vertically.
     for ($i = 0; $i -lt $lines.Count; $i++) {
