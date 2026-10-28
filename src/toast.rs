@@ -1,0 +1,361 @@
+//! Notification shown after a capture, styled like a Windows 11 toast.
+
+use std::{
+    path::PathBuf,
+    ptr::{null, null_mut},
+    time::Instant,
+};
+use windows_sys::Win32::{
+    Foundation::*,
+    Graphics::Gdi::*,
+    UI::{
+        Controls::WM_MOUSELEAVE,
+        Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
+        Shell::ShellExecuteW,
+        WindowsAndMessaging::*,
+    },
+};
+
+use crate::{
+    point, state,
+    ui::{self, Canvas, Font},
+    w,
+};
+
+pub const CLASS: &str = "SnippingLiteToast";
+const ANIMATION: usize = 1;
+const DISMISS: usize = 2;
+const WIDTH: f32 = 364.0;
+const PADDING: f32 = 16.0;
+const HEADER: f32 = 20.0;
+const IMAGE_MAX: f32 = 188.0;
+const SLIDE_MS: f32 = 250.0;
+const VISIBLE_MS: u32 = 6000;
+
+pub struct Toast {
+    hwnd: HWND,
+    thumbnail: Vec<u8>,
+    thumb_width: i32,
+    thumb_height: i32,
+    title: &'static str,
+    body: String,
+    path: Option<PathBuf>,
+    scale: f32,
+    left: i32,
+    right: i32,
+    top: i32,
+    started: Instant,
+    closing: bool,
+    hover: bool,
+    close_hover: bool,
+}
+
+fn layout(scale: f32, thumb_height: i32) -> (f32, f32, f32) {
+    let image_top = PADDING + HEADER + 12.0;
+    let title_top = image_top + thumb_height as f32 / scale + 12.0;
+    let height = title_top + 20.0 + 2.0 + 18.0 + PADDING;
+    (image_top, title_top, height)
+}
+
+/// Shows a notification for a finished capture, replacing an existing one.
+pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: Option<PathBuf>) {
+    close();
+    let mut work: RECT = std::mem::zeroed();
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
+    let scale = ui::scale_at(POINT {
+        x: work.right - 1,
+        y: work.bottom - 1,
+    });
+    let inner = (WIDTH - 2.0 * PADDING) * scale;
+    let fit = (inner / width as f32).min(IMAGE_MAX * scale / height as f32);
+    let thumb_width = ((width as f32 * fit).round() as i32).max(1);
+    let thumb_height = ((height as f32 * fit).round() as i32).max(1);
+    let (title, body) = match (copied, &path) {
+        (true, Some(p)) => (
+            "Snip copied to clipboard",
+            format!("Saved as {}", display_name(p)),
+        ),
+        (true, None) => (
+            "Snip copied to clipboard",
+            "Paste it into a document or app".to_string(),
+        ),
+        (false, Some(p)) => ("Snip saved", display_name(p)),
+        (false, None) => return,
+    };
+    let (_, _, toast_height) = layout(scale, thumb_height);
+    let toast_width = (WIDTH * scale).round() as i32;
+    let toast_height = (toast_height * scale).round() as i32;
+    let margin = (12.0 * scale).round() as i32;
+    let right = work.right - margin;
+    let hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        w(CLASS).as_ptr(),
+        w("Snipping Lite").as_ptr(),
+        WS_POPUP,
+        work.right,
+        work.bottom - margin - toast_height,
+        toast_width,
+        toast_height,
+        null_mut(),
+        null_mut(),
+        null_mut(),
+        null(),
+    );
+    if hwnd.is_null() {
+        return;
+    }
+    state().toast = Some(Box::new(Toast {
+        hwnd,
+        thumbnail: ui::thumbnail(pixels, width, height, thumb_width, thumb_height),
+        thumb_width,
+        thumb_height,
+        title,
+        body,
+        path,
+        scale,
+        left: right - toast_width,
+        right: work.right,
+        top: work.bottom - margin - toast_height,
+        started: Instant::now(),
+        closing: false,
+        hover: false,
+        close_hover: false,
+    }));
+    ui::acrylic(hwnd, ui::theme().dark);
+    ui::disable_transitions(hwnd);
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    SetTimer(hwnd, ANIMATION, 10, None);
+    SetTimer(hwnd, DISMISS, VISIBLE_MS, None);
+}
+
+fn display_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Removes the notification immediately.
+pub unsafe fn close() {
+    if let Some(toast) = state().toast.take() {
+        DestroyWindow(toast.hwnd);
+    }
+}
+
+pub unsafe fn visible() -> bool {
+    state().toast.is_some()
+}
+
+unsafe fn begin_closing(toast: &mut Toast) {
+    if !toast.closing {
+        toast.closing = true;
+        toast.started = Instant::now();
+        KillTimer(toast.hwnd, DISMISS);
+        SetTimer(toast.hwnd, ANIMATION, 10, None);
+    }
+}
+
+fn close_button(scale: f32, width: i32) -> RECT {
+    let size = 32.0 * scale;
+    let right = width as f32 - 4.0 * scale;
+    ui::rect(right - size, 4.0 * scale, right, 4.0 * scale + size)
+}
+
+unsafe fn paint(toast: &Toast, dc: HDC) {
+    let mut client: RECT = std::mem::zeroed();
+    GetClientRect(toast.hwnd, &mut client);
+    let Some(mut canvas) = Canvas::new(client.right, client.bottom) else {
+        return;
+    };
+    let theme = ui::theme();
+    let s = toast.scale;
+    let (image_top, title_top, _) = layout(s, toast.thumb_height);
+    if toast.hover {
+        canvas.fill_round_rect(
+            [0.0, 0.0, client.right as f32, client.bottom as f32],
+            0.0,
+            theme.pressed,
+        );
+    }
+    let small = Font::new(ui::TEXT_FONT, 12.0 * s, FW_NORMAL as i32);
+    let icon = Font::new(ui::ICON_FONT, 14.0 * s, FW_NORMAL as i32);
+    canvas.text(
+        "\u{F406}",
+        &icon,
+        ui::rect(
+            PADDING * s,
+            PADDING * s,
+            (PADDING + 20.0) * s,
+            (PADDING + HEADER) * s,
+        ),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        theme.text,
+    );
+    canvas.text(
+        "Snipping Lite",
+        &small,
+        ui::rect(
+            (PADDING + 24.0) * s,
+            PADDING * s,
+            (WIDTH - PADDING - 40.0) * s,
+            (PADDING + HEADER) * s,
+        ),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        theme.secondary,
+    );
+    if toast.hover {
+        let button = close_button(s, client.right);
+        if toast.close_hover {
+            canvas.fill_round_rect(
+                [
+                    button.left as f32,
+                    button.top as f32,
+                    button.right as f32,
+                    button.bottom as f32,
+                ],
+                4.0 * s,
+                theme.hover,
+            );
+        }
+        let glyph = Font::new(ui::ICON_FONT, 10.0 * s, FW_NORMAL as i32);
+        canvas.text(
+            "\u{E711}",
+            &glyph,
+            button,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            theme.text,
+        );
+    }
+    canvas.image(
+        (PADDING * s).round() as i32,
+        (image_top * s).round() as i32,
+        toast.thumb_width,
+        toast.thumb_height,
+        &toast.thumbnail,
+    );
+    let title = Font::new(ui::TEXT_FONT, 14.0 * s, FW_SEMIBOLD as i32);
+    let body = Font::new(ui::TEXT_FONT, 12.0 * s, FW_NORMAL as i32);
+    canvas.text(
+        toast.title,
+        &title,
+        ui::rect(
+            PADDING * s,
+            title_top * s,
+            (WIDTH - PADDING) * s,
+            (title_top + 20.0) * s,
+        ),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        theme.text,
+    );
+    canvas.text(
+        &toast.body,
+        &body,
+        ui::rect(
+            PADDING * s,
+            (title_top + 22.0) * s,
+            (WIDTH - PADDING) * s,
+            (title_top + 40.0) * s,
+        ),
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
+        theme.secondary,
+    );
+    canvas.present(dc);
+}
+
+pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let Some(toast) = state().toast.as_deref_mut().filter(|t| t.hwnd == hwnd) else {
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    };
+    match msg {
+        WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut ps);
+            paint(toast, dc);
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_TIMER if wp == DISMISS => {
+            begin_closing(toast);
+            0
+        }
+        WM_TIMER if wp == ANIMATION => {
+            let t = (toast.started.elapsed().as_secs_f32() * 1000.0 / SLIDE_MS).min(1.0);
+            let (from, to, eased) = if toast.closing {
+                (toast.left, toast.right, t * t * t)
+            } else {
+                (toast.right, toast.left, 1.0 - (1.0 - t).powi(3))
+            };
+            let x = from + ((to - from) as f32 * eased).round() as i32;
+            SetWindowPos(
+                hwnd,
+                null_mut(),
+                x,
+                toast.top,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            if t >= 1.0 {
+                KillTimer(hwnd, ANIMATION);
+                if toast.closing {
+                    close();
+                }
+            }
+            0
+        }
+        WM_MOUSEMOVE => {
+            let p = point(lp);
+            let mut client: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut client);
+            let b = close_button(toast.scale, client.right);
+            let close_hover = p.x >= b.left && p.x < b.right && p.y >= b.top && p.y < b.bottom;
+            if !toast.hover || close_hover != toast.close_hover {
+                if !toast.hover {
+                    let mut track = TRACKMOUSEEVENT {
+                        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                        dwFlags: TME_LEAVE,
+                        hwndTrack: hwnd,
+                        dwHoverTime: 0,
+                    };
+                    TrackMouseEvent(&mut track);
+                    KillTimer(hwnd, DISMISS);
+                }
+                toast.hover = true;
+                toast.close_hover = close_hover;
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
+        WM_MOUSELEAVE => {
+            toast.hover = false;
+            toast.close_hover = false;
+            if !toast.closing {
+                SetTimer(hwnd, DISMISS, VISIBLE_MS / 2, None);
+            }
+            InvalidateRect(hwnd, null(), 0);
+            0
+        }
+        WM_LBUTTONUP => {
+            if !toast.close_hover {
+                if let Some(path) = &toast.path {
+                    let file: Vec<u16> =
+                        std::os::windows::ffi::OsStrExt::encode_wide(path.as_os_str())
+                            .chain(Some(0))
+                            .collect();
+                    ShellExecuteW(
+                        null_mut(),
+                        w("open").as_ptr(),
+                        file.as_ptr(),
+                        null(),
+                        null(),
+                        SW_SHOWNORMAL,
+                    );
+                }
+            }
+            begin_closing(toast);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
