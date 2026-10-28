@@ -25,6 +25,24 @@ $images = foreach ($size in 16, 20, 24, 32, 40, 48, 64, 128, 256) {
     $graphics.ScaleTransform([single]($size * 4 / 128), [single]($size * 4 / 128))
     foreach ($shape in $source.DocumentElement.ChildNodes) {
         switch ($shape.LocalName) {
+            'rect' {
+                $x = Read-Number $shape.x
+                $y = Read-Number $shape.y
+                $width = Read-Number $shape.width
+                $height = Read-Number $shape.height
+                $diameter = 2 * (Read-Number $shape.rx)
+                $path = [Drawing.Drawing2D.GraphicsPath]::new()
+                $path.AddArc($x, $y, $diameter, $diameter, 180, 90)
+                $path.AddArc(($x + $width - $diameter), $y, $diameter, $diameter, 270, 90)
+                $path.AddArc(($x + $width - $diameter), ($y + $height - $diameter), $diameter, $diameter, 0, 90)
+                $path.AddArc($x, ($y + $height - $diameter), $diameter, $diameter, 90, 90)
+                $path.CloseFigure()
+                $brush = [Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml($shape.fill))
+                $graphics.FillPath($brush, $path)
+                $pen = [Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($shape.stroke), (Read-Number $shape.'stroke-width'))
+                $graphics.DrawPath($pen, $path)
+                $pen.Dispose(); $brush.Dispose(); $path.Dispose()
+            }
             'polyline' {
                 $pen = [Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml($shape.stroke), (Read-Number $shape.'stroke-width'))
                 $pen.StartCap = $pen.EndCap = [Drawing.Drawing2D.LineCap]::Round

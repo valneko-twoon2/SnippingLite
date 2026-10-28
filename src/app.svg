@@ -1,16 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-<polyline points="38,16 18,16 18,36" fill="none" stroke="#139ADA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="74,16 94,16 94,36" fill="none" stroke="#139ADA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="38,92 18,92 18,72" fill="none" stroke="#139ADA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="74,92 94,92 94,72" fill="none" stroke="#139ADA" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="68.3,96.9 81.95,86.5" fill="none" stroke="#E64D5C" stroke-width="5.85" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="87.8,103.4 81.95,86.5" fill="none" stroke="#008FD9" stroke-width="5.85" stroke-linecap="round" stroke-linejoin="round"/>
-<polygon points="81.95,91.05 74.15,83.9 63.1,56.6 66.35,54.65 86.5,85.85" fill="#B8C9D6"/>
-<polygon points="82.6,87.8 77.4,85.85 109.25,54.65 113.8,54.0 94.95,78.05" fill="#EAF2F7"/>
-<polyline points="66.35,57.25 81.95,85.85" fill="none" stroke="#E4EDF4" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-<polyline points="83.25,88.45 111.2,55.95" fill="none" stroke="#8CA6B9" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-<circle cx="61.8" cy="103.4" r="9.75" fill="none" stroke="#E64D5C" stroke-width="4.55"/>
-<circle cx="93.0" cy="109.9" r="9.75" fill="none" stroke="#008FD9" stroke-width="4.55"/>
-<circle cx="81.95" cy="87.15" r="3.9" fill="#EAF2F7" stroke="none" stroke-width="1"/>
-<circle cx="81.95" cy="87.15" r="1.43" fill="#718B9F" stroke="none" stroke-width="1"/>
+<rect x="41" y="15" width="75" height="76" rx="9" fill="#F1F9FF" stroke="#B8E0F6" stroke-width="2"/>
+<polyline points="64,25 51,25 51,38" fill="none" stroke="#168DD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="93,25 106,25 106,38" fill="none" stroke="#168DD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="64,80 51,80 51,67" fill="none" stroke="#168DD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="93,80 106,80 106,67" fill="none" stroke="#168DD6" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="31.34,93.22 47.51,80.9" fill="none" stroke="#E64D5C" stroke-width="6.93" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="54.44,100.92 47.51,80.9" fill="none" stroke="#008FD9" stroke-width="6.93" stroke-linecap="round" stroke-linejoin="round"/>
+<polygon points="47.51,86.29 38.27,77.82 25.18,45.48 29.03,43.17 52.9,80.13" fill="#B8C9D6"/>
+<polygon points="48.28,82.44 42.12,80.13 79.85,43.17 85.24,42.4 62.91,70.89" fill="#EAF2F7"/>
+<polyline points="29.03,46.25 47.51,80.13" fill="none" stroke="#E4EDF4" stroke-width="1.54" stroke-linecap="round" stroke-linejoin="round"/>
+<polyline points="49.05,83.21 82.16,44.71" fill="none" stroke="#8CA6B9" stroke-width="1.54" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="23.64" cy="100.92" r="11.55" fill="none" stroke="#E64D5C" stroke-width="5.39"/>
+<circle cx="60.6" cy="108.62" r="11.55" fill="none" stroke="#008FD9" stroke-width="5.39"/>
+<circle cx="47.51" cy="81.67" r="4.62" fill="#EAF2F7" stroke="none" stroke-width="1"/>
+<circle cx="47.51" cy="81.67" r="1.69" fill="#718B9F" stroke="none" stroke-width="1"/>
 </svg>
