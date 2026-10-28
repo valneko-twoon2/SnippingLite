@@ -532,10 +532,10 @@ unsafe fn select_window(p: POINT) -> Option<(HWND, RECT)> {
             ) == 0
             && inside(&rect)
         {
-            // Recording a window can leave out its title bar.
-            if state().video && state().skip_title {
-                rect = window_capture::Target::new(window, true).bounds().ok()?;
-            }
+            // Highlight the captured area; recording can leave out the title bar.
+            rect = window_capture::Target::new(window, state().video && state().skip_title)
+                .bounds()
+                .ok()?;
             return Some((
                 window,
                 RECT {

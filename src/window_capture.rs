@@ -42,9 +42,12 @@ use windows_sys::Win32::{
     Foundation::{POINT, RECT},
     Graphics::{
         Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
-        Gdi::ClientToScreen,
+        Gdi::{
+            ClientToScreen, GetMonitorInfoW, MonitorFromWindow, MONITORINFO,
+            MONITOR_DEFAULTTONEAREST,
+        },
     },
-    UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, IsIconic, IsWindow},
+    UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, IsIconic, IsWindow, IsZoomed},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -62,7 +65,8 @@ impl Target {
         }
     }
 
-    pub fn bounds(self) -> Result<RECT> {
+    /// The screen area of a captured frame: the visible window frame.
+    fn frame(self) -> Result<RECT> {
         // SAFETY: Windows validates this borrowed window identifier.
         unsafe {
             let hwnd = self.id as windows_sys::Win32::Foundation::HWND;
@@ -70,34 +74,64 @@ impl Target {
                 return Err(Error::from_hresult(E_FAIL));
             }
             let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) == 0 {
+                return Err(Error::from_thread());
+            }
+            let _ = DwmGetWindowAttribute(
+                hwnd,
+                DWMWA_EXTENDED_FRAME_BOUNDS as u32,
+                (&mut rect as *mut RECT).cast(),
+                std::mem::size_of::<RECT>() as u32,
+            );
+            Ok(rect)
+        }
+    }
+
+    /// The captured screen area, a part of `frame`.
+    pub fn bounds(self) -> Result<RECT> {
+        let mut rect = self.frame()?;
+        // SAFETY: Windows validates this borrowed window identifier.
+        unsafe {
+            let hwnd = self.id as windows_sys::Win32::Foundation::HWND;
+            // DWM draws a translucent 1px border and rounded corners on restored
+            // windows; flattened onto black they look like pixels from outside.
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            let fullscreen =
+                GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) != 0
+                    && (rect.left, rect.top, rect.right, rect.bottom)
+                        == (
+                            info.rcMonitor.left,
+                            info.rcMonitor.top,
+                            info.rcMonitor.right,
+                            info.rcMonitor.bottom,
+                        );
+            if IsZoomed(hwnd) == 0 && !fullscreen {
+                rect.left += 1;
+                rect.top += 1;
+                rect.right -= 1;
+                rect.bottom -= 1;
+            }
             if self.client_only {
-                if GetClientRect(hwnd, &mut rect) == 0 {
+                let mut client: RECT = std::mem::zeroed();
+                if GetClientRect(hwnd, &mut client) == 0 {
                     return Err(Error::from_thread());
                 }
                 let mut origin = POINT { x: 0, y: 0 };
                 if ClientToScreen(hwnd, &mut origin) == 0 {
                     return Err(Error::from_thread());
                 }
-                rect.left += origin.x;
-                rect.right += origin.x;
-                rect.top += origin.y;
-                rect.bottom += origin.y;
-            } else {
-                if GetWindowRect(hwnd, &mut rect) == 0 {
-                    return Err(Error::from_thread());
-                }
-                let _ = DwmGetWindowAttribute(
-                    hwnd,
-                    DWMWA_EXTENDED_FRAME_BOUNDS as u32,
-                    (&mut rect as *mut RECT).cast(),
-                    std::mem::size_of::<RECT>() as u32,
-                );
+                // Custom title bars extend the client area into the border.
+                rect.left = rect.left.max(client.left + origin.x);
+                rect.top = rect.top.max(client.top + origin.y);
+                rect.right = rect.right.min(client.right + origin.x);
+                rect.bottom = rect.bottom.min(client.bottom + origin.y);
             }
-            if rect.right <= rect.left || rect.bottom <= rect.top {
-                return Err(Error::from_hresult(E_FAIL));
-            }
-            Ok(rect)
         }
+        if rect.right <= rect.left || rect.bottom <= rect.top {
+            return Err(Error::from_hresult(E_FAIL));
+        }
+        Ok(rect)
     }
 }
 
@@ -280,11 +314,7 @@ impl WindowCapture {
                 self.pool_size = size;
                 continue;
             }
-            let full = Target {
-                client_only: false,
-                ..self.target
-            }
-            .bounds()?;
+            let full = self.target.frame()?;
             let crop = self.target.bounds()?;
             let left = ((i64::from(crop.left - full.left) * i64::from(size.Width))
                 / i64::from(full.right - full.left))
