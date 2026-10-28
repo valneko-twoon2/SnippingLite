@@ -21,31 +21,31 @@ use windows_sys::Win32::{
 
 use crate::{
     config::{self, DELAYS},
-    ui, w, MAIN, NEW, SETTINGS_TITLE, TRAY_RELOAD,
+    ui, w, MAIN, NEW, SETTINGS_TITLE, TRAY_HISTORY, TRAY_RELOAD,
 };
 
 const SEMIBOLD: &str = "semibold";
 const WIDTH: f32 = 440.0;
-const HEIGHT: f32 = 424.0;
+const HEIGHT: f32 = 480.0;
 const MARGIN: f32 = 24.0;
 const ROW: f32 = 48.0;
 
-struct Palette {
+pub(crate) struct Palette {
     /// Translucent colors let the Mica backdrop show through.
-    mica: bool,
-    bg: Color32,
-    card: Color32,
-    stroke: Color32,
-    text: Color32,
-    secondary: Color32,
-    field: Color32,
-    accent: Color32,
-    on_accent: Color32,
-    warning: Color32,
+    pub(crate) mica: bool,
+    pub(crate) bg: Color32,
+    pub(crate) card: Color32,
+    pub(crate) stroke: Color32,
+    pub(crate) text: Color32,
+    pub(crate) secondary: Color32,
+    pub(crate) field: Color32,
+    pub(crate) accent: Color32,
+    pub(crate) on_accent: Color32,
+    pub(crate) warning: Color32,
 }
 
 impl Palette {
-    fn new(dark: bool, mica: bool) -> Palette {
+    pub(crate) fn new(dark: bool, mica: bool) -> Palette {
         let mut p = Palette::opaque(dark);
         p.mica = mica;
         if mica {
@@ -126,7 +126,7 @@ pub fn run(hotkey_ok: bool) {
 
 /// Loads Segoe UI, as in the Windows 11 settings app, falling back to other
 /// Windows fonts. egui ships no fonts here, so returns false if none is found.
-fn install_fonts(ctx: &egui::Context) -> bool {
+pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
     let mut fonts = FontDefinitions::empty();
     let folder = std::env::var_os("WINDIR")
         .map(PathBuf::from)
@@ -161,7 +161,7 @@ fn install_fonts(ctx: &egui::Context) -> bool {
     true
 }
 
-fn install_visuals(ctx: &egui::Context, mica: bool) {
+pub(crate) fn install_visuals(ctx: &egui::Context, mica: bool) {
     for theme in [Theme::Dark, Theme::Light] {
         let dark = theme == Theme::Dark;
         let p = Palette::new(dark, mica);
@@ -221,6 +221,7 @@ struct SettingsApp {
     save: bool,
     ask: bool,
     delay: u32,
+    history: bool,
     hotkey_ok: bool,
     notice: Option<Instant>,
     framed: bool,
@@ -229,12 +230,13 @@ struct SettingsApp {
 
 impl SettingsApp {
     fn new(hotkey_ok: bool, mica: bool) -> SettingsApp {
-        let (copy, save, ask, delay) = config::load_settings();
+        let settings = config::load_settings();
         SettingsApp {
-            copy,
-            save,
-            ask,
-            delay,
+            copy: settings.copy,
+            save: settings.save,
+            ask: settings.ask,
+            delay: settings.delay,
+            history: settings.history,
             hotkey_ok,
             notice: None,
             framed: false,
@@ -242,9 +244,19 @@ impl SettingsApp {
         }
     }
 
+    fn settings(&self) -> config::Settings {
+        config::Settings {
+            copy: self.copy,
+            save: self.save,
+            ask: self.ask,
+            delay: self.delay,
+            history: self.history,
+        }
+    }
+
     /// Writes the settings and tells the tray process to reload them.
     fn commit(&self) {
-        let _ = config::save_settings(self.copy, self.save, self.ask, self.delay);
+        let _ = config::save_settings(&self.settings());
         post(TRAY_RELOAD, 0);
     }
 }
@@ -262,7 +274,7 @@ fn post(message: u32, wparam: usize) {
     }
 }
 
-fn semibold(size: f32) -> FontId {
+pub(crate) fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
 }
 
@@ -321,7 +333,7 @@ impl eframe::App for SettingsApp {
         ui.label(RichText::new("Settings").font(semibold(14.0)));
         ui.add_space(8.0);
 
-        let before = (self.copy, self.save, self.ask, self.delay);
+        let before = self.settings();
         let width = ui.available_width();
         egui::Frame::new()
             .fill(p.card)
@@ -339,6 +351,10 @@ impl eframe::App for SettingsApp {
                 divider(ui, &p);
                 row(ui, &p, "Choose a file name when saving", |ui| {
                     toggle(ui, &mut self.ask, "Choose a file name when saving", &p);
+                });
+                divider(ui, &p);
+                row(ui, &p, "Keep a history of screenshots", |ui| {
+                    toggle(ui, &mut self.history, "Keep a history of screenshots", &p);
                 });
                 divider(ui, &p);
                 row(ui, &p, "Capture delay", |ui| {
@@ -362,17 +378,23 @@ impl eframe::App for SettingsApp {
             });
         if !self.copy && !self.save {
             // At least one destination must stay enabled.
-            (self.copy, self.save) = (before.0, before.1);
-            if !before.0 && !before.1 {
+            (self.copy, self.save) = (before.copy, before.save);
+            if !before.copy && !before.save {
                 self.copy = true;
             }
             self.notice = Some(Instant::now());
         }
-        if (self.copy, self.save, self.ask, self.delay) != before {
+        if self.settings() != before {
             self.commit();
         }
 
         ui.add_space(12.0);
+        if text_link(ui, "Open history", &p).clicked() {
+            // SAFETY: the call has no pointer arguments.
+            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
+            post(WM_COMMAND, TRAY_HISTORY);
+        }
+        ui.add_space(8.0);
         ui.label(
             RichText::new("Saved images: Pictures\\Screenshots (PNG or BMP)")
                 .size(12.0)
@@ -464,6 +486,28 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str, p: &Palette) -> egui::R
             Stroke::new(2.0, p.text),
             StrokeKind::Outside,
         );
+    }
+    response
+}
+
+/// A plain accent colored text button.
+fn text_link(ui: &mut egui::Ui, label: &str, p: &Palette) -> egui::Response {
+    let font = FontId::new(13.0, FontFamily::Proportional);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), p.accent);
+    let (rect, response) =
+        ui.allocate_exact_size(galley.size() + Vec2::new(0.0, 6.0), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), label));
+    let color = if response.hovered() {
+        p.accent.gamma_multiply(0.8)
+    } else {
+        p.accent
+    };
+    ui.painter()
+        .text(rect.left_center(), Align2::LEFT_CENTER, label, font, color);
+    if response.hovered() {
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
     }
     response
 }

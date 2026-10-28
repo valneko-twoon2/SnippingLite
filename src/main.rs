@@ -1,41 +1,28 @@
 #![windows_subsystem = "windows"]
 
 mod config;
+mod history;
+mod history_ui;
+mod imaging;
 mod settings_ui;
 mod toast;
 mod ui;
 
 use std::{
-    ffi::OsString,
-    fs,
-    os::windows::ffi::{OsStrExt, OsStringExt},
     path::PathBuf,
     ptr::{null, null_mut},
 };
 use windows_sys::{
-    core::{GUID, PCWSTR},
+    core::PCWSTR,
     Win32::{
         Foundation::*,
         Graphics::{
             Dwm::{DwmFlush, DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS},
             Gdi::*,
-            GdiPlus::{
-                GdipCreateBitmapFromScan0, GdipDisposeImage, GdipSaveImageToFile, GdiplusShutdown,
-                GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput,
-            },
         },
-        System::{DataExchange::*, LibraryLoader::GetModuleHandleW, Memory::*},
+        System::LibraryLoader::GetModuleHandleW,
         UI::{
-            Controls::{
-                Dialogs::{
-                    GetSaveFileNameW, OFN_EXPLORER, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST,
-                    OPENFILENAMEW,
-                },
-                WM_MOUSELEAVE,
-            },
-            HiDpi::*,
-            Input::KeyboardAndMouse::*,
-            Shell::*,
+            Controls::WM_MOUSELEAVE, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*,
             WindowsAndMessaging::*,
         },
     },
@@ -50,6 +37,7 @@ const HOTKEY: i32 = 1;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_RELOAD: u32 = WM_APP + 2;
 const TRAY_SETTINGS: usize = 201;
+const TRAY_HISTORY: usize = 203;
 const TRAY_EXIT: usize = 202;
 const MODE_RECT: i32 = 0;
 const MODE_FREE: i32 = 1;
@@ -80,13 +68,13 @@ struct State {
     end: POINT,
     points: Vec<POINT>,
     dragging: bool,
-    return_visible: bool,
+    hidden: Vec<&'static str>,
     copy: bool,
     save: bool,
     ask: bool,
     delay: u32,
     pending: bool,
-    gdiplus: usize,
+    history: bool,
     hotkey_ok: bool,
 }
 static mut STATE: *mut State = null_mut();
@@ -105,12 +93,15 @@ unsafe fn message(hwnd: HWND, text: &str) {
     );
 }
 const SETTINGS_TITLE: &str = "Snipping Lite Settings";
-unsafe fn settings_window() -> HWND {
-    FindWindowW(null(), w(SETTINGS_TITLE).as_ptr())
+const HISTORY_TITLE: &str = "Snipping Lite History";
+/// The window processes started by the tray, identified by their window titles.
+const WINDOWS: [&str; 2] = [SETTINGS_TITLE, HISTORY_TITLE];
+unsafe fn find_window(title: &str) -> HWND {
+    FindWindowW(null(), w(title).as_ptr())
 }
-/// Opens the settings window process, or brings the running one forward.
-unsafe fn launch_settings() {
-    let window = settings_window();
+/// Opens a window process (`--settings` or `--history`), or brings the running one forward.
+unsafe fn launch_window(title: &str, argument: &str) {
+    let window = find_window(title);
     if !window.is_null() {
         ShowWindow(window, SW_SHOW);
         SetForegroundWindow(window);
@@ -118,7 +109,7 @@ unsafe fn launch_settings() {
     }
     if let Ok(exe) = std::env::current_exe() {
         let _ = std::process::Command::new(exe)
-            .arg("--settings")
+            .arg(argument)
             .arg(if state().hotkey_ok {
                 "--hotkey-ok"
             } else {
@@ -127,18 +118,28 @@ unsafe fn launch_settings() {
             .spawn();
     }
 }
+unsafe fn launch_settings() {
+    launch_window(SETTINGS_TITLE, "--settings");
+}
+unsafe fn launch_history() {
+    launch_window(HISTORY_TITLE, "--history");
+}
 unsafe fn begin_capture() {
     if state().active || state().pending {
         return;
     }
     let owner = state().owner;
-    let settings = settings_window();
-    state().return_visible = !settings.is_null() && IsWindowVisible(settings) != 0;
-    // Only wait for the compositor when one of our windows has to leave the screen first.
-    let flush = state().return_visible || toast::visible();
-    if state().return_visible {
-        ShowWindow(settings, SW_HIDE);
+    // Our own windows must not appear in the capture; they come back afterwards.
+    state().hidden.clear();
+    for title in WINDOWS {
+        let window = find_window(title);
+        if !window.is_null() && IsWindowVisible(window) != 0 {
+            ShowWindow(window, SW_HIDE);
+            state().hidden.push(title);
+        }
     }
+    // Only wait for the compositor when one of our windows has to leave the screen first.
+    let flush = !state().hidden.is_empty() || toast::visible();
     toast::close();
     if state().delay > 0 && SetTimer(owner, DELAY_TIMER, state().delay * 1000, None) != 0 {
         state().pending = true;
@@ -178,7 +179,7 @@ unsafe fn capture(flush: bool) {
     }
     if !dimmed {
         cleanup();
-        restore_settings();
+        restore_windows();
         message(owner, "Could not capture the desktop.");
         return;
     }
@@ -190,7 +191,7 @@ unsafe fn capture(flush: bool) {
     state().scale = ui::scale_at(cursor);
     if !create_windows() {
         cleanup();
-        restore_settings();
+        restore_windows();
         return;
     }
     let (overlay, toolbar) = (state().overlay, state().toolbar);
@@ -536,153 +537,20 @@ unsafe fn apply_freeform_mask(
     }
     true
 }
-fn screenshot_folder() -> std::io::Result<PathBuf> {
-    let folder = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| std::io::Error::other("USERPROFILE is unavailable"))?
-        .join("Pictures")
-        .join("Screenshots");
-    fs::create_dir_all(&folder)?;
-    Ok(folder)
-}
-unsafe fn choose_path(folder: &std::path::Path, name: &str, ask: bool) -> Option<PathBuf> {
-    if !ask {
-        return Some(folder.join(name));
-    }
-    let mut file = [0u16; 520];
-    let initial: Vec<u16> = name.encode_utf16().collect();
-    file[..initial.len()].copy_from_slice(&initial);
-    let directory: Vec<u16> = folder.as_os_str().encode_wide().chain(Some(0)).collect();
-    let filter: Vec<u16> = "PNG image\0*.png\0BMP image\0*.bmp\0\0"
-        .encode_utf16()
-        .collect();
-    let extension = w("png");
-    let mut dialog: OPENFILENAMEW = std::mem::zeroed();
-    dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
-    dialog.lpstrFilter = filter.as_ptr();
-    dialog.nFilterIndex = 1;
-    dialog.lpstrFile = file.as_mut_ptr();
-    dialog.nMaxFile = file.len() as u32;
-    dialog.lpstrInitialDir = directory.as_ptr();
-    dialog.lpstrDefExt = extension.as_ptr();
-    dialog.Flags = OFN_EXPLORER | OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
-    if GetSaveFileNameW(&mut dialog) == 0 {
-        return None;
-    }
-    let length = file.iter().position(|&c| c == 0).unwrap_or(file.len());
-    let path = PathBuf::from(OsString::from_wide(&file[..length]));
-    Some(if path.extension().is_none() {
-        path.with_extension(if dialog.nFilterIndex == 2 {
-            "bmp"
-        } else {
-            "png"
-        })
-    } else {
-        path
-    })
-}
+/// Saves the capture to Pictures\\Screenshots; `None` means the user cancelled Save As.
 unsafe fn save_image(
     pixels: &[u8],
     width: i32,
     height: i32,
     ask: bool,
 ) -> std::io::Result<Option<PathBuf>> {
-    let folder = screenshot_folder()?;
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(std::io::Error::other)?
-        .as_millis();
-    let Some(path) = choose_path(&folder, &format!("Snipping Lite {timestamp}.png"), ask) else {
+    let folder = imaging::screenshot_folder()?;
+    let name = format!("Snipping Lite {}.png", imaging::timestamp()?);
+    let Some(path) = imaging::choose_path(null_mut(), &folder, &name, ask) else {
         return Ok(None);
     };
-    let bmp = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("bmp"));
-    let encoder = GUID {
-        data1: if bmp { 0x557cf400 } else { 0x557cf406 },
-        data2: 0x1a04,
-        data3: 0x11d3,
-        data4: [0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e],
-    };
-    // GDI+ is started on first save; it is only needed for encoding.
-    if state().gdiplus == 0 {
-        let input = GdiplusStartupInput {
-            GdiplusVersion: 1,
-            DebugEventCallback: 0,
-            SuppressBackgroundThread: 0,
-            SuppressExternalCodecs: 0,
-        };
-        let mut output: GdiplusStartupOutput = std::mem::zeroed();
-        let mut token = 0;
-        if GdiplusStartup(&mut token, &input, &mut output) != 0 {
-            return Err(std::io::Error::other("Could not start GDI+"));
-        }
-        state().gdiplus = token;
-    }
-    let mut image = null_mut();
-    // PixelFormat32bppARGB
-    if GdipCreateBitmapFromScan0(
-        width,
-        height,
-        width * 4,
-        0x0026200A,
-        pixels.as_ptr(),
-        &mut image,
-    ) != 0
-    {
-        return Err(std::io::Error::other("Could not create the image"));
-    }
-    let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let status = GdipSaveImageToFile(image.cast(), name.as_ptr(), &encoder, null());
-    GdipDisposeImage(image.cast());
-    if status == 0 {
-        Ok(Some(path))
-    } else {
-        Err(std::io::Error::other("Could not encode the image"))
-    }
-}
-unsafe fn copy_image(pixels: &[u8], width: i32, height: i32) -> bool {
-    let header = std::mem::size_of::<BITMAPV5HEADER>();
-    let global = GlobalAlloc(GMEM_MOVEABLE, header + pixels.len());
-    if global.is_null() {
-        return false;
-    }
-    let data = GlobalLock(global).cast::<u8>();
-    if data.is_null() {
-        GlobalFree(global);
-        return false;
-    }
-    let mut info: BITMAPV5HEADER = std::mem::zeroed();
-    info.bV5Size = header as u32;
-    info.bV5Width = width;
-    info.bV5Height = height;
-    info.bV5Planes = 1;
-    info.bV5BitCount = 32;
-    info.bV5Compression = BI_BITFIELDS;
-    info.bV5SizeImage = pixels.len() as u32;
-    info.bV5RedMask = 0x00ff0000;
-    info.bV5GreenMask = 0x0000ff00;
-    info.bV5BlueMask = 0x000000ff;
-    info.bV5AlphaMask = 0xff000000;
-    info.bV5CSType = 0x73524742;
-    info.bV5Intent = 4;
-    std::ptr::copy_nonoverlapping((&info as *const BITMAPV5HEADER).cast::<u8>(), data, header);
-    // Clipboard DIBs are bottom-up while the captured rows are top-down.
-    let row = width as usize * 4;
-    for (i, line) in pixels.chunks_exact(row).rev().enumerate() {
-        std::ptr::copy_nonoverlapping(line.as_ptr(), data.add(header + i * row), row);
-    }
-    GlobalUnlock(global);
-    let mut owned = false;
-    if OpenClipboard(state().owner) != 0 {
-        EmptyClipboard();
-        owned = !SetClipboardData(17, global).is_null();
-        CloseClipboard();
-    }
-    if !owned {
-        GlobalFree(global);
-    }
-    owned
+    imaging::encode(&path, pixels, width, height)?;
+    Ok(Some(path))
 }
 unsafe fn finish(rect: RECT, freeform: bool) {
     let width = rect.right - rect.left;
@@ -759,7 +627,7 @@ unsafe fn finish(rect: RECT, freeform: bool) {
             Err(_) => errors.push("Could not save the image."),
         }
     }
-    let copied = state().copy && copy_image(&pixels, width, height);
+    let copied = state().copy && imaging::copy_to_clipboard(state().owner, &pixels, width, height);
     if state().copy && !copied {
         errors.push("Could not copy the image to the clipboard.");
     }
@@ -767,6 +635,10 @@ unsafe fn finish(rect: RECT, freeform: bool) {
         toast::show(&pixels, width, height, copied, saved);
     } else {
         message(state().owner, &errors.join("\n"));
+    }
+    // The history is written last so it never delays the clipboard or the notification.
+    if state().history {
+        let _ = history::add(&pixels, width, height);
     }
 }
 unsafe fn cancel() {
@@ -776,12 +648,14 @@ unsafe fn cancel() {
         ShowWindow(state().overlay, SW_HIDE);
     }
     cleanup();
-    restore_settings();
+    restore_windows();
 }
-unsafe fn restore_settings() {
-    let settings = settings_window();
-    if state().return_visible && !settings.is_null() {
-        ShowWindow(settings, SW_SHOW);
+unsafe fn restore_windows() {
+    for title in std::mem::take(&mut state().hidden) {
+        let window = find_window(title);
+        if !window.is_null() {
+            ShowWindow(window, SW_SHOW);
+        }
     }
 }
 /// The undimmed part of the overlay, if any.
@@ -1096,13 +970,19 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             0
         }
         TRAY_RELOAD => {
-            (state().copy, state().save, state().ask, state().delay) = config::load_settings();
+            let settings = config::load_settings();
+            state().copy = settings.copy;
+            state().save = settings.save;
+            state().ask = settings.ask;
+            state().delay = settings.delay;
+            state().history = settings.history;
             0
         }
         WM_COMMAND => {
             match wp & 0xffff {
                 NEW => begin_capture(),
                 TRAY_SETTINGS => launch_settings(),
+                TRAY_HISTORY => launch_history(),
                 TRAY_EXIT => {
                     DestroyWindow(hwnd);
                 }
@@ -1117,6 +997,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             if lp as u32 == WM_RBUTTONUP {
                 let menu = CreatePopupMenu();
                 AppendMenuW(menu, MF_STRING, NEW, w("New snip").as_ptr());
+                AppendMenuW(menu, MF_STRING, TRAY_HISTORY, w("History").as_ptr());
                 AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Settings").as_ptr());
                 AppendMenuW(menu, MF_SEPARATOR, 0, null());
                 AppendMenuW(menu, MF_STRING, TRAY_EXIT, w("Exit").as_ptr());
@@ -1178,13 +1059,17 @@ unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
 }
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--history") {
+        history_ui::run();
+        return;
+    }
     if args.iter().any(|a| a == "--settings") {
         settings_ui::run(args.iter().any(|a| a == "--hotkey-ok"));
         return;
     }
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        let (copy, save, ask, delay) = config::load_settings();
+        let settings = config::load_settings();
         let mut app = Box::new(State {
             owner: null_mut(),
             overlay: null_mut(),
@@ -1209,13 +1094,13 @@ fn main() {
             end: POINT { x: 0, y: 0 },
             points: Vec::new(),
             dragging: false,
-            return_visible: true,
-            copy,
-            save,
-            ask,
-            delay,
+            hidden: Vec::new(),
+            copy: settings.copy,
+            save: settings.save,
+            ask: settings.ask,
+            delay: settings.delay,
             pending: false,
-            gdiplus: 0,
+            history: settings.history,
             hotkey_ok: false,
         });
         STATE = &mut *app;
@@ -1247,9 +1132,6 @@ fn main() {
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
-        }
-        if state().gdiplus != 0 {
-            GdiplusShutdown(state().gdiplus);
         }
         STATE = null_mut();
     }

@@ -338,7 +338,12 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         }
         WM_LBUTTONUP => {
             if !toast.close_hover {
-                if let Some(path) = &toast.path {
+                if toast.path.is_none() {
+                    // Nothing was saved to a file, so open the history instead.
+                    if state().history {
+                        crate::launch_history();
+                    }
+                } else if let Some(path) = &toast.path {
                     let file: Vec<u16> =
                         std::os::windows::ffi::OsStrExt::encode_wide(path.as_os_str())
                             .chain(Some(0))
