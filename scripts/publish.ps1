@@ -1,0 +1,12 @@
+$ErrorActionPreference = 'Stop'
+Push-Location (Split-Path $PSScriptRoot -Parent)
+try {
+    cargo build --config src/.cargo/config.toml --manifest-path src/Cargo.toml --release --locked
+    if ($LASTEXITCODE -ne 0) { throw 'Release build failed.' }
+    $null = New-Item -ItemType Directory -Path artifacts -Force
+    Copy-Item -LiteralPath src/target/release/snippinglite.exe -Destination artifacts/snippinglite.exe -Force
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath artifacts/snippinglite.exe).Hash.ToLower()
+    [IO.File]::WriteAllText("$PWD/artifacts/snippinglite.exe.sha256", $hash, [Text.Encoding]::ASCII)
+    Copy-Item -LiteralPath LICENSE, THIRD-PARTY-NOTICES.txt -Destination artifacts -Force
+    Write-Host 'Release executable, checksum and licenses are in artifacts/.'
+} finally { Pop-Location }
