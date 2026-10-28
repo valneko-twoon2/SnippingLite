@@ -15,6 +15,42 @@ pub const HISTORY_LIMITS: [usize; 4] = [50, 100, 200, 500];
 pub const FRAME_RATES: [u32; 2] = [30, 60];
 pub const DEFAULT_FRAME_RATE: u32 = 60;
 
+/// The app theme: follow Windows, or always light or dark.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum AppTheme {
+    System,
+    Light,
+    Dark,
+}
+
+impl AppTheme {
+    pub const ALL: [AppTheme; 3] = [AppTheme::System, AppTheme::Light, AppTheme::Dark];
+
+    fn parse(text: &str) -> AppTheme {
+        match text {
+            "light" => AppTheme::Light,
+            "dark" => AppTheme::Dark,
+            _ => AppTheme::System,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            AppTheme::System => "system",
+            AppTheme::Light => "light",
+            AppTheme::Dark => "dark",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AppTheme::System => tr("Use system setting"),
+            AppTheme::Light => tr("Light"),
+            AppTheme::Dark => tr("Dark"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub copy: bool,
@@ -37,6 +73,7 @@ pub struct Settings {
     pub freeze: bool,
     /// Show a notification after a screenshot or recording is saved.
     pub notify: bool,
+    pub theme: AppTheme,
     /// Where screenshots are saved; empty means the default folder.
     pub screenshot_folder: String,
     /// Where recordings are saved; empty means the default folder.
@@ -111,6 +148,7 @@ pub fn parse_settings(text: &str) -> Settings {
             .unwrap_or(DEFAULT_FRAME_RATE),
         freeze: text.lines().any(|s| s == "freeze=1"),
         notify: !text.lines().any(|s| s == "notify=0"),
+        theme: AppTheme::parse(&value(text, "theme=")),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
     }
@@ -195,7 +233,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_atomic(
         &path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
@@ -208,6 +246,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
             settings.record_fps,
             settings.freeze as u8,
             settings.notify as u8,
+            settings.theme.key(),
             settings.screenshot_folder,
             settings.video_folder
         ),
@@ -235,12 +274,13 @@ mod tests {
                 record_fps: 60,
                 freeze: false,
                 notify: true,
+                theme: AppTheme::System,
                 screenshot_folder: String::new(),
                 video_folder: String::new()
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -257,6 +297,7 @@ mod tests {
                 record_fps: 30,
                 freeze: true,
                 notify: false,
+                theme: AppTheme::Dark,
                 screenshot_folder: "D:\\Shots".to_owned(),
                 video_folder: String::new()
             }

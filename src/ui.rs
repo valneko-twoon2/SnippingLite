@@ -23,7 +23,8 @@ use windows_sys::Win32::{
     },
 };
 
-use crate::w;
+use crate::{config::AppTheme, w};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 mod canvas;
 pub use canvas::*;
@@ -86,7 +87,14 @@ pub struct Theme {
     pub bg_ref: u32,
 }
 
-pub fn theme() -> Theme {
+/// The theme chosen in the settings, as `AppTheme` discriminants.
+static THEME_CHOICE: AtomicU8 = AtomicU8::new(AppTheme::System as u8);
+
+pub fn set_theme_choice(choice: AppTheme) {
+    THEME_CHOICE.store(choice as u8, Ordering::Relaxed);
+}
+
+fn system_dark() -> bool {
     let mut light = 1u32;
     let mut size = 4u32;
     // SAFETY: the output buffer and its size describe `light`.
@@ -101,7 +109,16 @@ pub fn theme() -> Theme {
             &mut size,
         )
     } == 0;
-    if found && light == 0 {
+    found && light == 0
+}
+
+pub fn theme() -> Theme {
+    let dark = match THEME_CHOICE.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => system_dark(),
+    };
+    if dark {
         Theme {
             dark: true,
             text: 0xffffffff,

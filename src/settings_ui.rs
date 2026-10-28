@@ -126,6 +126,7 @@ pub fn run(hotkey_ok: bool) {
                 return Err("No usable system font was found.".into());
             }
             let mica = ui::supports_mica();
+            apply_theme(&cc.egui_ctx, config::load_settings().theme);
             install_visuals(&cc.egui_ctx, mica);
             Ok(Box::new(SettingsApp::new(hotkey_ok, mica)))
         }),
@@ -192,6 +193,16 @@ pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
     );
     ctx.set_fonts(fonts);
     true
+}
+
+/// Applies the chosen app theme to `ui::theme()` and to the egui context.
+pub(crate) fn apply_theme(ctx: &egui::Context, choice: config::AppTheme) {
+    ui::set_theme_choice(choice);
+    ctx.set_theme(match choice {
+        config::AppTheme::System => egui::ThemePreference::System,
+        config::AppTheme::Light => egui::ThemePreference::Light,
+        config::AppTheme::Dark => egui::ThemePreference::Dark,
+    });
 }
 
 pub(crate) fn install_visuals(ctx: &egui::Context, mica: bool) {

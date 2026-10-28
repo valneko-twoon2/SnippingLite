@@ -19,7 +19,8 @@ pub(super) struct SettingsApp {
     video_folder: String,
     hotkey_ok: bool,
     notice: Option<Instant>,
-    framed: bool,
+    theme: config::AppTheme,
+    framed: Option<bool>,
     mica: bool,
 }
 
@@ -39,11 +40,12 @@ impl SettingsApp {
             record_fps: settings.record_fps,
             freeze: settings.freeze,
             notify: settings.notify,
+            theme: settings.theme,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
             hotkey_ok,
             notice: None,
-            framed: false,
+            framed: None,
             mica,
         }
     }
@@ -62,6 +64,7 @@ impl SettingsApp {
             record_fps: self.record_fps,
             freeze: self.freeze,
             notify: self.notify,
+            theme: self.theme,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
         }
@@ -100,8 +103,8 @@ impl eframe::App for SettingsApp {
         let ctx = ui.ctx().clone();
         let dark = ctx.theme() == Theme::Dark;
         let p = Palette::new(dark, self.mica);
-        if !self.framed {
-            self.framed = true;
+        if self.framed != Some(dark) {
+            self.framed = Some(dark);
             // SAFETY: the title is a valid UTF-16 string and the handle is
             // only passed to DWM attribute calls.
             unsafe {
@@ -306,6 +309,19 @@ impl eframe::App for SettingsApp {
                         |_| {},
                     );
                 });
+                section(ui, &p, tr("Appearance"), true);
+                card(ui, &p, width, |ui| {
+                    row(ui, &p, tr("App theme"), None, |ui| {
+                        egui::ComboBox::from_id_salt("app_theme")
+                            .selected_text(self.theme.label())
+                            .width(180.0)
+                            .show_ui(ui, |ui| {
+                                for choice in config::AppTheme::ALL {
+                                    ui.selectable_value(&mut self.theme, choice, choice.label());
+                                }
+                            });
+                    });
+                });
                 ui.add_space(20.0);
             });
         if let Some((video, action)) = folder_action {
@@ -340,6 +356,9 @@ impl eframe::App for SettingsApp {
             self.notice = Some(Instant::now());
         }
         if self.settings() != before {
+            if self.theme != before.theme {
+                apply_theme(&ctx, self.theme);
+            }
             self.commit();
         }
         if warning {

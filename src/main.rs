@@ -252,6 +252,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().record_fps = settings.record_fps;
             state().freeze = settings.freeze;
             state().notify = settings.notify;
+            ui::set_theme_choice(settings.theme);
             0
         }
         WM_COMMAND => {
@@ -362,6 +363,7 @@ fn main() {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let settings = config::load_settings();
+        ui::set_theme_choice(settings.theme);
         let mut app = Box::new(State {
             owner: null_mut(),
             overlay: null_mut(),

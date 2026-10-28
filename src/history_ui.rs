@@ -22,7 +22,7 @@ use crate::{
     config,
     history::{self, Entry},
     imaging,
-    settings_ui::{install_fonts, install_visuals, semibold, Palette},
+    settings_ui::{apply_theme, install_fonts, install_visuals, semibold, Palette},
     ui, w, HISTORY_TITLE, HISTORY_WINDOW,
 };
 
@@ -57,6 +57,7 @@ pub fn run(latest: bool) {
                 return Err("No usable system font was found.".into());
             }
             let mica = ui::supports_mica();
+            apply_theme(&cc.egui_ctx, config::load_settings().theme);
             install_visuals(&cc.egui_ctx, mica);
             Ok(Box::new(HistoryApp::new(mica, latest)))
         }),
@@ -127,7 +128,7 @@ impl Range {
 
 struct HistoryApp {
     mica: bool,
-    framed: bool,
+    framed: Option<bool>,
     entries: Vec<Entry>,
     refreshed: Instant,
     thumbnails: HashMap<u128, Option<TextureHandle>>,
@@ -152,7 +153,7 @@ impl HistoryApp {
         HistoryApp {
             open_latest: latest,
             mica,
-            framed: false,
+            framed: None,
             entries: history::list(),
             refreshed: Instant::now(),
             thumbnails: HashMap::new(),
@@ -308,8 +309,8 @@ impl eframe::App for HistoryApp {
         let ctx = ui.ctx().clone();
         let dark = ctx.theme() == Theme::Dark;
         let p = Palette::new(dark, self.mica);
-        if !self.framed {
-            self.framed = true;
+        if self.framed != Some(dark) {
+            self.framed = Some(dark);
             // SAFETY: the handle is only passed to DWM attribute calls.
             unsafe {
                 let hwnd = ui::identify_app_window(HISTORY_WINDOW);
