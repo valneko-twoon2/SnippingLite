@@ -281,6 +281,8 @@ mod tests {
             include_str!("main.rs"),
             include_str!("config.rs"),
             include_str!("settings_ui.rs"),
+            include_str!("settings_ui/app.rs"),
+            include_str!("settings_ui/widgets.rs"),
             include_str!("history_ui.rs"),
             include_str!("toast.rs"),
             include_str!("record.rs"),
