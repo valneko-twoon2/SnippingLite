@@ -13,9 +13,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::HWND,
-    UI::{
-        Shell::ShellExecuteW, WindowsAndMessaging::FindWindowW, WindowsAndMessaging::SW_SHOWNORMAL,
-    },
+    UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
 };
 
 use crate::i18n::tr;
@@ -25,7 +23,7 @@ use crate::{
     history::{self, Entry},
     imaging,
     settings_ui::{install_fonts, install_visuals, semibold, Palette},
-    ui, w, HISTORY_TITLE,
+    ui, w, HISTORY_TITLE, HISTORY_WINDOW,
 };
 
 const CELL_MIN: f32 = 200.0;
@@ -263,8 +261,8 @@ fn load_texture(ctx: &egui::Context, path: &Path) -> Option<(TextureHandle, i32,
 }
 
 fn window() -> HWND {
-    // SAFETY: the title is a valid, nul-terminated UTF-16 string.
-    unsafe { FindWindowW(null(), w(HISTORY_TITLE).as_ptr()) }
+    // SAFETY: this only queries the tagged document window.
+    unsafe { ui::find_app_window(HISTORY_WINDOW) }
 }
 
 fn show_in_folder(path: &Path) {
@@ -309,7 +307,7 @@ impl eframe::App for HistoryApp {
             self.framed = true;
             // SAFETY: the handle is only passed to DWM attribute calls.
             unsafe {
-                let hwnd = window();
+                let hwnd = ui::identify_app_window(HISTORY_WINDOW);
                 if !hwnd.is_null() {
                     ui::disable_transitions(hwnd);
                     if self.mica {

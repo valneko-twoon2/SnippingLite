@@ -3,7 +3,7 @@
 //! The surfaces use a DWM acrylic backdrop, so everything is rendered into a
 //! premultiplied 32-bit DIB and copied to the window in one `BitBlt`.
 
-use std::ptr::null_mut;
+use std::ptr::{null, null_mut};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
@@ -13,7 +13,9 @@ use windows_sys::Win32::{
     UI::{
         Controls::MARGINS,
         HiDpi::*,
-        WindowsAndMessaging::{CreateIcon, HICON},
+        WindowsAndMessaging::{
+            CreateIcon, FindWindowExW, GetPropW, GetWindowThreadProcessId, SetPropW, HICON,
+        },
     },
 };
 
@@ -21,6 +23,46 @@ use crate::w;
 
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
 pub const TEXT_FONT: &str = "Yu Gothic UI";
+
+/// Finds a document by role even when settings and history share a caption.
+pub unsafe fn find_app_window(identity: &str) -> HWND {
+    let mut previous = null_mut();
+    loop {
+        let window = FindWindowExW(
+            null_mut(),
+            previous,
+            null(),
+            w(crate::SETTINGS_TITLE).as_ptr(),
+        );
+        if window.is_null() || !GetPropW(window, w(identity).as_ptr()).is_null() {
+            return window;
+        }
+        previous = window;
+    }
+}
+
+/// Tags the document belonging to this window process on its first frame.
+pub unsafe fn identify_app_window(identity: &str) -> HWND {
+    let mut previous = null_mut();
+    loop {
+        let window = FindWindowExW(
+            null_mut(),
+            previous,
+            null(),
+            w(crate::SETTINGS_TITLE).as_ptr(),
+        );
+        if window.is_null() {
+            return window;
+        }
+        let mut process = 0;
+        GetWindowThreadProcessId(window, &mut process);
+        if process == std::process::id() {
+            SetPropW(window, w(identity).as_ptr(), 1usize as HANDLE);
+            return window;
+        }
+        previous = window;
+    }
+}
 
 /// Colors are 0xAARRGGBB with straight alpha.
 pub struct Theme {
@@ -556,6 +598,51 @@ pub fn rect(left: f32, top: f32, right: f32, bottom: f32) -> RECT {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_roles_distinguish_windows_with_the_same_caption() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WS_POPUP,
+        };
+        // SAFETY: these are private, hidden test windows using the system STATIC class.
+        unsafe {
+            let create = || {
+                CreateWindowExW(
+                    0,
+                    w("STATIC").as_ptr(),
+                    w(crate::SETTINGS_TITLE).as_ptr(),
+                    WS_POPUP,
+                    0,
+                    0,
+                    1,
+                    1,
+                    null_mut(),
+                    null_mut(),
+                    null_mut(),
+                    null(),
+                )
+            };
+            let settings = create();
+            let history = create();
+            assert!(!settings.is_null() && !history.is_null());
+            SetPropW(
+                settings,
+                w("SnippingLite.Test.Settings").as_ptr(),
+                1usize as HANDLE,
+            );
+            SetPropW(
+                history,
+                w("SnippingLite.Test.History").as_ptr(),
+                1usize as HANDLE,
+            );
+            let found_settings = find_app_window("SnippingLite.Test.Settings");
+            let found_history = find_app_window("SnippingLite.Test.History");
+            DestroyWindow(settings);
+            DestroyWindow(history);
+            assert_eq!(found_settings, settings);
+            assert_eq!(found_history, history);
+        }
+    }
 
     #[test]
     fn empty_notification_text_leaves_the_canvas_unchanged() {

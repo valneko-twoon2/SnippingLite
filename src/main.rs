@@ -116,18 +116,19 @@ unsafe fn message(hwnd: HWND, text: &str) {
         MB_OK | MB_ICONINFORMATION,
     );
 }
-// Window titles identify the window processes, so they are fixed strings.
+// Both document windows share a caption; properties identify their roles.
 const SETTINGS_TITLE: &str = "Snipping Lite";
-const HISTORY_TITLE: &str = "Snipping Lite 履歴";
-/// The window processes started by the tray, identified by their window titles.
-const WINDOWS: [&str; 2] = [SETTINGS_TITLE, HISTORY_TITLE];
-unsafe fn find_window(title: &str) -> HWND {
-    FindWindowW(null(), w(title).as_ptr())
+const HISTORY_TITLE: &str = SETTINGS_TITLE;
+const SETTINGS_WINDOW: &str = "SnippingLite.Settings";
+const HISTORY_WINDOW: &str = "SnippingLite.History";
+const WINDOWS: [&str; 2] = [SETTINGS_WINDOW, HISTORY_WINDOW];
+unsafe fn find_window(identity: &str) -> HWND {
+    ui::find_app_window(identity)
 }
 /// Opens a window process (`--settings` or `--history`), or brings the running one forward.
 /// `latest` asks a new history window to open the newest screenshot.
-unsafe fn launch_window(title: &str, argument: &str, latest: bool) {
-    let window = find_window(title);
+unsafe fn launch_window(identity: &str, argument: &str, latest: bool) {
+    let window = find_window(identity);
     if !window.is_null() {
         ShowWindow(window, SW_SHOW);
         SetForegroundWindow(window);
@@ -146,10 +147,10 @@ unsafe fn launch_window(title: &str, argument: &str, latest: bool) {
     }
 }
 unsafe fn launch_settings() {
-    launch_window(SETTINGS_TITLE, "--settings", false);
+    launch_window(SETTINGS_WINDOW, "--settings", false);
 }
 unsafe fn launch_history(latest: bool) {
-    launch_window(HISTORY_TITLE, "--history", latest);
+    launch_window(HISTORY_WINDOW, "--history", latest);
 }
 unsafe fn begin_capture() {
     // The hotkey and the tray icon end a running recording.
@@ -168,11 +169,11 @@ unsafe fn begin_capture() {
     let owner = state().owner;
     // Our own windows must not appear in the capture; they come back afterwards.
     state().hidden.clear();
-    for title in WINDOWS {
-        let window = find_window(title);
+    for identity in WINDOWS {
+        let window = find_window(identity);
         if !window.is_null() && IsWindowVisible(window) != 0 {
             ShowWindow(window, SW_HIDE);
-            state().hidden.push(title);
+            state().hidden.push(identity);
         }
     }
     // Only wait for the compositor when one of our windows has to leave the screen first.
@@ -936,8 +937,8 @@ unsafe fn cancel() {
     restore_windows();
 }
 unsafe fn restore_windows() {
-    for title in std::mem::take(&mut state().hidden) {
-        let window = find_window(title);
+    for identity in std::mem::take(&mut state().hidden) {
+        let window = find_window(identity);
         if !window.is_null() {
             ShowWindow(window, SW_SHOW);
         }

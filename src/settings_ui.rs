@@ -22,7 +22,7 @@ use windows_sys::Win32::{
 use crate::i18n::tr;
 use crate::{
     config::{self, DELAYS, HISTORY_LIMITS},
-    imaging, ui, w, MAIN, SETTINGS_TITLE, TRAY_HISTORY, TRAY_RELOAD,
+    imaging, ui, w, MAIN, SETTINGS_TITLE, SETTINGS_WINDOW, TRAY_HISTORY, TRAY_RELOAD,
 };
 
 const SEMIBOLD: &str = "semibold";
@@ -342,7 +342,7 @@ impl eframe::App for SettingsApp {
             // SAFETY: the title is a valid UTF-16 string and the handle is
             // only passed to DWM attribute calls.
             unsafe {
-                let hwnd = FindWindowW(null(), w(SETTINGS_TITLE).as_ptr());
+                let hwnd = ui::identify_app_window(SETTINGS_WINDOW);
                 if !hwnd.is_null() {
                     ui::disable_transitions(hwnd);
                     if self.mica {
@@ -361,39 +361,6 @@ impl eframe::App for SettingsApp {
             bounds.min + Vec2::new(8.0, 16.0),
             Vec2::new(bounds.width() - 16.0, 40.0),
         );
-        let back = egui::Rect::from_center_size(
-            pos2(header.left() + 16.0, header.center().y),
-            Vec2::splat(32.0),
-        );
-        let response = ui.interact(back, ui.make_persistent_id("settings_back"), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Back")));
-        if response.hovered() || response.has_focus() {
-            ui.painter()
-                .rect_filled(back, CornerRadius::same(4), p.field);
-        }
-        let center = back.center();
-        let stroke = Stroke::new(1.25, p.text);
-        ui.painter().line_segment(
-            [center + Vec2::new(-7.0, 0.0), center + Vec2::new(7.0, 0.0)],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [
-                center + Vec2::new(-7.0, 0.0),
-                center + Vec2::new(-1.0, -6.0),
-            ],
-            stroke,
-        );
-        ui.painter().line_segment(
-            [center + Vec2::new(-7.0, 0.0), center + Vec2::new(-1.0, 6.0)],
-            stroke,
-        );
-        if response.on_hover_text(tr("Back")).clicked() {
-            // SAFETY: the call has no pointer arguments.
-            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
-            post(WM_COMMAND, TRAY_HISTORY);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
         ui.painter().text(
             pos2(bounds.left() + MARGIN, header.center().y),
             Align2::LEFT_CENTER,
@@ -561,7 +528,7 @@ impl eframe::App for SettingsApp {
                 FolderAction::Open => imaging::open_folder(&current),
                 FolderAction::Change => {
                     // SAFETY: the title is a valid UTF-16 string; the handle only owns the dialog.
-                    let owner = unsafe { FindWindowW(null(), w(SETTINGS_TITLE).as_ptr()) };
+                    let owner = unsafe { ui::find_app_window(SETTINGS_WINDOW) };
                     if let Some(path) = imaging::choose_folder(owner, &current) {
                         let text = path.to_string_lossy().into_owned();
                         if video {
