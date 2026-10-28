@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod annotate;
 mod config;
 mod history;
 mod history_ui;

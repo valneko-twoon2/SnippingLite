@@ -4,6 +4,8 @@ use std::{fs, path::PathBuf};
 
 /// Capture delays in seconds offered in the settings window.
 pub const DELAYS: [u32; 4] = [0, 3, 5, 10];
+/// History sizes offered in the settings window; the middle one is the default.
+pub const HISTORY_LIMITS: [usize; 4] = [50, 100, 200, 500];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -14,6 +16,8 @@ pub struct Settings {
     pub delay: u32,
     /// Keep every capture in the history.
     pub history: bool,
+    /// The oldest history entries beyond this count are deleted.
+    pub history_limit: usize,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -27,12 +31,19 @@ pub fn parse_settings(text: &str) -> Settings {
         .and_then(|v| v.parse().ok())
         .filter(|d| DELAYS.contains(d))
         .unwrap_or(0);
+    let history_limit = text
+        .lines()
+        .find_map(|s| s.strip_prefix("history_limit="))
+        .and_then(|v| v.parse().ok())
+        .filter(|l| HISTORY_LIMITS.contains(l))
+        .unwrap_or(HISTORY_LIMITS[2]);
     Settings {
         copy: !text.lines().any(|s| s == "copy=0"),
         save: text.lines().any(|s| s == "save=1"),
         ask: text.lines().any(|s| s == "ask=1"),
         delay,
         history: !text.lines().any(|s| s == "history=0"),
+        history_limit,
     }
 }
 
@@ -53,12 +64,13 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     fs::write(
         path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
             settings.delay,
-            settings.history as u8
+            settings.history as u8,
+            settings.history_limit
         ),
     )
 }
@@ -76,10 +88,13 @@ mod tests {
                 save: false,
                 ask: false,
                 delay: 0,
-                history: true
+                history: true,
+                history_limit: 200
             }
         );
-        let parsed = parse_settings("copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\n");
+        let parsed = parse_settings(
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\n",
+        );
         assert_eq!(
             parsed,
             Settings {
@@ -87,9 +102,11 @@ mod tests {
                 save: true,
                 ask: true,
                 delay: 5,
-                history: false
+                history: false,
+                history_limit: 50
             }
         );
         assert_eq!(parse_settings("delay=7").delay, 0);
+        assert_eq!(parse_settings("history_limit=7").history_limit, 200);
     }
 }

@@ -1,15 +1,13 @@
 //! The screenshot history: every capture is stored with a small thumbnail in
-//! `%LOCALAPPDATA%\Snipping Lite\history`, newest first, up to `LIMIT` entries.
+//! `%LOCALAPPDATA%\Snipping Lite\history`, newest first, up to the configured size.
 
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::{imaging, ui};
+use crate::{config, imaging, ui};
 
-/// The oldest entries beyond this count are deleted.
-pub const LIMIT: usize = 200;
 const THUMB_WIDTH: i32 = 320;
 const THUMB_HEIGHT: i32 = 200;
 
@@ -77,6 +75,21 @@ pub fn add(pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
     let folder = folder().ok_or_else(|| std::io::Error::other("LOCALAPPDATA is unavailable"))?;
     fs::create_dir_all(&folder)?;
     let new = entry(&folder, imaging::timestamp()?);
+    if let Err(error) = store(&new, pixels, width, height) {
+        remove_entry(&new);
+        return Err(error);
+    }
+    prune_in(&folder, config::load_settings().history_limit);
+    Ok(())
+}
+
+/// Replaces the pictures of an existing entry, for example after annotating it.
+pub fn replace(entry: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+    store(entry, pixels, width, height)
+}
+
+/// Writes the full-size image and its thumbnail.
+fn store(new: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
     let scale = (THUMB_WIDTH as f32 / width as f32).min(THUMB_HEIGHT as f32 / height as f32);
     let (tw, th) = if scale < 1.0 {
         (
@@ -89,12 +102,7 @@ pub fn add(pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
     let mut thumbnail = ui::thumbnail(pixels, width, height, tw, th);
     unpremultiply(&mut thumbnail);
     imaging::encode(&new.thumbnail, &thumbnail, tw, th)?;
-    if let Err(error) = imaging::encode(&new.image, pixels, width, height) {
-        remove_entry(&new);
-        return Err(error);
-    }
-    prune_in(&folder, LIMIT);
-    Ok(())
+    imaging::encode(&new.image, pixels, width, height)
 }
 
 /// Converts premultiplied BGRA to straight alpha in place.

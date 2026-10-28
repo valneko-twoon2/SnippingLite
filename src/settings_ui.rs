@@ -20,13 +20,13 @@ use windows_sys::Win32::{
 };
 
 use crate::{
-    config::{self, DELAYS},
+    config::{self, DELAYS, HISTORY_LIMITS},
     ui, w, MAIN, NEW, SETTINGS_TITLE, TRAY_HISTORY, TRAY_RELOAD,
 };
 
 const SEMIBOLD: &str = "semibold";
 const WIDTH: f32 = 440.0;
-const HEIGHT: f32 = 480.0;
+const HEIGHT: f32 = 536.0;
 const MARGIN: f32 = 24.0;
 const ROW: f32 = 48.0;
 
@@ -222,6 +222,7 @@ struct SettingsApp {
     ask: bool,
     delay: u32,
     history: bool,
+    history_limit: usize,
     hotkey_ok: bool,
     notice: Option<Instant>,
     framed: bool,
@@ -237,6 +238,7 @@ impl SettingsApp {
             ask: settings.ask,
             delay: settings.delay,
             history: settings.history,
+            history_limit: settings.history_limit,
             hotkey_ok,
             notice: None,
             framed: false,
@@ -251,6 +253,7 @@ impl SettingsApp {
             ask: self.ask,
             delay: self.delay,
             history: self.history,
+            history_limit: self.history_limit,
         }
     }
 
@@ -355,6 +358,21 @@ impl eframe::App for SettingsApp {
                 divider(ui, &p);
                 row(ui, &p, "Keep a history of screenshots", |ui| {
                     toggle(ui, &mut self.history, "Keep a history of screenshots", &p);
+                });
+                divider(ui, &p);
+                row(ui, &p, "History size", |ui| {
+                    egui::ComboBox::from_id_salt("history_limit")
+                        .selected_text(format!("{} screenshots", self.history_limit))
+                        .width(124.0)
+                        .show_ui(ui, |ui| {
+                            for n in HISTORY_LIMITS {
+                                ui.selectable_value(
+                                    &mut self.history_limit,
+                                    n,
+                                    format!("{n} screenshots"),
+                                );
+                            }
+                        });
                 });
                 divider(ui, &p);
                 row(ui, &p, "Capture delay", |ui| {
