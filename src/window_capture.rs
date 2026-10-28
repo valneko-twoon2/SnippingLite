@@ -39,7 +39,7 @@ use windows::{
     },
 };
 use windows_sys::Win32::{
-    Foundation::{POINT, RECT},
+    Foundation::{BOOL, LPARAM, POINT, RECT},
     Graphics::{
         Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
         Gdi::{
@@ -47,7 +47,10 @@ use windows_sys::Win32::{
             MONITOR_DEFAULTTONEAREST,
         },
     },
-    UI::WindowsAndMessaging::{GetClientRect, GetWindowRect, IsIconic, IsWindow, IsZoomed},
+    UI::WindowsAndMessaging::{
+        EnumChildWindows, GetClassNameW, GetClientRect, GetWindowRect, GetWindowThreadProcessId,
+        IsIconic, IsWindow, IsZoomed,
+    },
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -62,6 +65,32 @@ impl Target {
         Self {
             id: hwnd as usize,
             client_only,
+        }
+    }
+
+    /// The process whose sound belongs to this window. A UWP app is shown in a
+    /// frame window of another process, so its own window is looked up inside.
+    pub fn process_id(self) -> Option<u32> {
+        // SAFETY: Windows validates this borrowed window identifier.
+        unsafe {
+            let hwnd = self.id as windows_sys::Win32::Foundation::HWND;
+            let mut id = 0;
+            GetWindowThreadProcessId(hwnd, &mut id);
+            if id == 0 {
+                return None;
+            }
+            let mut class = [0u16; 64];
+            let length = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+            if String::from_utf16_lossy(&class[..length.max(0) as usize])
+                == "ApplicationFrameWindow"
+            {
+                let mut found = (id, 0u32);
+                EnumChildWindows(hwnd, Some(other_process), &mut found as *mut _ as LPARAM);
+                if found.1 != 0 {
+                    return Some(found.1);
+                }
+            }
+            Some(id)
         }
     }
 
@@ -133,6 +162,21 @@ impl Target {
         }
         Ok(rect)
     }
+}
+
+/// `EnumChildWindows` callback; `lparam` points at (frame process, other process).
+unsafe extern "system" fn other_process(
+    child: windows_sys::Win32::Foundation::HWND,
+    lparam: LPARAM,
+) -> BOOL {
+    let found = &mut *(lparam as *mut (u32, u32));
+    let mut id = 0;
+    GetWindowThreadProcessId(child, &mut id);
+    if id != 0 && id != found.0 {
+        found.1 = id;
+        return 0;
+    }
+    1
 }
 
 struct Apartment(bool);

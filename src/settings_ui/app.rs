@@ -15,6 +15,9 @@ pub(super) struct SettingsApp {
     record_fps: u32,
     freeze: bool,
     notify: bool,
+    mic: bool,
+    system_audio: bool,
+    app_audio: bool,
     ask_video: bool,
     screenshot_folder: String,
     video_folder: String,
@@ -41,6 +44,9 @@ impl SettingsApp {
             record_fps: settings.record_fps,
             freeze: settings.freeze,
             notify: settings.notify,
+            mic: settings.mic,
+            system_audio: settings.system_audio,
+            app_audio: settings.app_audio,
             ask_video: settings.ask_video,
             theme: settings.theme,
             screenshot_folder: settings.screenshot_folder,
@@ -66,6 +72,9 @@ impl SettingsApp {
             record_fps: self.record_fps,
             freeze: self.freeze,
             notify: self.notify,
+            mic: self.mic,
+            system_audio: self.system_audio,
+            app_audio: self.app_audio,
             ask_video: self.ask_video,
             theme: self.theme,
             screenshot_folder: self.screenshot_folder.clone(),
@@ -230,6 +239,25 @@ impl eframe::App for SettingsApp {
                     let title = tr("Include the mouse cursor in recordings");
                     row(ui, &p, title, None, |ui| {
                         switch(ui, &mut self.record_cursor, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Include microphone input in recordings");
+                    row(ui, &p, title, None, |ui| {
+                        switch(ui, &mut self.mic, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Include system audio in recordings");
+                    row(ui, &p, title, None, |ui| {
+                        switch(ui, &mut self.system_audio, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Record only the sound of the window's app");
+                    let note = (
+                        tr("Turn off to record all system audio when recording a window"),
+                        p.secondary,
+                    );
+                    row(ui, &p, title, Some(note), |ui| {
+                        switch(ui, &mut self.app_audio, title, &p);
                     });
                     divider(ui, &p);
                     row(ui, &p, tr("Recording frame rate"), None, |ui| {

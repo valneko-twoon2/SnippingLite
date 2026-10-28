@@ -1666,6 +1666,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "windows",
+ "windows-core",
  "windows-sys 0.59.0",
 ]
 

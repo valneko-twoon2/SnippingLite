@@ -21,7 +21,8 @@ fn invalid_window_never_falls_back_to_the_desktop() {
         crate::record::Options {
             fps: 60,
             cursor: false,
-            window: Some(target)
+            window: Some(target),
+            audio: crate::record::Audio::default()
         }
     )
     .is_err());
@@ -32,6 +33,10 @@ fn invalid_window_never_falls_back_to_the_desktop() {
 #[ignore = "Requires an unlocked Windows desktop and Windows Graphics Capture"]
 fn capture_ignores_occluding_windows_and_keeps_updating() {
     let fixture = CoveredWindow::new();
+    assert_eq!(
+        Target::new(fixture.target, false).process_id(),
+        Some(std::process::id())
+    );
     assert!(
         fixture.desktop_is_red(),
         "The target must actually be completely covered"

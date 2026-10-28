@@ -24,7 +24,10 @@ use windows::{
 };
 use windows_sys::Win32::Foundation::{POINT, RECT};
 
+mod audio;
 mod screen;
+pub use audio::{Audio, Loopback};
+use audio::{AudioCapture, RATE};
 use screen::*;
 
 #[derive(Clone, Copy)]
@@ -32,6 +35,7 @@ pub struct Options {
     pub fps: u32,
     pub cursor: bool,
     pub window: Option<Target>,
+    pub audio: Audio,
 }
 /// Hundreds of nanoseconds per second, the unit of Media Foundation times.
 const TICKS: i64 = 10_000_000;
@@ -148,6 +152,8 @@ impl Recording {
 struct Writer {
     sink: IMFSinkWriter,
     stream: u32,
+    /// The AAC stream; `None` when the recording has no audio.
+    audio: Option<u32>,
 }
 
 fn video_type(
@@ -169,7 +175,57 @@ fn video_type(
     }
 }
 
-fn open(path: &Path, width: i32, height: i32, fps: u32) -> windows::core::Result<Writer> {
+/// An audio stream needs the AAC encoder, which some Windows editions lack; the
+/// recording then goes on without sound.
+fn open(
+    path: &Path,
+    width: i32,
+    height: i32,
+    fps: u32,
+    audio: bool,
+) -> windows::core::Result<Writer> {
+    match open_with(path, width, height, fps, audio) {
+        Err(_) if audio => open_with(path, width, height, fps, false),
+        result => result,
+    }
+}
+
+/// 16-bit stereo audio at `RATE`: raw PCM, or AAC at 160 kbit/s.
+fn audio_type(aac: bool) -> windows::core::Result<IMFMediaType> {
+    // SAFETY: plain Media Foundation calls on objects created here.
+    unsafe {
+        let media = MFCreateMediaType()?;
+        media.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Audio)?;
+        media.SetGUID(
+            &MF_MT_SUBTYPE,
+            if aac {
+                &MFAudioFormat_AAC
+            } else {
+                &MFAudioFormat_PCM
+            },
+        )?;
+        media.SetUINT32(&MF_MT_AUDIO_NUM_CHANNELS, 2)?;
+        media.SetUINT32(&MF_MT_AUDIO_SAMPLES_PER_SECOND, RATE)?;
+        media.SetUINT32(&MF_MT_AUDIO_BITS_PER_SAMPLE, 16)?;
+        if aac {
+            media.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 20_000)?;
+            media.SetUINT32(&MF_MT_AAC_PAYLOAD_TYPE, 0)?;
+            media.SetUINT32(&MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29)?;
+        } else {
+            media.SetUINT32(&MF_MT_AUDIO_BLOCK_ALIGNMENT, 4)?;
+            media.SetUINT32(&MF_MT_AUDIO_AVG_BYTES_PER_SECOND, RATE * 4)?;
+        }
+        Ok(media)
+    }
+}
+
+fn open_with(
+    path: &Path,
+    width: i32,
+    height: i32,
+    fps: u32,
+    audio: bool,
+) -> windows::core::Result<Writer> {
     // SAFETY: plain Media Foundation calls on objects created here.
     unsafe {
         let mut attributes = None;
@@ -189,14 +245,36 @@ fn open(path: &Path, width: i32, height: i32, fps: u32) -> windows::core::Result
         // A positive stride marks the rows as top-down, like the DIB section.
         input.SetUINT32(&MF_MT_DEFAULT_STRIDE, (width * 4) as u32)?;
         sink.SetInputMediaType(stream, &input, None)?;
+        let audio = if audio {
+            let audio_stream = sink.AddStream(&audio_type(true)?)?;
+            sink.SetInputMediaType(audio_stream, &audio_type(false)?, None)?;
+            Some(audio_stream)
+        } else {
+            None
+        };
         sink.BeginWriting()?;
-        Ok(Writer { sink, stream })
+        Ok(Writer {
+            sink,
+            stream,
+            audio,
+        })
     }
 }
 
 fn write(writer: &Writer, pixels: &[u8], time: i64, duration: i64) -> windows::core::Result<()> {
-    // SAFETY: the buffer is locked while it is filled and holds `pixels.len()` bytes.
+    write_to(writer, writer.stream, pixels, time, duration)
+}
+
+fn write_to(
+    writer: &Writer,
+    stream: u32,
+    data: &[u8],
+    time: i64,
+    duration: i64,
+) -> windows::core::Result<()> {
+    // SAFETY: the buffer is locked while it is filled and holds `data.len()` bytes.
     unsafe {
+        let pixels = data;
         let buffer = MFCreateMemoryBuffer(pixels.len() as u32)?;
         let mut data = null_mut();
         buffer.Lock(&mut data, None, None)?;
@@ -207,7 +285,7 @@ fn write(writer: &Writer, pixels: &[u8], time: i64, duration: i64) -> windows::c
         sample.AddBuffer(&buffer)?;
         sample.SetSampleTime(time)?;
         sample.SetSampleDuration(duration)?;
-        writer.sink.WriteSample(writer.stream, &sample)
+        writer.sink.WriteSample(stream, &sample)
     }
 }
 
@@ -270,6 +348,31 @@ fn run(
     }
 }
 
+/// Writes the audio captured so far; sound is dropped for good if the encoder refuses it.
+unsafe fn write_audio(
+    audio: &mut Option<AudioCapture>,
+    writer: &Writer,
+    now: Instant,
+    offset: i64,
+) {
+    let (Some(capture), Some(stream)) = (audio.as_mut(), writer.audio) else {
+        return;
+    };
+    if let Some(chunk) = capture.read(now) {
+        if write_to(
+            writer,
+            stream,
+            &chunk.pcm,
+            chunk.time + offset,
+            chunk.duration,
+        )
+        .is_err()
+        {
+            *audio = None;
+        }
+    }
+}
+
 unsafe fn record(
     area: RECT,
     path: &Path,
@@ -280,13 +383,21 @@ unsafe fn record(
 ) -> Result<Frame, String> {
     let (width, height) = (area.right - area.left, area.bottom - area.top);
     let mut grabber = Source::new(area, points, options)?;
-    let writer = open(path, width, height, options.fps).map_err(|e| {
+    let mut audio = options
+        .audio
+        .any()
+        .then(|| AudioCapture::open(options.audio))
+        .flatten();
+    let writer = open(path, width, height, options.fps, audio.is_some()).map_err(|e| {
         format!(
             "{}: {}",
             tr("Could not start the video encoder"),
             e.message()
         )
     })?;
+    if writer.audio.is_none() {
+        audio = None;
+    }
     // Capture only after opening the encoder so the first image is current.
     let mut first = grabber.grab()?.to_vec();
     first
@@ -303,6 +414,9 @@ unsafe fn record(
     let begin = Instant::now();
     if wrote_first {
         let _ = clock.set(begin);
+    }
+    if let Some(capture) = audio.as_mut() {
+        capture.start(begin);
     }
     let frame = Duration::from_nanos(1_000_000_000 / options.fps as u64);
     let mut next = begin;
@@ -342,6 +456,8 @@ unsafe fn record(
         {
             encode_time += encode_begin.elapsed();
         }
+        // Video frames are stamped one frame late, so the sound is too.
+        write_audio(&mut audio, &writer, Instant::now(), duration);
         next += frame;
         let now = Instant::now();
         if next > now {
@@ -352,6 +468,8 @@ unsafe fn record(
         }
     }
     drop(grabber);
+    write_audio(&mut audio, &writer, Instant::now(), duration);
+    drop(audio);
     let finalized = writer
         .sink
         .Finalize()

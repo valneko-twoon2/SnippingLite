@@ -75,6 +75,15 @@ unsafe fn begin_recording(area: RECT, points: Vec<POINT>, target: Option<window_
                     fps: state().record_fps,
                     cursor: state().record_cursor,
                     window: target,
+                    audio: record::Audio {
+                        loopback: state().system_audio.then(|| {
+                            match target.and_then(|window| window.process_id()) {
+                                Some(id) if state().app_audio => record::Loopback::Process(id),
+                                _ => record::Loopback::System,
+                            }
+                        }),
+                        mic: state().mic,
+                    },
                 },
             )
         });

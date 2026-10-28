@@ -63,6 +63,22 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Dark", "ダーク"),
     ("Show notifications", "通知を表示する"),
     (
+        "Include microphone input in recordings",
+        "録画にマイク入力を含める",
+    ),
+    (
+        "Include system audio in recordings",
+        "録画にシステム オーディオを含める",
+    ),
+    (
+        "Record only the sound of the window's app",
+        "ウィンドウ録画ではそのアプリの音だけを録音する",
+    ),
+    (
+        "Turn off to record all system audio when recording a window",
+        "オフにすると、ウィンドウ録画でもシステム全体の音を録音します",
+    ),
+    (
         "Ask for a file name when saving a recording",
         "録画の保存時にファイル名を指定する",
     ),
