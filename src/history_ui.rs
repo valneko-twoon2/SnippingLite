@@ -66,6 +66,10 @@ struct Opened {
     pixels: Vec<u8>,
     /// Strokes drawn since the image was opened or last saved.
     marks: Vec<Mark>,
+    /// The crop area being chosen, in image pixels (start and end corner).
+    crop: Option<((f32, f32), (f32, f32))>,
+    /// The image was cropped and the change is not stored yet.
+    cropped: bool,
 }
 
 impl Opened {
@@ -82,6 +86,7 @@ enum Tool {
     None,
     Pen,
     Highlighter,
+    Crop,
 }
 
 /// How far back the gallery reaches.
@@ -129,6 +134,9 @@ struct HistoryApp {
     range: Range,
     query: String,
     tool: Tool,
+    /// Indexes into `annotate::COLORS` and the radius tables.
+    color: usize,
+    thickness: usize,
     notice: Option<(Instant, &'static str)>,
 }
 
@@ -147,6 +155,8 @@ impl HistoryApp {
             range: Range::All,
             query: String::new(),
             tool: Tool::None,
+            color: 0,
+            thickness: 1,
             notice: None,
         }
     }
@@ -200,6 +210,8 @@ impl HistoryApp {
             size: (width, height),
             pixels,
             marks: Vec::new(),
+            crop: None,
+            cropped: false,
         });
     }
 
@@ -509,6 +521,7 @@ impl HistoryApp {
     /// Handles pen input over the image and previews all marks.
     fn draw_marks(&mut self, ui: &mut egui::Ui, shown: Rect, scale: f32) {
         let tool = self.tool;
+        let (color, thickness) = (self.color, self.thickness);
         let Some(opened) = self.opened.as_mut() else {
             return;
         };
@@ -523,10 +536,27 @@ impl HistoryApp {
             }
             let point =
                 |pos: egui::Pos2| ((pos.x - shown.min.x) / scale, (pos.y - shown.min.y) / scale);
-            if response.drag_started() {
+            if tool == Tool::Crop {
                 if let Some(pos) = response.interact_pointer_pos() {
+                    if response.drag_started() {
+                        opened.crop = Some((point(pos), point(pos)));
+                    } else if response.dragged() {
+                        if let Some((_, end)) = &mut opened.crop {
+                            *end = point(pos);
+                        }
+                    }
+                }
+            } else if response.drag_started() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    let highlight = tool == Tool::Highlighter;
                     opened.marks.push(Mark {
-                        highlight: tool == Tool::Highlighter,
+                        highlight,
+                        color: annotate::COLORS[color],
+                        radius: if highlight {
+                            annotate::HIGHLIGHTER_RADII[thickness]
+                        } else {
+                            annotate::PEN_RADII[thickness]
+                        },
                         points: vec![point(pos)],
                     });
                 }
@@ -540,12 +570,12 @@ impl HistoryApp {
         }
         let painter = ui.painter().with_clip_rect(shown);
         for mark in &opened.marks {
-            let (color, opacity, radius) = annotate::brush(mark.highlight);
+            let radius = mark.radius;
             let color = Color32::from_rgba_unmultiplied(
-                color[0],
-                color[1],
-                color[2],
-                (opacity * 255.0) as u8,
+                mark.color[0],
+                mark.color[1],
+                mark.color[2],
+                (annotate::opacity(mark.highlight) * 255.0) as u8,
             );
             let points: Vec<egui::Pos2> = mark
                 .points
@@ -561,6 +591,63 @@ impl HistoryApp {
                 ));
             }
         }
+        if let Some(((ax, ay), (bx, by))) = opened.crop {
+            let area = Rect::from_two_pos(
+                shown.min + Vec2::new(ax, ay) * scale,
+                shown.min + Vec2::new(bx, by) * scale,
+            )
+            .intersect(shown);
+            let dim = Color32::from_black_alpha(130);
+            let strips = [
+                Rect::from_min_max(shown.min, pos2(shown.max.x, area.min.y)),
+                Rect::from_min_max(pos2(shown.min.x, area.max.y), shown.max),
+                Rect::from_min_max(pos2(shown.min.x, area.min.y), pos2(area.min.x, area.max.y)),
+                Rect::from_min_max(pos2(area.max.x, area.min.y), pos2(shown.max.x, area.max.y)),
+            ];
+            for strip in strips {
+                painter.rect_filled(strip, 0.0, dim);
+            }
+            painter.rect_stroke(
+                area,
+                0.0,
+                Stroke::new(1.5, Color32::WHITE),
+                StrokeKind::Inside,
+            );
+        }
+    }
+
+    /// Cuts the image down to the chosen area; marks are drawn in first.
+    fn apply_crop(&mut self, ctx: &egui::Context) {
+        let Some(opened) = &mut self.opened else {
+            return;
+        };
+        let Some(((ax, ay), (bx, by))) = opened.crop.take() else {
+            return;
+        };
+        let area = (
+            ax.min(bx).round() as i32,
+            ay.min(by).round() as i32,
+            ax.max(bx).round() as i32,
+            ay.max(by).round() as i32,
+        );
+        let flat = opened.flattened();
+        let Some((width, height, pixels)) =
+            annotate::crop(&flat, opened.size.0, opened.size.1, area)
+        else {
+            return;
+        };
+        opened.texture = Some(texture_from(
+            ctx,
+            &format!("{}#crop", opened.entry.image.to_string_lossy()),
+            width,
+            height,
+            &pixels,
+        ));
+        opened.pixels = pixels;
+        opened.size = (width, height);
+        opened.marks.clear();
+        opened.cropped = true;
+        self.tool = Tool::None;
     }
 
     /// Writes the marks into the stored image and refreshes its thumbnail.
@@ -580,6 +667,7 @@ impl HistoryApp {
             ));
             opened.pixels = pixels;
             opened.marks.clear();
+            opened.cropped = false;
             self.thumbnails.remove(&opened.entry.id);
             self.notice = Some((Instant::now(), "Saved the changes."));
         } else {
@@ -640,21 +728,54 @@ impl HistoryApp {
         ui.add_space(8.0);
         let mut undo = false;
         let mut persist = false;
-        ui.horizontal(|ui| {
-            for (tool, label) in [(Tool::Pen, "Pen"), (Tool::Highlighter, "Highlighter")] {
+        let mut apply = false;
+        ui.horizontal_wrapped(|ui| {
+            let tools = [
+                (Tool::Pen, "Pen"),
+                (Tool::Highlighter, "Highlighter"),
+                (Tool::Crop, "Crop"),
+            ];
+            for (tool, label) in tools {
                 if chip(ui, label, p, self.tool == tool).clicked() {
                     self.tool = if self.tool == tool { Tool::None } else { tool };
                 }
                 ui.add_space(6.0);
             }
-            let marked = self.opened.as_ref().is_some_and(|o| !o.marks.is_empty());
+            if matches!(self.tool, Tool::Pen | Tool::Highlighter) {
+                ui.add_space(8.0);
+                for (index, rgb) in annotate::COLORS.iter().enumerate() {
+                    if swatch(ui, *rgb, self.color == index, p).clicked() {
+                        self.color = index;
+                    }
+                }
+                ui.add_space(8.0);
+                for (index, label) in ["Thin", "Medium", "Thick"].into_iter().enumerate() {
+                    if chip(ui, label, p, self.thickness == index).clicked() {
+                        self.thickness = index;
+                    }
+                    ui.add_space(6.0);
+                }
+            }
+            let (marked, cropped, selecting) =
+                self.opened.as_ref().map_or((false, false, false), |o| {
+                    (!o.marks.is_empty(), o.cropped, o.crop.is_some())
+                });
+            if self.tool == Tool::Crop && selecting {
+                ui.add_space(8.0);
+                apply = text_button(ui, "Apply crop", p, false).clicked();
+            }
             if marked {
                 ui.add_space(8.0);
                 undo = text_button(ui, "Undo", p, false).clicked();
+            }
+            if marked || cropped {
                 ui.add_space(6.0);
                 persist = text_button(ui, "Save changes", p, false).clicked();
             }
         });
+        if apply {
+            self.apply_crop(ctx);
+        }
         ui.add_space(8.0);
         let area = ui.available_rect_before_wrap();
         let room = Rect::from_min_max(area.min, pos2(area.max.x, area.max.y - 28.0));
@@ -760,6 +881,25 @@ enum Action {
     Folder,
     Copy,
     SaveAs,
+}
+
+/// A round color choice; the selected one gets a ring.
+fn swatch(ui: &mut egui::Ui, rgb: [u8; 3], selected: bool, p: &Palette) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, "Color")
+    });
+    let painter = ui.painter();
+    painter.circle_filled(
+        rect.center(),
+        9.0,
+        Color32::from_rgb(rgb[0], rgb[1], rgb[2]),
+    );
+    painter.circle_stroke(rect.center(), 9.0, Stroke::new(1.0, p.stroke));
+    if selected || response.hovered() {
+        painter.circle_stroke(rect.center(), 12.0, Stroke::new(2.0, p.text));
+    }
+    response
 }
 
 /// A toggle button that is filled with the accent color while selected.

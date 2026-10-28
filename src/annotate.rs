@@ -4,27 +4,67 @@
 #[derive(Clone, Debug)]
 pub struct Mark {
     pub highlight: bool,
+    pub color: [u8; 3],
+    /// Brush radius in image pixels.
+    pub radius: f32,
     pub points: Vec<(f32, f32)>,
 }
 
-/// Pen strokes are opaque red; the highlighter is a wide translucent yellow.
-const PEN: ([u8; 3], f32, f32) = ([0xe8, 0x11, 0x23], 1.0, 2.5);
-const HIGHLIGHTER: ([u8; 3], f32, f32) = ([0xff, 0xe6, 0x00], 0.45, 10.0);
+/// Colors offered for strokes (RGB).
+pub const COLORS: [[u8; 3]; 5] = [
+    [0xe8, 0x11, 0x23],
+    [0xff, 0xe6, 0x00],
+    [0x16, 0xc6, 0x0c],
+    [0x00, 0x78, 0xd4],
+    [0x10, 0x10, 0x10],
+];
+/// Brush radii for the pen and the highlighter, thin to thick.
+pub const PEN_RADII: [f32; 3] = [1.5, 2.5, 4.5];
+pub const HIGHLIGHTER_RADII: [f32; 3] = [6.0, 10.0, 16.0];
 
-/// Brush color (RGB), opacity and radius in image pixels.
-pub fn brush(highlight: bool) -> ([u8; 3], f32, f32) {
+/// The highlighter is translucent, the pen is opaque.
+pub fn opacity(highlight: bool) -> f32 {
     if highlight {
-        HIGHLIGHTER
+        0.45
     } else {
-        PEN
+        1.0
     }
+}
+
+/// Cuts the area out of top-down BGRA pixels; the area is clipped to the image.
+pub fn crop(
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    (x0, y0, x1, y1): (i32, i32, i32, i32),
+) -> Option<(i32, i32, Vec<u8>)> {
+    let (x0, y0) = (x0.clamp(0, width), y0.clamp(0, height));
+    let (x1, y1) = (x1.clamp(0, width), y1.clamp(0, height));
+    if x1 <= x0 || y1 <= y0 {
+        return None;
+    }
+    let row = (x1 - x0) as usize * 4;
+    let mut out = Vec::with_capacity(row * (y1 - y0) as usize);
+    for y in y0..y1 {
+        let start = (y as usize * width as usize + x0 as usize) * 4;
+        out.extend_from_slice(&pixels[start..start + row]);
+    }
+    Some((x1 - x0, y1 - y0, out))
 }
 
 /// Draws the marks onto straight-alpha top-down BGRA pixels.
 pub fn draw(pixels: &mut [u8], width: i32, height: i32, marks: &[Mark]) {
     for mark in marks {
-        let (color, opacity, radius) = brush(mark.highlight);
-        stroke(pixels, width, height, &mark.points, color, opacity, radius);
+        let opacity = opacity(mark.highlight);
+        stroke(
+            pixels,
+            width,
+            height,
+            &mark.points,
+            mark.color,
+            opacity,
+            mark.radius,
+        );
     }
 }
 
@@ -97,6 +137,8 @@ mod tests {
         // A stroke that doubles back over itself must not darken twice.
         let marks = [Mark {
             highlight: true,
+            color: [0xff, 0xe6, 0x00],
+            radius: 10.0,
             points: vec![(5.0, 10.0), (15.0, 10.0), (5.0, 10.0)],
         }];
         draw(&mut pixels, 20, 20, &marks);
@@ -106,9 +148,15 @@ mod tests {
         assert_eq!(pixels[center + 3], 255);
         let marks = [Mark {
             highlight: false,
+            color: [0xe8, 0x11, 0x23],
+            radius: 2.5,
             points: vec![(2.0, 2.0)],
         }];
         draw(&mut pixels, 20, 20, &marks);
         assert_eq!(&pixels[(2 * 20 + 2) * 4..][..4], &[0x23, 0x11, 0xe8, 255]);
+        // Cropping clips to the image and rejects empty areas.
+        let (w, h, out) = crop(&pixels, 20, 20, (-5, 0, 4, 3)).unwrap();
+        assert_eq!((w, h, out.len()), (4, 3, 48));
+        assert!(crop(&pixels, 20, 20, (5, 5, 5, 9)).is_none());
     }
 }
