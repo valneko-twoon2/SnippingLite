@@ -279,6 +279,9 @@ mod tests {
     fn every_translated_string_has_an_entry() {
         let sources = [
             include_str!("main.rs"),
+            include_str!("screenshot.rs"),
+            include_str!("toolbar.rs"),
+            include_str!("video.rs"),
             include_str!("config.rs"),
             include_str!("settings_ui.rs"),
             include_str!("settings_ui/app.rs"),
