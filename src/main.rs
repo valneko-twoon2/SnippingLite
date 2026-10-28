@@ -34,6 +34,7 @@ const MAIN: &str = "SnippingLiteMain";
 const OVERLAY: &str = "SnippingLiteOverlay";
 const TOOLBAR: &str = "SnippingLiteToolbar";
 const RECORD: &str = "SnippingLiteRecord";
+const FRAME: &str = "SnippingLiteFrame";
 const NEW: usize = 100;
 const DELAY_TIMER: usize = 1;
 const RECORD_TIMER: usize = 2;
@@ -85,6 +86,7 @@ struct State {
     hotkey_ok: bool,
     recording: Option<record::Recording>,
     record_window: HWND,
+    record_frame: HWND,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -891,12 +893,52 @@ unsafe fn start_recording(rect: RECT) {
                 y: (area.top + area.bottom) / 2,
             };
             show_indicator(center);
+            show_frame(area);
         }
         Err(error) => {
             restore_windows();
             message(state().owner, &error);
         }
     }
+}
+/// Outlines the recorded area just outside of it; the frame is not captured.
+unsafe fn show_frame(area: RECT) {
+    let scale = ui::scale_at(POINT {
+        x: (area.left + area.right) / 2,
+        y: (area.top + area.bottom) / 2,
+    });
+    let thickness = (2.0 * scale).round().max(2.0) as i32;
+    let (width, height) = (
+        area.right - area.left + 2 * thickness,
+        area.bottom - area.top + 2 * thickness,
+    );
+    let hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+        w(FRAME).as_ptr(),
+        w("Snipping Lite").as_ptr(),
+        WS_POPUP,
+        area.left - thickness,
+        area.top - thickness,
+        width,
+        height,
+        null_mut(),
+        null_mut(),
+        GetModuleHandleW(null()),
+        null(),
+    );
+    if hwnd.is_null() {
+        return;
+    }
+    let outer = CreateRectRgn(0, 0, width, height);
+    let inner = CreateRectRgn(thickness, thickness, width - thickness, height - thickness);
+    CombineRgn(outer, outer, inner, RGN_DIFF);
+    DeleteObject(inner);
+    // The window takes ownership of the region.
+    SetWindowRgn(hwnd, outer, 0);
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
+    ui::disable_transitions(hwnd);
+    state().record_frame = hwnd;
+    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 }
 unsafe fn show_indicator(center: POINT) {
     let theme = ui::theme();
@@ -941,9 +983,13 @@ unsafe fn stop_recording() {
     let Some(recording) = state().recording.take() else {
         return;
     };
-    let window = std::mem::replace(&mut state().record_window, null_mut());
-    if !window.is_null() {
-        DestroyWindow(window);
+    for window in [
+        std::mem::replace(&mut state().record_window, null_mut()),
+        std::mem::replace(&mut state().record_frame, null_mut()),
+    ] {
+        if !window.is_null() {
+            DestroyWindow(window);
+        }
     }
     let result = recording.stop();
     restore_windows();
@@ -1008,7 +1054,12 @@ unsafe extern "system" fn record_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
             0
         }
         WM_TIMER if wp == RECORD_TIMER => {
-            InvalidateRect(hwnd, null(), 0);
+            // A recorder that ended on its own failed; stopping reports the error.
+            if state().recording.as_ref().is_some_and(|r| r.failed()) {
+                stop_recording();
+            } else {
+                InvalidateRect(hwnd, null(), 0);
+            }
             0
         }
         WM_LBUTTONUP => {
@@ -1295,12 +1346,20 @@ fn main() {
             hotkey_ok: false,
             recording: None,
             record_window: null_mut(),
+            record_frame: null_mut(),
         });
         STATE = &mut *app;
         register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
         register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
         register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
         register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
+        // The frame around a recording is a solid red window shaped like a ring.
+        register(
+            FRAME,
+            Some(DefWindowProcW),
+            CreateSolidBrush(0x002311e8),
+            IDC_ARROW,
+        );
         register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
         // The tray window is never shown; it receives the tray, hotkey and timer messages.
         let hwnd = CreateWindowExW(

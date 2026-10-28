@@ -6,7 +6,7 @@ use std::{
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc, Arc,
+        Arc,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -70,28 +70,26 @@ pub fn start(area: RECT, path: PathBuf) -> Result<Recording, String> {
         ..area
     };
     let stop = Arc::new(AtomicBool::new(false));
-    let (ready, started) = mpsc::channel();
+    // The encoder starts on the recorder thread; the clock starts now.
+    let started = Instant::now();
     let thread = {
         let (stop, path) = (stop.clone(), path.clone());
-        std::thread::spawn(move || run(area, &path, &stop, &ready))
+        std::thread::spawn(move || run(area, &path, &stop, started))
     };
-    match started.recv() {
-        Ok(Ok(())) => Ok(Recording {
-            stop,
-            thread,
-            started: Instant::now(),
-            path,
-        }),
-        Ok(Err(error)) => {
-            let _ = thread.join();
-            let _ = std::fs::remove_file(&path);
-            Err(error)
-        }
-        Err(_) => Err("The recorder stopped unexpectedly.".into()),
-    }
+    Ok(Recording {
+        stop,
+        thread,
+        started,
+        path,
+    })
 }
 
 impl Recording {
+    /// The recorder thread ended by itself, which only happens after a failure.
+    pub fn failed(&self) -> bool {
+        self.thread.is_finished()
+    }
+
     /// Ends the recording, finishes the file and returns its first frame.
     pub fn stop(self) -> Result<(PathBuf, Frame), String> {
         self.stop.store(true, Ordering::Release);
@@ -195,26 +193,107 @@ unsafe fn draw_cursor(dc: HDC, area: &RECT) {
     }
 }
 
-fn run(
+/// Screen device context and a top-down DIB section that frames are copied into.
+struct Grabber {
+    screen: HDC,
+    mem: HDC,
+    bitmap: HBITMAP,
+    old: HGDIOBJ,
+    bits: *mut u8,
     area: RECT,
-    path: &Path,
-    stop: &AtomicBool,
-    ready: &mpsc::Sender<Result<(), String>>,
-) -> Result<Frame, String> {
-    let (width, height) = (area.right - area.left, area.bottom - area.top);
+    length: usize,
+}
+
+impl Grabber {
+    unsafe fn new(area: RECT) -> Option<Grabber> {
+        let (width, height) = (area.right - area.left, area.bottom - area.top);
+        let screen = GetDC(null_mut());
+        let mem = CreateCompatibleDC(screen);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut bits = null_mut();
+        let bitmap = CreateDIBSection(mem, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+        let old = if bitmap.is_null() || mem.is_null() {
+            null_mut()
+        } else {
+            SelectObject(mem, bitmap)
+        };
+        let grabber = Grabber {
+            screen,
+            mem,
+            bitmap,
+            old,
+            bits: bits.cast(),
+            area,
+            length: width as usize * height as usize * 4,
+        };
+        // Dropping releases whatever was created.
+        (!screen.is_null() && !mem.is_null() && !bitmap.is_null() && !bits.is_null())
+            .then_some(grabber)
+    }
+
+    /// Copies the area (with the cursor) and returns its BGRX pixels.
+    unsafe fn grab(&self) -> &[u8] {
+        let (width, height) = (
+            self.area.right - self.area.left,
+            self.area.bottom - self.area.top,
+        );
+        BitBlt(
+            self.mem,
+            0,
+            0,
+            width,
+            height,
+            self.screen,
+            self.area.left,
+            self.area.top,
+            SRCCOPY | CAPTUREBLT,
+        );
+        draw_cursor(self.mem, &self.area);
+        GdiFlush();
+        std::slice::from_raw_parts(self.bits, self.length)
+    }
+}
+
+impl Drop for Grabber {
+    fn drop(&mut self) {
+        // SAFETY: each handle is released at most once and only when it was created.
+        unsafe {
+            if !self.mem.is_null() {
+                if !self.old.is_null() {
+                    SelectObject(self.mem, self.old);
+                }
+                DeleteDC(self.mem);
+            }
+            if !self.bitmap.is_null() {
+                DeleteObject(self.bitmap);
+            }
+            if !self.screen.is_null() {
+                ReleaseDC(null_mut(), self.screen);
+            }
+        }
+    }
+}
+
+fn run(area: RECT, path: &Path, stop: &AtomicBool, begin: Instant) -> Result<Frame, String> {
     // SAFETY: COM and Media Foundation are initialized and shut down on this thread only.
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
         let started = MFStartup(MF_VERSION, MFSTARTUP_FULL).is_ok();
-        let result = record(area, width, height, path, stop, ready);
+        let result = record(area, path, stop, begin);
         if started {
             let _ = MFShutdown();
         }
         if com {
             CoUninitialize();
         }
-        if let Err(error) = &result {
-            let _ = ready.send(Err(error.clone()));
+        if result.is_err() {
+            let _ = std::fs::remove_file(path);
         }
         result
     }
@@ -222,73 +301,31 @@ fn run(
 
 unsafe fn record(
     area: RECT,
-    width: i32,
-    height: i32,
     path: &Path,
     stop: &AtomicBool,
-    ready: &mpsc::Sender<Result<(), String>>,
+    begin: Instant,
 ) -> Result<Frame, String> {
+    let (width, height) = (area.right - area.left, area.bottom - area.top);
+    let grabber = Grabber::new(area).ok_or("Could not prepare the screen capture.")?;
+    // The first frame is taken at once; the encoder needs a moment to start.
+    let mut first = grabber.grab().to_vec();
+    first
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .for_each(|p| p[3] = 255);
     let writer = open(path, width, height)
         .map_err(|e| format!("Could not start the video encoder: {}", e.message()))?;
-    let screen = GetDC(null_mut());
-    let mem = CreateCompatibleDC(screen);
-    let mut info: BITMAPINFO = std::mem::zeroed();
-    info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-    info.bmiHeader.biWidth = width;
-    info.bmiHeader.biHeight = -height;
-    info.bmiHeader.biPlanes = 1;
-    info.bmiHeader.biBitCount = 32;
-    info.bmiHeader.biCompression = BI_RGB;
-    let mut bits = null_mut();
-    let bitmap = CreateDIBSection(mem, &info, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-    if screen.is_null() || mem.is_null() || bitmap.is_null() || bits.is_null() {
-        for (handle, is_dc) in [(mem, true), (bitmap, false)] {
-            if !handle.is_null() {
-                if is_dc {
-                    DeleteDC(handle);
-                } else {
-                    DeleteObject(handle);
-                }
-            }
-        }
-        if !screen.is_null() {
-            ReleaseDC(null_mut(), screen);
-        }
-        return Err("Could not prepare the screen capture.".into());
-    }
-    let old = SelectObject(mem, bitmap);
-    let _ = ready.send(Ok(()));
-    let length = width as usize * height as usize * 4;
-    let frame = std::time::Duration::from_nanos(1_000_000_000 / FPS as u64);
-    let begin = Instant::now();
-    let mut next = begin;
-    let mut first = None;
-    let mut failure = None;
-    while !stop.load(Ordering::Acquire) {
-        BitBlt(
-            mem,
-            0,
-            0,
-            width,
-            height,
-            screen,
-            area.left,
-            area.top,
-            SRCCOPY | CAPTUREBLT,
-        );
-        draw_cursor(mem, &area);
-        GdiFlush();
-        let pixels = std::slice::from_raw_parts(bits.cast::<u8>(), length);
-        if first.is_none() {
-            let mut copy = pixels.to_vec();
-            copy.as_chunks_mut::<4>()
-                .0
-                .iter_mut()
-                .for_each(|p| p[3] = 255);
-            first = Some(copy);
-        }
+    let duration = TICKS / FPS as i64;
+    let mut failure = write(&writer, &first, 0, duration)
+        .err()
+        .map(|e| format!("Could not write a video frame: {}", e.message()));
+    let frame = Duration::from_nanos(1_000_000_000 / FPS as u64);
+    let mut next = Instant::now();
+    while failure.is_none() && !stop.load(Ordering::Acquire) {
+        let pixels = grabber.grab();
         let time = begin.elapsed().as_nanos() as i64 / 100;
-        if let Err(error) = write(&writer, pixels, time, TICKS / FPS as i64) {
+        if let Err(error) = write(&writer, pixels, time, duration) {
             failure = Some(format!(
                 "Could not write a video frame: {}",
                 error.message()
@@ -304,20 +341,15 @@ unsafe fn record(
             next = now;
         }
     }
-    SelectObject(mem, old);
-    DeleteObject(bitmap);
-    DeleteDC(mem);
-    ReleaseDC(null_mut(), screen);
+    drop(grabber);
     let finalized = writer.sink.Finalize();
     if let Some(error) = failure {
         return Err(error);
     }
     finalized.map_err(|e| format!("Could not finish the video file: {}", e.message()))?;
-    first
-        .map(|pixels| Frame {
-            width,
-            height,
-            pixels,
-        })
-        .ok_or_else(|| "No frame was recorded.".to_string())
+    Ok(Frame {
+        width,
+        height,
+        pixels: first,
+    })
 }
