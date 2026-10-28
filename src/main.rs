@@ -352,29 +352,87 @@ fn inflate(r: RECT, by: i32) -> RECT {
         bottom: r.bottom + by,
     }
 }
-/// Toolbar buttons in DIPs: four snip modes, then Close after a divider.
-const BUTTON: f32 = 40.0;
-const BAR_PADDING: f32 = 4.0;
-const BAR_GAP: f32 = 4.0;
-const DIVIDER: f32 = 9.0;
-const BAR_HEIGHT: f32 = BUTTON + 2.0 * BAR_PADDING;
-const BAR_WIDTH: f32 = 2.0 * BAR_PADDING + 7.0 * BUTTON + 5.0 * BAR_GAP + DIVIDER;
-const GLYPHS: [&str; 7] = [
-    "\u{EF20}", "\u{EA49}", "\u{E7C4}", "\u{E7F4}", "\u{E714}", "\u{E700}", "\u{E711}",
-];
+/// Fluent command bar: capture type, area picker, editing, history and settings.
+const BAR_HEIGHT: f32 = 48.0;
+const BAR_WIDTH: f32 = 332.0;
+const CAMERA_BUTTON: i32 = 0;
+const VIDEO_BUTTON: i32 = 1;
+const AREA_BUTTON: i32 = 2;
+const EDIT_BUTTON: i32 = 3;
+const HISTORY_BUTTON: i32 = 4;
 const SETTINGS_BUTTON: i32 = 5;
 const CLOSE_BUTTON: i32 = 6;
+const GLYPHS: [&str; 7] = [
+    "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E70F}", "\u{E81C}", "\u{E713}", "\u{E711}",
+];
 fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
-    let mut left = BAR_PADDING + index as f32 * (BUTTON + BAR_GAP);
-    if index >= SETTINGS_BUTTON {
-        left += DIVIDER - BAR_GAP;
-    }
+    let (left, width) = match index {
+        CAMERA_BUTTON => (8.0, 36.0),
+        VIDEO_BUTTON => (44.0, 36.0),
+        AREA_BUTTON => (92.0, 48.0),
+        EDIT_BUTTON => (148.0, 36.0),
+        HISTORY_BUTTON => (196.0, 36.0),
+        SETTINGS_BUTTON => (236.0, 36.0),
+        _ => (288.0, 36.0),
+    };
     [
         left * scale,
-        BAR_PADDING * scale,
-        (left + BUTTON) * scale,
-        (BAR_PADDING + BUTTON) * scale,
+        8.0 * scale,
+        (left + width) * scale,
+        40.0 * scale,
     ]
+}
+
+unsafe fn choose_capture_area(hwnd: HWND) {
+    let recording = state().mode == MODE_RECORD;
+    let menu = CreatePopupMenu();
+    if menu.is_null() {
+        return;
+    }
+    for (mode, label) in [
+        (MODE_RECT, tr("Rectangle")),
+        (MODE_FREE, tr("Freeform")),
+        (MODE_WINDOW, tr("Window")),
+        (MODE_SCREEN, tr("Full screen")),
+    ] {
+        if recording && mode != MODE_RECT {
+            continue;
+        }
+        let checked = if state().mode == mode || recording {
+            MF_CHECKED
+        } else {
+            0
+        };
+        AppendMenuW(
+            menu,
+            MF_STRING | checked,
+            mode as usize + 1,
+            w(label).as_ptr(),
+        );
+    }
+    let button = toolbar_button(AREA_BUTTON, state().scale);
+    let mut anchor = POINT {
+        x: button[0] as i32,
+        y: button[3] as i32,
+    };
+    ClientToScreen(hwnd, &mut anchor);
+    SetForegroundWindow(hwnd);
+    let command = TrackPopupMenu(
+        menu,
+        TPM_RETURNCMD | TPM_NONOTIFY,
+        anchor.x,
+        anchor.y,
+        0,
+        hwnd,
+        null(),
+    );
+    DestroyMenu(menu);
+    if command > 0 {
+        set_mode(if recording { MODE_RECORD } else { command - 1 });
+    }
+    if state().active {
+        SetForegroundWindow(state().overlay);
+    }
 }
 /// Creates the hidden overlay and toolbar once; they are reused for every capture.
 unsafe fn create_windows() -> bool {
@@ -1410,14 +1468,28 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
     let theme = &s.theme;
     let scale = s.scale;
     let icon = ui::Font::new(ui::ICON_FONT, 16.0 * scale, FW_NORMAL as i32);
+    canvas.surface(theme.dark, scale);
+    // The two capture types share one segmented outline.
+    canvas.fill_round_rect(
+        [8.0 * scale, 8.0 * scale, 80.0 * scale, 40.0 * scale],
+        4.0 * scale,
+        theme.divider,
+    );
+    canvas.fill_round_rect(
+        [9.0 * scale, 9.0 * scale, 79.0 * scale, 39.0 * scale],
+        3.0 * scale,
+        if theme.dark { 0xff202020 } else { 0xfff3f3f3 },
+    );
     for (i, glyph) in GLYPHS.iter().enumerate() {
         let i = i as i32;
         let r = toolbar_button(i, scale);
+        let selected = (i == CAMERA_BUTTON && s.mode != MODE_RECORD)
+            || (i == VIDEO_BUTTON && s.mode == MODE_RECORD);
         let fill = if i == s.pressed_button {
             theme.pressed
         } else if i == s.hover_button {
             theme.hover
-        } else if i == s.mode {
+        } else if selected {
             theme.selected
         } else {
             0
@@ -1425,35 +1497,54 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
         if fill != 0 {
             canvas.fill_round_rect(r, 4.0 * scale, fill);
         }
-        if i == s.mode {
-            // Selection indicator below the active mode, as in WinUI segmented controls.
+        if selected {
             let cx = (r[0] + r[2]) / 2.0;
             canvas.fill_round_rect(
-                [cx - 8.0 * scale, r[3] - 3.0 * scale, cx + 8.0 * scale, r[3]],
+                [cx - 7.0 * scale, r[3] - 3.0 * scale, cx + 7.0 * scale, r[3]],
                 1.5 * scale,
                 theme.accent,
             );
         }
+        let glyph = if i == AREA_BUTTON {
+            match s.mode {
+                MODE_FREE => "\u{EA49}",
+                MODE_WINDOW => "\u{E7C4}",
+                MODE_SCREEN => "\u{E7F4}",
+                _ => glyph,
+            }
+        } else {
+            glyph
+        };
+        let right = if i == AREA_BUTTON {
+            r[2] - 14.0 * scale
+        } else {
+            r[2]
+        };
         canvas.text(
             glyph,
             &icon,
-            ui::rect(r[0], r[1], r[2], r[3]),
+            ui::rect(r[0], r[1], right, r[3]),
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
             theme.text,
         );
+        if i == AREA_BUTTON {
+            let chevron = ui::Font::new(ui::ICON_FONT, 8.0 * scale, FW_NORMAL as i32);
+            canvas.text(
+                "\u{E70D}",
+                &chevron,
+                ui::rect(right, r[1], r[2], r[3]),
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                theme.text,
+            );
+        }
     }
-    let divider =
-        toolbar_button(MODE_RECORD, scale)[2] + (DIVIDER / 2.0 + BAR_GAP / 2.0 - 0.5) * scale;
-    canvas.fill_round_rect(
-        [
-            divider,
-            (BAR_PADDING + 8.0) * scale,
-            divider + scale.max(1.0),
-            (BAR_PADDING + BUTTON - 8.0) * scale,
-        ],
-        0.0,
-        theme.divider,
-    );
+    for x in [188.0, 280.0] {
+        canvas.fill_round_rect(
+            [x * scale, 12.0 * scale, (x + 1.0) * scale, 36.0 * scale],
+            0.0,
+            theme.divider,
+        );
+    }
     canvas.present(dc);
 }
 unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -1499,14 +1590,26 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             let hit = toolbar_hit(point(lp));
             let pressed = std::mem::replace(&mut state().pressed_button, -1);
             if hit >= 0 && hit == pressed {
-                if hit == CLOSE_BUTTON {
-                    cancel();
-                } else if hit == SETTINGS_BUTTON {
-                    cancel();
-                    launch_settings();
-                } else {
-                    set_mode(hit);
+                match hit {
+                    CLOSE_BUTTON => cancel(),
+                    SETTINGS_BUTTON => {
+                        cancel();
+                        launch_settings();
+                    }
+                    EDIT_BUTTON | HISTORY_BUTTON => {
+                        cancel();
+                        launch_history(hit == EDIT_BUTTON);
+                    }
+                    CAMERA_BUTTON => {
+                        if state().mode == MODE_RECORD {
+                            set_mode(MODE_RECT);
+                        }
+                    }
+                    VIDEO_BUTTON => set_mode(MODE_RECORD),
+                    AREA_BUTTON => choose_capture_area(hwnd),
+                    _ => {}
                 }
+                InvalidateRect(hwnd, null(), 0);
             } else {
                 InvalidateRect(hwnd, null(), 0);
             }

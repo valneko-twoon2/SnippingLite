@@ -20,7 +20,7 @@ use windows_sys::Win32::{
 use crate::w;
 
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
-pub const TEXT_FONT: &str = "Segoe UI Variable Text";
+pub const TEXT_FONT: &str = "Yu Gothic UI";
 
 /// Colors are 0xAARRGGBB with straight alpha.
 pub struct Theme {
@@ -52,14 +52,6 @@ pub fn theme() -> Theme {
             &mut size,
         )
     } == 0;
-    let mut accent = 0u32;
-    let mut opaque: BOOL = 0;
-    // SAFETY: both pointers refer to live locals.
-    let accent = if unsafe { DwmGetColorizationColor(&mut accent, &mut opaque) } >= 0 {
-        accent | 0xff000000
-    } else {
-        0xff0067c0
-    };
     if found && light == 0 {
         Theme {
             dark: true,
@@ -69,7 +61,7 @@ pub fn theme() -> Theme {
             pressed: 0x0affffff,
             selected: 0x15ffffff,
             divider: 0x15ffffff,
-            accent,
+            accent: 0xff4cc2ff,
             text_ref: 0x00ffffff,
             bg_ref: 0x00202020,
         }
@@ -82,7 +74,7 @@ pub fn theme() -> Theme {
             pressed: 0x06000000,
             selected: 0x0f000000,
             divider: 0x0f000000,
-            accent,
+            accent: 0xff0067c0,
             text_ref: 0x001a1a1a,
             bg_ref: 0x00f3f3f3,
         }
@@ -263,6 +255,40 @@ pub struct Canvas {
 }
 
 impl Canvas {
+    pub fn app_icon(&mut self, x: i32, y: i32, size: u32) {
+        let rgba = icon_rgba(size);
+        let width = self.width;
+        let height = self.height;
+        let target = self.pixels();
+        for row in 0..size as i32 {
+            for column in 0..size as i32 {
+                let (tx, ty) = (x + column, y + row);
+                if tx < 0 || ty < 0 || tx >= width || ty >= height {
+                    continue;
+                }
+                let i = ((row * size as i32 + column) * 4) as usize;
+                let color = u32::from_be_bytes([rgba[i + 3], rgba[i], rgba[i + 1], rgba[i + 2]]);
+                let dest = (ty * width + tx) as usize;
+                target[dest] = over(target[dest], color, 1.0);
+            }
+        }
+    }
+
+    /// Paints a stable Fluent surface instead of inheriting DWM's inactive tint.
+    pub fn surface(&mut self, dark: bool, scale: f32) {
+        self.pixels()
+            .fill(if dark { 0xff202020 } else { 0xfff3f3f3 });
+        let border = if dark { 0xff414141 } else { 0xffd0d0d0 };
+        let fill = if dark { 0xff202020 } else { 0xfff3f3f3 };
+        let bounds = [0.0, 0.0, self.width as f32, self.height as f32];
+        self.fill_round_rect(bounds, 8.0 * scale, border);
+        self.fill_round_rect(
+            [scale, scale, bounds[2] - scale, bounds[3] - scale],
+            7.0 * scale,
+            fill,
+        );
+    }
+
     pub unsafe fn new(width: i32, height: i32) -> Option<Canvas> {
         if width < 1 || height < 1 {
             return None;
@@ -335,6 +361,11 @@ impl Canvas {
     /// Draws text with grayscale anti-aliasing. `rect` is in pixels and
     /// `format` takes `DrawTextW` flags.
     pub unsafe fn text(&mut self, text: &str, font: &Font, rect: RECT, format: u32, color: u32) {
+        // An empty Vec<u16> has a dangling pointer; DrawTextW can still inspect
+        // its first character even with a zero count.
+        if text.is_empty() {
+            return;
+        }
         let left = rect.left.clamp(0, self.width);
         let top = rect.top.clamp(0, self.height);
         let right = rect.right.clamp(0, self.width);
@@ -525,6 +556,24 @@ pub fn rect(left: f32, top: f32, right: f32, bottom: f32) -> RECT {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_notification_text_leaves_the_canvas_unchanged() {
+        // SAFETY: all GDI objects are local and the text bounds fit the canvas.
+        unsafe {
+            let mut canvas = Canvas::new(120, 24).expect("Create the notification canvas");
+            canvas.pixels().fill(0xff202020);
+            let font = Font::new(TEXT_FONT, 14.0, FW_NORMAL as i32);
+            canvas.text(
+                "",
+                &font,
+                rect(0.0, 0.0, 120.0, 24.0),
+                DT_VCENTER | DT_SINGLELINE,
+                0xffffffff,
+            );
+            assert!(canvas.pixels().iter().all(|pixel| *pixel == 0xff202020));
+        }
+    }
 
     #[test]
     fn thumbnail_averages_and_premultiplies() {

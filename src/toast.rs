@@ -38,6 +38,9 @@ pub struct Toast {
     body: String,
     path: Option<PathBuf>,
     can_open: bool,
+    edit: bool,
+    action_hover: bool,
+    menu_hover: bool,
     scale: f32,
     left: i32,
     right: i32,
@@ -51,14 +54,11 @@ pub struct Toast {
 /// Shows a notification for a finished capture, replacing an existing one.
 pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: Option<PathBuf>) {
     let (title, body) = match (copied, &path) {
-        (true, Some(p)) => (tr("Snip copied to clipboard"), {
-            let _ = p;
-            tr("Saved automatically to the Screenshots folder").to_string()
-        }),
-        (true, None) => (
+        (true, Some(_)) => (
             tr("Snip copied to clipboard"),
-            tr("Paste it into a document or app").to_string(),
+            tr("Saved automatically to the Screenshots folder").to_string(),
         ),
+        (true, None) => (tr("Snip copied to clipboard"), String::new()),
         (false, Some(p)) => (tr("Snip saved"), display_name(p)),
         (false, None) => return,
     };
@@ -93,7 +93,7 @@ unsafe fn present(
         x: work.right - 1,
         y: work.bottom - 1,
     });
-    let toast_height = 156.0;
+    let toast_height = if body.is_empty() { 136.0 } else { 156.0 };
     let toast_width = (WIDTH * scale).round() as i32;
     let toast_height = (toast_height * scale).round() as i32;
     let margin = (12.0 * scale).round() as i32;
@@ -120,6 +120,9 @@ unsafe fn present(
         title,
         body,
         can_open: path.is_some() || state().history,
+        edit: title != tr("Recording saved") && state().history,
+        action_hover: false,
+        menu_hover: false,
         path,
         scale,
         left: right - toast_width,
@@ -166,7 +169,7 @@ unsafe fn begin_closing(toast: &mut Toast) {
 fn close_button(scale: f32, width: i32) -> RECT {
     let size = 32.0 * scale;
     let right = width as f32 - 4.0 * scale;
-    ui::rect(right - size, 4.0 * scale, right, 4.0 * scale + size)
+    ui::rect(right - size, 8.0 * scale, right, 8.0 * scale + size)
 }
 
 unsafe fn paint(toast: &Toast, dc: HDC) {
@@ -178,26 +181,12 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
     let theme = ui::theme();
     let s = toast.scale;
     let title_top = 48.0;
-    if toast.hover {
-        canvas.fill_round_rect(
-            [0.0, 0.0, client.right as f32, client.bottom as f32],
-            0.0,
-            theme.pressed,
-        );
-    }
+    canvas.surface(theme.dark, s);
     let small = Font::new(ui::TEXT_FONT, 12.0 * s, FW_NORMAL as i32);
-    let icon = Font::new(ui::ICON_FONT, 14.0 * s, FW_NORMAL as i32);
-    canvas.text(
-        "\u{F406}",
-        &icon,
-        ui::rect(
-            PADDING * s,
-            PADDING * s,
-            (PADDING + 20.0) * s,
-            (PADDING + HEADER) * s,
-        ),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        theme.text,
+    canvas.app_icon(
+        (PADDING * s).round() as i32,
+        (18.0 * s).round() as i32,
+        (16.0 * s).round() as u32,
     );
     canvas.text(
         "Snipping Lite",
@@ -260,11 +249,47 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
         theme.secondary,
     );
+    let menu = ui::rect((WIDTH - 84.0) * s, 8.0 * s, (WIDTH - 44.0) * s, 40.0 * s);
+    let glyph = Font::new(ui::ICON_FONT, 12.0 * s, FW_NORMAL as i32);
+    canvas.text(
+        "\u{E712}",
+        &glyph,
+        menu,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        theme.secondary,
+    );
     if toast.can_open {
-        let button = [PADDING * s, 108.0 * s, (WIDTH - PADDING) * s, 140.0 * s];
-        canvas.fill_round_rect(button, 4.0 * s, theme.selected);
+        let top = if toast.body.is_empty() { 88.0 } else { 108.0 };
+        let button = [
+            PADDING * s,
+            top * s,
+            (WIDTH - PADDING) * s,
+            (top + 32.0) * s,
+        ];
+        let border = if theme.dark { 0xff404040 } else { 0xffd0d0d0 };
+        let fill = if theme.dark {
+            if toast.action_hover {
+                0xff353535
+            } else {
+                0xff2d2d2d
+            }
+        } else if toast.action_hover {
+            0xffeeeeee
+        } else {
+            0xfffafafa
+        };
+        canvas.fill_round_rect(button, 4.0 * s, border);
+        canvas.fill_round_rect(
+            [button[0] + s, button[1] + s, button[2] - s, button[3] - s],
+            3.0 * s,
+            fill,
+        );
         canvas.text(
-            tr("Open"),
+            if toast.edit {
+                tr("Markup and share")
+            } else {
+                tr("Open")
+            },
             &body,
             ui::rect(button[0], button[1], button[2], button[3]),
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
@@ -323,7 +348,20 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             GetClientRect(hwnd, &mut client);
             let b = close_button(toast.scale, client.right);
             let close_hover = p.x >= b.left && p.x < b.right && p.y >= b.top && p.y < b.bottom;
-            if !toast.hover || close_hover != toast.close_hover {
+            let action_top = if toast.body.is_empty() { 88.0 } else { 108.0 };
+            let action_hover = p.x >= (PADDING * toast.scale) as i32
+                && p.x < ((WIDTH - PADDING) * toast.scale) as i32
+                && p.y >= (action_top * toast.scale) as i32
+                && p.y < ((action_top + 32.0) * toast.scale) as i32;
+            let menu_hover = p.x >= ((WIDTH - 84.0) * toast.scale) as i32
+                && p.x < ((WIDTH - 44.0) * toast.scale) as i32
+                && p.y >= (8.0 * toast.scale) as i32
+                && p.y < (40.0 * toast.scale) as i32;
+            if !toast.hover
+                || close_hover != toast.close_hover
+                || action_hover != toast.action_hover
+                || menu_hover != toast.menu_hover
+            {
                 if !toast.hover {
                     let mut track = TRACKMOUSEEVENT {
                         cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
@@ -336,6 +374,8 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 }
                 toast.hover = true;
                 toast.close_hover = close_hover;
+                toast.action_hover = action_hover;
+                toast.menu_hover = menu_hover;
                 InvalidateRect(hwnd, null(), 0);
             }
             0
@@ -343,6 +383,8 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
         WM_MOUSELEAVE => {
             toast.hover = false;
             toast.close_hover = false;
+            toast.action_hover = false;
+            toast.menu_hover = false;
             if !toast.closing {
                 SetTimer(hwnd, DISMISS, VISIBLE_MS / 2, None);
             }
@@ -350,9 +392,41 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
             0
         }
         WM_LBUTTONUP => {
-            if !toast.close_hover {
-                if toast.path.is_none() {
-                    // Nothing was saved to a file, so open the history instead.
+            if toast.menu_hover {
+                let menu = CreatePopupMenu();
+                if !menu.is_null() {
+                    AppendMenuW(menu, MF_STRING, 1, w(tr("Settings")).as_ptr());
+                    AppendMenuW(menu, MF_STRING, 2, w(tr("Dismiss notification")).as_ptr());
+                    let mut p = point(lp);
+                    ClientToScreen(hwnd, &mut p);
+                    SetForegroundWindow(hwnd);
+                    let command = TrackPopupMenu(
+                        menu,
+                        TPM_RETURNCMD | TPM_NONOTIFY,
+                        p.x,
+                        p.y,
+                        0,
+                        hwnd,
+                        null(),
+                    );
+                    DestroyMenu(menu);
+                    if command == 1 {
+                        crate::launch_settings();
+                    }
+                    // A popup runs a nested message loop: the timer may already have
+                    // destroyed the toast, so reacquire it before closing.
+                    if command != 0 {
+                        if let Some(current) =
+                            state().toast.as_deref_mut().filter(|t| t.hwnd == hwnd)
+                        {
+                            begin_closing(current);
+                        }
+                    }
+                }
+                return 0;
+            } else if !toast.close_hover {
+                if toast.edit || toast.path.is_none() {
+                    // Screenshot actions open the built-in editor; recordings open their file.
                     if state().history {
                         crate::launch_history(true);
                     }

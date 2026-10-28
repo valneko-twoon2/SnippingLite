@@ -164,6 +164,12 @@ const JAPANESE: &[(&str, &str)] = &[
         "Could not save the changes.",
         "変更を保存できませんでした。",
     ),
+    ("Rectangle", "四角形"),
+    ("Freeform", "フリーフォーム"),
+    ("Window", "ウィンドウ"),
+    ("Full screen", "全画面表示"),
+    ("Markup and share", "マークアップと共有"),
+    ("Dismiss notification", "通知を閉じる"),
     // Notification
     (
         "Snip copied to clipboard",
