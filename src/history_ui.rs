@@ -18,6 +18,7 @@ use windows_sys::Win32::{
     },
 };
 
+use crate::i18n::tr;
 use crate::{
     annotate::{self, Mark},
     config,
@@ -103,10 +104,10 @@ impl Range {
 
     fn label(self) -> &'static str {
         match self {
-            Range::All => "All",
-            Range::Day => "Last 24 hours",
-            Range::Week => "Last 7 days",
-            Range::Month => "Last 30 days",
+            Range::All => tr("All"),
+            Range::Day => tr("Last 24 hours"),
+            Range::Week => tr("Last 7 days"),
+            Range::Month => tr("Last 30 days"),
         }
     }
 
@@ -204,7 +205,7 @@ impl HistoryApp {
 
     fn open(&mut self, ctx: &egui::Context, entry: Entry) {
         let Some((width, height, pixels)) = imaging::decode(&entry.image) else {
-            self.notice = Some((Instant::now(), "Could not open the image."));
+            self.notice = Some((Instant::now(), tr("Could not open the image.")));
             return;
         };
         let texture = texture_from(ctx, &entry.image.to_string_lossy(), width, height, &pixels);
@@ -346,23 +347,25 @@ impl HistoryApp {
     fn header(&mut self, ui: &mut egui::Ui, p: &Palette) {
         ui.add_space(20.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("History").font(semibold(20.0)));
+            ui.label(RichText::new(tr("History")).font(semibold(20.0)));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.confirm_clear {
-                    if text_button(ui, "Cancel", p, false).clicked() {
+                    if text_button(ui, tr("Cancel"), p, false).clicked() {
                         self.confirm_clear = false;
                     }
-                    if text_button(ui, "Delete all", p, true).clicked() {
+                    if text_button(ui, tr("Delete all"), p, true).clicked() {
                         history::clear();
                         self.confirm_clear = false;
                         self.refresh();
                     }
                     ui.label(
-                        RichText::new("Delete every screenshot in the history?")
+                        RichText::new(tr("Delete every screenshot in the history?"))
                             .size(12.0)
                             .color(p.warning),
                     );
-                } else if !self.entries.is_empty() && text_button(ui, "Clear", p, false).clicked() {
+                } else if !self.entries.is_empty()
+                    && text_button(ui, tr("Clear"), p, false).clicked()
+                {
                     self.confirm_clear = true;
                 }
             });
@@ -370,17 +373,20 @@ impl HistoryApp {
         ui.add_space(4.0);
         let shown = self.visible().len();
         let text = match (self.entries.len(), shown) {
-            (0, _) => "No screenshots yet".to_owned(),
-            (total, shown) if shown == total => format!(
-                "{total} screenshots, newest first (the oldest beyond {} are removed)",
-                self.limit
-            ),
-            (total, shown) => format!("{shown} of {total} screenshots match"),
+            (0, _) => tr("No screenshots yet").to_owned(),
+            (total, shown) if shown == total => {
+                tr("{total} screenshots, newest first (the oldest beyond {limit} are removed)")
+                    .replace("{total}", &total.to_string())
+                    .replace("{limit}", &self.limit.to_string())
+            }
+            (total, shown) => tr("{shown} of {total} screenshots match")
+                .replace("{shown}", &shown.to_string())
+                .replace("{total}", &total.to_string()),
         };
         ui.label(RichText::new(text).size(12.0).color(p.secondary));
         if !self.recording {
             ui.label(
-                RichText::new("History recording is turned off in Settings.")
+                RichText::new(tr("History recording is turned off in Settings."))
                     .size(12.0)
                     .color(p.warning),
             );
@@ -397,7 +403,7 @@ impl HistoryApp {
                 ui.add_space(8.0);
                 ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search by date, e.g. 2026/10/28")
+                        .hint_text(tr("Search by date, e.g. 2026/10/28"))
                         .desired_width(220.0),
                 );
             });
@@ -411,7 +417,8 @@ impl HistoryApp {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
                 ui.label(
-                    RichText::new("Captures appear here after you take them.").color(p.secondary),
+                    RichText::new(tr("Captures appear here after you take them."))
+                        .color(p.secondary),
                 );
             });
             return;
@@ -420,7 +427,7 @@ impl HistoryApp {
         if entries.is_empty() {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("No screenshots match.").color(p.secondary));
+                ui.label(RichText::new(tr("No screenshots match.")).color(p.secondary));
             });
             return;
         }
@@ -483,11 +490,9 @@ impl HistoryApp {
             egui::WidgetInfo::labeled(
                 egui::Role::Button,
                 ui.is_enabled(),
-                format!(
-                    "Screenshot {} {}",
-                    date_label(entry.id),
-                    time_label(entry.id)
-                ),
+                tr("Screenshot {date} {time}")
+                    .replace("{date}", &date_label(entry.id))
+                    .replace("{time}", &time_label(entry.id)),
             )
         });
         let painter = ui.painter();
@@ -678,9 +683,9 @@ impl HistoryApp {
             opened.marks.clear();
             opened.cropped = false;
             self.thumbnails.remove(&opened.entry.id);
-            self.notice = Some((Instant::now(), "Saved the changes."));
+            self.notice = Some((Instant::now(), tr("Saved the changes.")));
         } else {
-            self.notice = Some((Instant::now(), "Could not save the changes."));
+            self.notice = Some((Instant::now(), tr("Could not save the changes.")));
         }
     }
 
@@ -706,7 +711,7 @@ impl HistoryApp {
         let mut action = None;
         ui.add_space(20.0);
         ui.horizontal(|ui| {
-            if text_button(ui, "Back", p, false).clicked() {
+            if text_button(ui, tr("Back"), p, false).clicked() {
                 action = Some(Action::Back);
             }
             ui.add_space(8.0);
@@ -720,16 +725,16 @@ impl HistoryApp {
                     .color(p.secondary),
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if text_button(ui, "Delete", p, true).clicked() {
+                if text_button(ui, tr("Delete"), p, true).clicked() {
                     action = Some(Action::Delete);
                 }
-                if text_button(ui, "Show in folder", p, false).clicked() {
+                if text_button(ui, tr("Show in folder"), p, false).clicked() {
                     action = Some(Action::Folder);
                 }
-                if text_button(ui, "Save as...", p, false).clicked() {
+                if text_button(ui, tr("Save as..."), p, false).clicked() {
                     action = Some(Action::SaveAs);
                 }
-                if text_button(ui, "Copy", p, false).clicked() {
+                if text_button(ui, tr("Copy"), p, false).clicked() {
                     action = Some(Action::Copy);
                 }
             });
@@ -740,9 +745,9 @@ impl HistoryApp {
         let mut apply = false;
         ui.horizontal_wrapped(|ui| {
             let tools = [
-                (Tool::Pen, "Pen"),
-                (Tool::Highlighter, "Highlighter"),
-                (Tool::Crop, "Crop"),
+                (Tool::Pen, tr("Pen")),
+                (Tool::Highlighter, tr("Highlighter")),
+                (Tool::Crop, tr("Crop")),
             ];
             for (tool, label) in tools {
                 if chip(ui, label, p, self.tool == tool).clicked() {
@@ -759,7 +764,10 @@ impl HistoryApp {
                     }
                 }
                 ui.add_space(8.0);
-                for (index, label) in ["Thin", "Medium", "Thick"].into_iter().enumerate() {
+                for (index, label) in [tr("Thin"), tr("Medium"), tr("Thick")]
+                    .into_iter()
+                    .enumerate()
+                {
                     if chip(ui, label, p, self.thickness == index).clicked() {
                         self.thickness = index;
                         config::save_pen(self.color, self.thickness);
@@ -773,15 +781,15 @@ impl HistoryApp {
                 });
             if self.tool == Tool::Crop && selecting {
                 ui.add_space(8.0);
-                apply = text_button(ui, "Apply crop", p, false).clicked();
+                apply = text_button(ui, tr("Apply crop"), p, false).clicked();
             }
             if marked {
                 ui.add_space(8.0);
-                undo = text_button(ui, "Undo", p, false).clicked();
+                undo = text_button(ui, tr("Undo"), p, false).clicked();
             }
             if marked || cropped {
                 ui.add_space(6.0);
-                persist = text_button(ui, "Save changes", p, false).clicked();
+                persist = text_button(ui, tr("Save changes"), p, false).clicked();
             }
         });
         if apply {
@@ -822,13 +830,14 @@ impl HistoryApp {
         let hint = match self.notice {
             Some((at, text)) if at.elapsed() < Duration::from_secs(4) => (text, p.warning),
             _ => (
-                "Left and right arrow keys browse, Esc goes back.",
+                tr("Left and right arrow keys browse, Esc goes back."),
                 p.secondary,
             ),
         };
         ui.painter().text(
-            pos2(room.left(), room.bottom() + 6.0),
-            Align2::LEFT_TOP,
+            // The hint sits in the 28 px band below the image, centered vertically.
+            pos2(room.left(), room.bottom() + 14.0),
+            Align2::LEFT_CENTER,
             hint.0,
             FontId::new(12.0, FontFamily::Proportional),
             hint.1,
@@ -853,9 +862,9 @@ impl HistoryApp {
                     self.notice = Some((
                         Instant::now(),
                         if ok {
-                            "Copied to the clipboard."
+                            tr("Copied to the clipboard.")
                         } else {
-                            "Could not copy the image."
+                            tr("Could not copy the image.")
                         },
                     ));
                 }
@@ -873,9 +882,9 @@ impl HistoryApp {
                         self.notice = Some((
                             Instant::now(),
                             if saved.is_ok() {
-                                "Saved the image."
+                                tr("Saved the image.")
                             } else {
-                                "Could not save the image."
+                                tr("Could not save the image.")
                             },
                         ));
                     }
@@ -898,7 +907,7 @@ enum Action {
 fn swatch(ui: &mut egui::Ui, rgb: [u8; 3], selected: bool, p: &Palette) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(26.0), Sense::click());
     response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, "Color")
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), selected, tr("Color"))
     });
     let painter = ui.painter();
     painter.circle_filled(

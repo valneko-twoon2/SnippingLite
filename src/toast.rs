@@ -16,6 +16,7 @@ use windows_sys::Win32::{
     },
 };
 
+use crate::i18n::tr;
 use crate::{
     point, state,
     ui::{self, Canvas, Font},
@@ -61,14 +62,14 @@ fn layout(scale: f32, thumb_height: i32) -> (f32, f32, f32) {
 pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: Option<PathBuf>) {
     let (title, body) = match (copied, &path) {
         (true, Some(p)) => (
-            "Snip copied to clipboard",
-            format!("Saved as {}", display_name(p)),
+            tr("Snip copied to clipboard"),
+            tr("Saved as {name}").replace("{name}", &display_name(p)),
         ),
         (true, None) => (
-            "Snip copied to clipboard",
-            "Paste it into a document or app".to_string(),
+            tr("Snip copied to clipboard"),
+            tr("Paste it into a document or app").to_string(),
         ),
-        (false, Some(p)) => ("Snip saved", display_name(p)),
+        (false, Some(p)) => (tr("Snip saved"), display_name(p)),
         (false, None) => return,
     };
     present(pixels, width, height, title, body, path);
@@ -77,7 +78,14 @@ pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: O
 /// Shows a notification for a finished recording; `pixels` is its first frame.
 pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathBuf) {
     let body = display_name(&path);
-    present(pixels, width, height, "Recording saved", body, Some(path));
+    present(
+        pixels,
+        width,
+        height,
+        tr("Recording saved"),
+        body,
+        Some(path),
+    );
 }
 
 unsafe fn present(

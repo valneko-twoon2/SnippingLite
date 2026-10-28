@@ -1,6 +1,7 @@
 //! Screen recording to MP4: GDI frames go through the Media Foundation sink
 //! writer, which encodes H.264 (hardware when available). Only video is recorded.
 
+use crate::i18n::tr;
 use std::{
     path::{Path, PathBuf},
     ptr::null_mut,
@@ -45,13 +46,9 @@ pub struct Recording {
     pub path: PathBuf,
 }
 
-/// `%USERPROFILE%\Videos\Screen Recordings`, created when missing.
+/// The recording folder from the settings, created when missing.
 pub fn video_folder() -> std::io::Result<PathBuf> {
-    let folder = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| std::io::Error::other("USERPROFILE is unavailable"))?
-        .join("Videos")
-        .join("Screen Recordings");
+    let folder = crate::config::video_folder(&crate::config::load_settings());
     std::fs::create_dir_all(&folder)?;
     Ok(folder)
 }
@@ -62,7 +59,7 @@ pub fn start(area: RECT, path: PathBuf) -> Result<Recording, String> {
     let width = (area.right - area.left) & !1;
     let height = (area.bottom - area.top) & !1;
     if width < 16 || height < 16 {
-        return Err("The selected area is too small to record.".into());
+        return Err(tr("The selected area is too small to record.").into());
     }
     let area = RECT {
         right: area.left + width,
@@ -96,7 +93,7 @@ impl Recording {
         let frame = self
             .thread
             .join()
-            .map_err(|_| "The recorder crashed.".to_string())??;
+            .map_err(|_| tr("The recorder crashed.").to_string())??;
         Ok((self.path, frame))
     }
 }
@@ -306,7 +303,7 @@ unsafe fn record(
     begin: Instant,
 ) -> Result<Frame, String> {
     let (width, height) = (area.right - area.left, area.bottom - area.top);
-    let grabber = Grabber::new(area).ok_or("Could not prepare the screen capture.")?;
+    let grabber = Grabber::new(area).ok_or(tr("Could not prepare the screen capture."))?;
     // The first frame is taken at once; the encoder needs a moment to start.
     let mut first = grabber.grab().to_vec();
     first
@@ -314,12 +311,17 @@ unsafe fn record(
         .0
         .iter_mut()
         .for_each(|p| p[3] = 255);
-    let writer = open(path, width, height)
-        .map_err(|e| format!("Could not start the video encoder: {}", e.message()))?;
+    let writer = open(path, width, height).map_err(|e| {
+        format!(
+            "{}: {}",
+            tr("Could not start the video encoder"),
+            e.message()
+        )
+    })?;
     let duration = TICKS / FPS as i64;
     let mut failure = write(&writer, &first, 0, duration)
         .err()
-        .map(|e| format!("Could not write a video frame: {}", e.message()));
+        .map(|e| format!("{}: {}", tr("Could not write a video frame"), e.message()));
     let frame = Duration::from_nanos(1_000_000_000 / FPS as u64);
     let mut next = Instant::now();
     while failure.is_none() && !stop.load(Ordering::Acquire) {
@@ -327,7 +329,8 @@ unsafe fn record(
         let time = begin.elapsed().as_nanos() as i64 / 100;
         if let Err(error) = write(&writer, pixels, time, duration) {
             failure = Some(format!(
-                "Could not write a video frame: {}",
+                "{}: {}",
+                tr("Could not write a video frame"),
                 error.message()
             ));
             break;
@@ -346,7 +349,7 @@ unsafe fn record(
     if let Some(error) = failure {
         return Err(error);
     }
-    finalized.map_err(|e| format!("Could not finish the video file: {}", e.message()))?;
+    finalized.map_err(|e| format!("{}: {}", tr("Could not finish the video file"), e.message()))?;
     Ok(Frame {
         width,
         height,

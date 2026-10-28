@@ -32,6 +32,7 @@ use windows_sys::{
     },
 };
 
+use crate::i18n::tr;
 use crate::w;
 
 static GDIPLUS: AtomicUsize = AtomicUsize::new(0);
@@ -196,14 +197,73 @@ pub fn copy_to_clipboard(owner: HWND, pixels: &[u8], width: i32, height: i32) ->
     }
 }
 
+/// The screenshot folder from the settings, created when missing.
 pub fn screenshot_folder() -> std::io::Result<PathBuf> {
-    let folder = std::env::var_os("USERPROFILE")
-        .map(PathBuf::from)
-        .ok_or_else(|| std::io::Error::other("USERPROFILE is unavailable"))?
-        .join("Pictures")
-        .join("Screenshots");
+    let folder = crate::config::screenshot_folder(&crate::config::load_settings());
     fs::create_dir_all(&folder)?;
     Ok(folder)
+}
+
+/// Opens a folder in Explorer, creating it first when it does not exist yet.
+pub fn open_folder(folder: &Path) {
+    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+    let _ = fs::create_dir_all(folder);
+    // SAFETY: all strings are valid, nul-terminated UTF-16.
+    unsafe {
+        ShellExecuteW(
+            null_mut(),
+            w("open").as_ptr(),
+            wide(folder).as_ptr(),
+            null(),
+            null(),
+            SW_SHOWNORMAL,
+        );
+    }
+}
+
+/// Lets the user pick a folder; `None` means the dialog was cancelled.
+pub fn choose_folder(owner: HWND, current: &Path) -> Option<PathBuf> {
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            System::Com::{
+                CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER,
+                COINIT_APARTMENTTHREADED,
+            },
+            UI::Shell::{
+                FileOpenDialog, IFileOpenDialog, IShellItem, SHCreateItemFromParsingName,
+                FOS_FORCEFILESYSTEM, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+            },
+        },
+    };
+    // SAFETY: plain COM calls; the path string is freed once after it is copied.
+    unsafe {
+        // The thread may already be initialized (possibly differently), which is fine.
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        dialog
+            .SetOptions(dialog.GetOptions().ok()? | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM)
+            .ok()?;
+        let _ = dialog.SetTitle(&HSTRING::from(tr("Choose a folder")));
+        if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(
+            &HSTRING::from(current.to_string_lossy().as_ref()),
+            None,
+        ) {
+            let _ = dialog.SetFolder(&item);
+        }
+        dialog
+            .Show(Some(windows::Win32::Foundation::HWND(owner)))
+            .ok()?;
+        let name = dialog
+            .GetResult()
+            .ok()?
+            .GetDisplayName(SIGDN_FILESYSPATH)
+            .ok()?;
+        let path = name.to_string().ok().map(PathBuf::from);
+        CoTaskMemFree(Some(name.0.cast()));
+        path
+    }
 }
 
 /// Returns the path to save to; with `ask` a Save As dialog picks it and
@@ -216,7 +276,7 @@ pub fn choose_path(owner: HWND, folder: &Path, name: &str, ask: bool) -> Option<
     let initial: Vec<u16> = name.encode_utf16().collect();
     file[..initial.len()].copy_from_slice(&initial);
     let directory = wide(folder);
-    let filter: Vec<u16> = "PNG image\0*.png\0BMP image\0*.bmp\0\0"
+    let filter: Vec<u16> = format!("{}\0*.png\0{}\0*.bmp\0\0", tr("PNG image"), tr("BMP image"))
         .encode_utf16()
         .collect();
     let extension = w("png");

@@ -4,12 +4,14 @@ mod annotate;
 mod config;
 mod history;
 mod history_ui;
+mod i18n;
 mod imaging;
 mod record;
 mod settings_ui;
 mod toast;
 mod ui;
 
+use i18n::tr;
 use std::{
     path::PathBuf,
     ptr::{null, null_mut},
@@ -112,8 +114,9 @@ unsafe fn message(hwnd: HWND, text: &str) {
         MB_OK | MB_ICONINFORMATION,
     );
 }
-const SETTINGS_TITLE: &str = "Snipping Lite Settings";
-const HISTORY_TITLE: &str = "Snipping Lite History";
+// Window titles identify the window processes, so they are fixed strings.
+const SETTINGS_TITLE: &str = "Snipping Lite 設定";
+const HISTORY_TITLE: &str = "Snipping Lite 履歴";
 /// The window processes started by the tray, identified by their window titles.
 const WINDOWS: [&str; 2] = [SETTINGS_TITLE, HISTORY_TITLE];
 unsafe fn find_window(title: &str) -> HWND {
@@ -201,7 +204,7 @@ unsafe fn capture(flush: bool) {
     if !dimmed {
         cleanup();
         restore_windows();
-        message(owner, "Could not capture the desktop.");
+        message(owner, tr("Could not capture the desktop."));
         return;
     }
     state().points.clear();
@@ -773,7 +776,7 @@ unsafe fn finish(rect: RECT, freeform: bool) {
             DeleteObject(bitmap);
         }
         cancel();
-        message(state().owner, "Could not create the capture.");
+        message(state().owner, tr("Could not create the capture."));
         return;
     }
     let old = SelectObject(mem, bitmap);
@@ -827,7 +830,7 @@ unsafe fn finish(rect: RECT, freeform: bool) {
     // Close the overlay first so the Save As dialog is not covered by it.
     cancel();
     let Some(pixels) = pixels else {
-        message(state().owner, "Could not copy the selected pixels.");
+        message(state().owner, tr("Could not copy the selected pixels."));
         return;
     };
     let mut errors = Vec::new();
@@ -835,12 +838,12 @@ unsafe fn finish(rect: RECT, freeform: bool) {
     if state().save {
         match save_image(&pixels, width, height, state().ask) {
             Ok(path) => saved = path,
-            Err(_) => errors.push("Could not save the image."),
+            Err(_) => errors.push(tr("Could not save the image.")),
         }
     }
     let copied = state().copy && imaging::copy_to_clipboard(state().owner, &pixels, width, height);
     if state().copy && !copied {
-        errors.push("Could not copy the image to the clipboard.");
+        errors.push(tr("Could not copy the image to the clipboard."));
     }
     if errors.is_empty() {
         toast::show(&pixels, width, height, copied, saved);
@@ -1073,7 +1076,7 @@ unsafe fn start_recording(rect: RECT) {
 unsafe fn begin_recording(area: RECT) {
     DwmFlush();
     let started = record::video_folder()
-        .map_err(|_| "Could not create the recordings folder.".to_string())
+        .map_err(|_| tr("Could not create the recordings folder.").to_string())
         .and_then(|folder| {
             let name = imaging::timestamp().map_err(|e| e.to_string())?;
             record::start(area, folder.join(format!("Snipping Lite {name}.mp4")))
@@ -1317,7 +1320,7 @@ unsafe fn paint_record(hwnd: HWND, dc: HDC) {
         theme.text,
     );
     canvas.text(
-        "Stop",
+        tr("Stop"),
         &text,
         ui::rect(128.0 * scale, 0.0, 160.0 * scale, client.bottom as f32),
         DT_LEFT | DT_VCENTER | DT_SINGLELINE,
@@ -1517,13 +1520,13 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             if lp as u32 == WM_RBUTTONUP {
                 let menu = CreatePopupMenu();
                 if state().recording.is_some() {
-                    AppendMenuW(menu, MF_STRING, TRAY_STOP, w("Stop recording").as_ptr());
+                    AppendMenuW(menu, MF_STRING, TRAY_STOP, w(tr("Stop recording")).as_ptr());
                 }
-                AppendMenuW(menu, MF_STRING, NEW, w("New snip").as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_HISTORY, w("History").as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Settings").as_ptr());
+                AppendMenuW(menu, MF_STRING, NEW, w(tr("New snip")).as_ptr());
+                AppendMenuW(menu, MF_STRING, TRAY_HISTORY, w(tr("History")).as_ptr());
+                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w(tr("Settings")).as_ptr());
                 AppendMenuW(menu, MF_SEPARATOR, 0, null());
-                AppendMenuW(menu, MF_STRING, TRAY_EXIT, w("Exit").as_ptr());
+                AppendMenuW(menu, MF_STRING, TRAY_EXIT, w(tr("Exit")).as_ptr());
                 let mut cursor: POINT = std::mem::zeroed();
                 GetCursorPos(&mut cursor);
                 SetForegroundWindow(hwnd);
