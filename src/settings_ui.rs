@@ -31,6 +31,8 @@ const MARGIN: f32 = 24.0;
 const ROW: f32 = 48.0;
 
 struct Palette {
+    /// Translucent colors let the Mica backdrop show through.
+    mica: bool,
     bg: Color32,
     card: Color32,
     stroke: Color32,
@@ -43,9 +45,29 @@ struct Palette {
 }
 
 impl Palette {
-    fn new(dark: bool) -> Palette {
+    fn new(dark: bool, mica: bool) -> Palette {
+        let mut p = Palette::opaque(dark);
+        p.mica = mica;
+        if mica {
+            p.bg = Color32::TRANSPARENT;
+            p.card = if dark {
+                Color32::from_rgba_unmultiplied(255, 255, 255, 13)
+            } else {
+                Color32::from_rgba_unmultiplied(255, 255, 255, 179)
+            };
+            p.stroke = if dark {
+                Color32::from_rgba_unmultiplied(0, 0, 0, 56)
+            } else {
+                Color32::from_rgba_unmultiplied(0, 0, 0, 15)
+            };
+        }
+        p
+    }
+
+    fn opaque(dark: bool) -> Palette {
         if dark {
             Palette {
+                mica: false,
                 bg: Color32::from_rgb(0x20, 0x20, 0x20),
                 card: Color32::from_rgb(0x2b, 0x2b, 0x2b),
                 stroke: Color32::from_rgb(0x1d, 0x1d, 0x1d),
@@ -58,6 +80,7 @@ impl Palette {
             }
         } else {
             Palette {
+                mica: false,
                 bg: Color32::from_rgb(0xf3, 0xf3, 0xf3),
                 card: Color32::from_rgb(0xfb, 0xfb, 0xfb),
                 stroke: Color32::from_rgb(0xe5, 0xe5, 0xe5),
@@ -78,7 +101,13 @@ pub fn run(hotkey_ok: bool) {
             .with_title(SETTINGS_TITLE)
             .with_inner_size([WIDTH, HEIGHT])
             .with_resizable(false)
-            .with_maximize_button(false),
+            .with_maximize_button(false)
+            .with_transparent(ui::supports_mica())
+            .with_icon(egui::IconData {
+                rgba: ui::icon_rgba(64),
+                width: 64,
+                height: 64,
+            }),
         ..Default::default()
     };
     let _ = eframe::run_native(
@@ -88,8 +117,9 @@ pub fn run(hotkey_ok: bool) {
             if !install_fonts(&cc.egui_ctx) {
                 return Err("No usable system font was found.".into());
             }
-            install_visuals(&cc.egui_ctx);
-            Ok(Box::new(SettingsApp::new(hotkey_ok)))
+            let mica = ui::supports_mica();
+            install_visuals(&cc.egui_ctx, mica);
+            Ok(Box::new(SettingsApp::new(hotkey_ok, mica)))
         }),
     );
 }
@@ -131,10 +161,10 @@ fn install_fonts(ctx: &egui::Context) -> bool {
     true
 }
 
-fn install_visuals(ctx: &egui::Context) {
+fn install_visuals(ctx: &egui::Context, mica: bool) {
     for theme in [Theme::Dark, Theme::Light] {
         let dark = theme == Theme::Dark;
-        let p = Palette::new(dark);
+        let p = Palette::new(dark, mica);
         let mut v = if dark {
             egui::Visuals::dark()
         } else {
@@ -194,10 +224,11 @@ struct SettingsApp {
     hotkey_ok: bool,
     notice: Option<Instant>,
     framed: bool,
+    mica: bool,
 }
 
 impl SettingsApp {
-    fn new(hotkey_ok: bool) -> SettingsApp {
+    fn new(hotkey_ok: bool, mica: bool) -> SettingsApp {
         let (copy, save, ask, delay) = config::load_settings();
         SettingsApp {
             copy,
@@ -207,6 +238,7 @@ impl SettingsApp {
             hotkey_ok,
             notice: None,
             framed: false,
+            mica,
         }
     }
 
@@ -235,10 +267,18 @@ fn semibold(size: f32) -> FontId {
 }
 
 impl eframe::App for SettingsApp {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if self.mica {
+            [0.0; 4]
+        } else {
+            visuals.panel_fill.to_normalized_gamma_f32()
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let dark = ctx.theme() == Theme::Dark;
-        let p = Palette::new(dark);
+        let p = Palette::new(dark, self.mica);
         if !self.framed {
             self.framed = true;
             // SAFETY: the title is a valid UTF-16 string and the handle is
@@ -247,11 +287,17 @@ impl eframe::App for SettingsApp {
                 let hwnd = FindWindowW(null(), w(SETTINGS_TITLE).as_ptr());
                 if !hwnd.is_null() {
                     ui::disable_transitions(hwnd);
-                    ui::window_theme(hwnd, &ui::theme());
+                    if self.mica {
+                        ui::mica(hwnd, dark);
+                    } else {
+                        ui::window_theme(hwnd, &ui::theme());
+                    }
                 }
             }
         }
-        ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
+        if !self.mica {
+            ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
+        }
         let rect = ui.max_rect().shrink2(Vec2::new(MARGIN, 0.0));
         let mut body = ui.new_child(UiBuilder::new().max_rect(rect));
         let ui = &mut body;

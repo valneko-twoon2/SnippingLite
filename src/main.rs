@@ -1159,7 +1159,7 @@ unsafe fn tray(hwnd: HWND, operation: u32) {
     data.uID = 1;
     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
     data.uCallbackMessage = TRAY_MESSAGE;
-    data.hIcon = LoadIconW(null_mut(), IDI_APPLICATION);
+    data.hIcon = ui::app_icon(32);
     let title = w("Snipping Lite");
     data.szTip[..title.len()].copy_from_slice(&title);
     Shell_NotifyIconW(operation, &data);

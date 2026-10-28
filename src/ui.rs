@@ -7,8 +7,14 @@ use std::ptr::null_mut;
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::{Dwm::*, Gdi::*},
-    System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD},
-    UI::{Controls::MARGINS, HiDpi::*},
+    System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    },
+    UI::{
+        Controls::MARGINS,
+        HiDpi::*,
+        WindowsAndMessaging::{CreateIcon, HICON},
+    },
 };
 
 use crate::w;
@@ -136,6 +142,58 @@ pub unsafe fn disable_transitions(hwnd: HWND) {
         (&value as *const BOOL).cast(),
         4,
     );
+}
+
+/// Whether the DWM Mica backdrop exists (Windows 11 22H2 or later).
+pub fn supports_mica() -> bool {
+    let mut buffer = [0u16; 16];
+    let mut size = std::mem::size_of_val(&buffer) as u32;
+    // SAFETY: the buffer and its byte size describe `buffer`.
+    let found = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            w("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion").as_ptr(),
+            w("CurrentBuildNumber").as_ptr(),
+            RRF_RT_REG_SZ,
+            null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+        )
+    } == 0;
+    let length = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
+    found
+        && String::from_utf16_lossy(&buffer[..length])
+            .parse::<u32>()
+            .is_ok_and(|build| build >= 22621)
+}
+
+/// Draws the Mica material behind the whole window, including the title bar.
+pub unsafe fn mica(hwnd: HWND, dark: bool) {
+    let dark: BOOL = dark.into();
+    let backdrop = DWMSBT_MAINWINDOW;
+    let default_color = 0xffff_ffffu32; // DWMWA_COLOR_DEFAULT
+    DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE as u32,
+        (&dark as *const BOOL).cast(),
+        4,
+    );
+    for attribute in [34u32, 35] {
+        DwmSetWindowAttribute(hwnd, attribute, (&default_color as *const u32).cast(), 4);
+    }
+    DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_SYSTEMBACKDROP_TYPE as u32,
+        (&backdrop as *const i32).cast(),
+        4,
+    );
+    let margins = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    DwmExtendFrameIntoClientArea(hwnd, &margins);
 }
 
 /// Colors the title bar to match the window background (Windows 11).
@@ -407,6 +465,76 @@ pub fn thumbnail(pixels: &[u8], width: i32, height: i32, tw: i32, th: i32) -> Ve
         }
     }
     out
+}
+
+/// Draws the application icon (selection corners on a blue tile) as
+/// straight-alpha RGBA, top-down.
+pub fn icon_rgba(size: u32) -> Vec<u8> {
+    let n = size as f32;
+    let mut out = vec![0u8; (size * size * 4) as usize];
+    let samples = 4;
+    for y in 0..size {
+        for x in 0..size {
+            let (mut tile, mut mark) = (0.0f32, 0.0f32);
+            for sy in 0..samples {
+                for sx in 0..samples {
+                    let px = (x as f32 + (sx as f32 + 0.5) / samples as f32) / n;
+                    let py = (y as f32 + (sy as f32 + 0.5) / samples as f32) / n;
+                    // Rounded tile.
+                    let (qx, qy) = (
+                        (px - 0.5).abs() - (0.5 - 0.22),
+                        (py - 0.5).abs() - (0.5 - 0.22),
+                    );
+                    let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt()
+                        + qx.max(qy).min(0.0)
+                        - 0.22;
+                    if d <= 0.0 {
+                        tile += 1.0;
+                    }
+                    // Four L-shaped corner brackets.
+                    let (ax, ay) = ((px - 0.5).abs(), (py - 0.5).abs());
+                    let (inner, outer, arm) = (0.17, 0.25, 0.10);
+                    let edge_x = ax > inner && ax < outer && ay > outer - arm - 0.07 && ay < outer;
+                    let edge_y = ay > inner && ay < outer && ax > outer - arm - 0.07 && ax < outer;
+                    let corner = ax > inner && ax < outer && ay > inner && ay < outer;
+                    let bracket = (edge_x || edge_y) && (corner || ax.max(ay) < outer);
+                    if bracket && d <= 0.0 {
+                        mark += 1.0;
+                    }
+                }
+            }
+            let total = (samples * samples) as f32;
+            let alpha = tile / total;
+            let white = if tile > 0.0 { mark / tile } else { 0.0 };
+            // Blend white brackets over the blue tile (0x00 0x67 0xc0).
+            let blue = [0x00 as f32, 0x67 as f32, 0xc0 as f32];
+            let i = ((y * size + x) * 4) as usize;
+            for c in 0..3 {
+                out[i + c] = (blue[c] + (255.0 - blue[c]) * white).round() as u8;
+            }
+            out[i + 3] = (alpha * 255.0).round() as u8;
+        }
+    }
+    out
+}
+
+/// Creates an icon handle from `icon_rgba`; the caller keeps it for the process lifetime.
+pub unsafe fn app_icon(size: u32) -> HICON {
+    let rgba = icon_rgba(size);
+    let mut bgra = rgba.clone();
+    for pixel in bgra.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    let mask = vec![0u8; (size * size / 8) as usize];
+    CreateIcon(
+        null_mut(),
+        size as i32,
+        size as i32,
+        1,
+        32,
+        mask.as_ptr(),
+        bgra.as_ptr(),
+    )
 }
 
 pub fn rect(left: f32, top: f32, right: f32, bottom: f32) -> RECT {
