@@ -96,6 +96,8 @@ struct State {
     freeze: bool,
     countdown: bool,
     skip_title: bool,
+    record_cursor: bool,
+    record_fps: u32,
     count_window: HWND,
     count_left: i32,
     count_area: RECT,
@@ -1190,6 +1192,10 @@ unsafe fn begin_recording(area: RECT, points: Vec<POINT>) {
                 area,
                 folder.join(format!("Snipping Lite {name}.mp4")),
                 points,
+                record::Options {
+                    fps: state().record_fps,
+                    cursor: state().record_cursor,
+                },
             )
         });
     match started {
@@ -1664,6 +1670,8 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().history = settings.history;
             state().countdown = settings.countdown;
             state().skip_title = settings.skip_title;
+            state().record_cursor = settings.record_cursor;
+            state().record_fps = settings.record_fps;
             state().freeze = settings.freeze;
             0
         }
@@ -1816,6 +1824,8 @@ fn main() {
             freeze: settings.freeze,
             countdown: settings.countdown,
             skip_title: settings.skip_title,
+            record_cursor: settings.record_cursor,
+            record_fps: settings.record_fps,
             count_window: null_mut(),
             count_left: 0,
             count_points: Vec::new(),

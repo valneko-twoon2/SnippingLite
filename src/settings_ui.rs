@@ -21,7 +21,7 @@ use windows_sys::Win32::{
 
 use crate::i18n::tr;
 use crate::{
-    config::{self, DELAYS, HISTORY_LIMITS},
+    config::{self, DELAYS, FRAME_RATES, HISTORY_LIMITS},
     imaging, ui, w, MAIN, SETTINGS_TITLE, SETTINGS_WINDOW, TRAY_HISTORY, TRAY_RELOAD,
 };
 
@@ -253,6 +253,8 @@ struct SettingsApp {
     history_limit: usize,
     countdown: bool,
     skip_title: bool,
+    record_cursor: bool,
+    record_fps: u32,
     freeze: bool,
     screenshot_folder: String,
     video_folder: String,
@@ -274,6 +276,8 @@ impl SettingsApp {
             history_limit: settings.history_limit,
             countdown: settings.countdown,
             skip_title: settings.skip_title,
+            record_cursor: settings.record_cursor,
+            record_fps: settings.record_fps,
             freeze: settings.freeze,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
@@ -294,6 +298,8 @@ impl SettingsApp {
             history_limit: self.history_limit,
             countdown: self.countdown,
             skip_title: self.skip_title,
+            record_cursor: self.record_cursor,
+            record_fps: self.record_fps,
             freeze: self.freeze,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
@@ -450,6 +456,28 @@ impl eframe::App for SettingsApp {
                     let title = tr("Countdown before recording");
                     row(ui, &p, title, None, |ui| {
                         switch(ui, &mut self.countdown, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Include the mouse cursor in recordings");
+                    row(ui, &p, title, None, |ui| {
+                        switch(ui, &mut self.record_cursor, title, &p);
+                    });
+                    divider(ui, &p);
+                    row(ui, &p, tr("Recording frame rate"), None, |ui| {
+                        egui::ComboBox::from_id_salt("record_fps")
+                            .selected_text(
+                                tr("{n} fps").replace("{n}", &self.record_fps.to_string()),
+                            )
+                            .width(124.0)
+                            .show_ui(ui, |ui| {
+                                for fps in FRAME_RATES {
+                                    ui.selectable_value(
+                                        &mut self.record_fps,
+                                        fps,
+                                        tr("{n} fps").replace("{n}", &fps.to_string()),
+                                    );
+                                }
+                            });
                     });
                     divider(ui, &p);
                     let title = tr("Leave out the title bar when recording a window");

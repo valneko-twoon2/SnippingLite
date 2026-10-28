@@ -11,6 +11,9 @@ use crate::i18n::tr;
 pub const DELAYS: [u32; 4] = [0, 3, 5, 10];
 /// History sizes offered in the settings window; the middle one is the default.
 pub const HISTORY_LIMITS: [usize; 4] = [50, 100, 200, 500];
+/// Frame rates offered for screen recording.
+pub const FRAME_RATES: [u32; 2] = [30, 60];
+pub const DEFAULT_FRAME_RATE: u32 = 60;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
@@ -27,6 +30,9 @@ pub struct Settings {
     pub countdown: bool,
     /// Recording a clicked window leaves out its title bar.
     pub skip_title: bool,
+    /// Include the mouse pointer in recorded video.
+    pub record_cursor: bool,
+    pub record_fps: u32,
     /// Freeze and dim the screen while selecting; otherwise the screen stays live.
     pub freeze: bool,
     /// Where screenshots are saved; empty means the default folder.
@@ -94,6 +100,13 @@ pub fn parse_settings(text: &str) -> Settings {
         history_limit,
         countdown: !text.lines().any(|s| s == "countdown=0"),
         skip_title: !text.lines().any(|s| s == "skip_title=0"),
+        record_cursor: !text.lines().any(|s| s == "record_cursor=0"),
+        record_fps: text
+            .lines()
+            .find_map(|s| s.strip_prefix("record_fps="))
+            .and_then(|v| v.parse().ok())
+            .filter(|fps| FRAME_RATES.contains(fps))
+            .unwrap_or(DEFAULT_FRAME_RATE),
         freeze: text.lines().any(|s| s == "freeze=1"),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
@@ -179,7 +192,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_atomic(
         &path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nfreeze={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
@@ -188,6 +201,8 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
             settings.history_limit,
             settings.countdown as u8,
             settings.skip_title as u8,
+            settings.record_cursor as u8,
+            settings.record_fps,
             settings.freeze as u8,
             settings.screenshot_folder,
             settings.video_folder
@@ -212,13 +227,15 @@ mod tests {
                 history_limit: 200,
                 countdown: true,
                 skip_title: true,
+                record_cursor: true,
+                record_fps: 60,
                 freeze: false,
                 screenshot_folder: String::new(),
                 video_folder: String::new()
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nfreeze=1\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -231,12 +248,20 @@ mod tests {
                 history_limit: 50,
                 countdown: false,
                 skip_title: false,
+                record_cursor: false,
+                record_fps: 30,
                 freeze: true,
                 screenshot_folder: "D:\\Shots".to_owned(),
                 video_folder: String::new()
             }
         );
         assert_eq!(parse_settings("delay=7").delay, 0);
+        for invalid in ["0", "-1", "120", "invalid"] {
+            assert_eq!(
+                parse_settings(&format!("record_fps={invalid}")).record_fps,
+                60
+            );
+        }
         assert_eq!(parse_settings("history_limit=7").history_limit, 200);
     }
 

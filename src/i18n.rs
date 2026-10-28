@@ -58,6 +58,16 @@ const JAPANESE: &[(&str, &str)] = &[
     ("{n} seconds", "{n} 秒"),
     ("Countdown before recording", "録画前にカウントダウンする"),
     (
+        "Include the mouse cursor in recordings",
+        "録画にマウスカーソルを含める",
+    ),
+    ("Recording frame rate", "録画のフレームレート"),
+    ("{n} fps", "{n} fps"),
+    (
+        "Unsupported recording frame rate.",
+        "録画のフレームレートが無効です。",
+    ),
+    (
         "Dim and freeze the screen while snipping",
         "切り取り中に画面を暗くして静止する",
     ),

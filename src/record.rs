@@ -24,11 +24,16 @@ use windows_sys::Win32::{
     Foundation::{POINT, RECT},
     Graphics::Gdi::*,
     UI::WindowsAndMessaging::{
-        DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, ICONINFO,
+        DrawIconEx, GetCursorInfo, GetIconInfo, CURSORINFO, CURSOR_SHOWING, DI_NORMAL, HCURSOR,
+        ICONINFO,
     },
 };
 
-const FPS: u32 = 30;
+#[derive(Clone, Copy)]
+pub struct Options {
+    pub fps: u32,
+    pub cursor: bool,
+}
 /// Hundreds of nanoseconds per second, the unit of Media Foundation times.
 const TICKS: i64 = 10_000_000;
 
@@ -39,6 +44,12 @@ pub struct Frame {
     pub pixels: Vec<u8>,
     /// Set when the recording ended early but the file up to that point was kept.
     pub warning: Option<String>,
+    #[cfg(test)]
+    captured_frames: u32,
+    #[cfg(test)]
+    capture_time: Duration,
+    #[cfg(test)]
+    encode_time: Duration,
 }
 
 /// A recording in progress on its own thread.
@@ -59,7 +70,15 @@ pub fn video_folder() -> std::io::Result<PathBuf> {
 /// Starts recording `area` (screen coordinates); the size is rounded down to
 /// even numbers as H.264 requires. `points` is an optional freeform polygon
 /// relative to the top-left of `area`.
-pub fn start(area: RECT, path: PathBuf, points: Vec<POINT>) -> Result<Recording, String> {
+pub fn start(
+    area: RECT,
+    path: PathBuf,
+    points: Vec<POINT>,
+    options: Options,
+) -> Result<Recording, String> {
+    if !crate::config::FRAME_RATES.contains(&options.fps) {
+        return Err(tr("Unsupported recording frame rate.").into());
+    }
     let width = (area.right - area.left) & !1;
     let height = (area.bottom - area.top) & !1;
     if width < 16 || height < 16 {
@@ -75,7 +94,7 @@ pub fn start(area: RECT, path: PathBuf, points: Vec<POINT>) -> Result<Recording,
     let started = Arc::new(OnceLock::new());
     let thread = {
         let (stop, path, started) = (stop.clone(), path.clone(), started.clone());
-        std::thread::spawn(move || run(area, &path, &stop, &started, &points))
+        std::thread::spawn(move || run(area, &path, &stop, &started, &points, options))
     };
     Ok(Recording {
         stop,
@@ -116,6 +135,7 @@ fn video_type(
     subtype: &windows::core::GUID,
     width: i32,
     height: i32,
+    fps: u32,
 ) -> windows::core::Result<IMFMediaType> {
     // SAFETY: plain Media Foundation calls on objects created here.
     unsafe {
@@ -124,26 +144,29 @@ fn video_type(
         media.SetGUID(&MF_MT_SUBTYPE, subtype)?;
         media.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
         media.SetUINT64(&MF_MT_FRAME_SIZE, ((width as u64) << 32) | height as u64)?;
-        media.SetUINT64(&MF_MT_FRAME_RATE, ((FPS as u64) << 32) | 1)?;
+        media.SetUINT64(&MF_MT_FRAME_RATE, ((fps as u64) << 32) | 1)?;
         media.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1 << 32) | 1)?;
         Ok(media)
     }
 }
 
-fn open(path: &Path, width: i32, height: i32) -> windows::core::Result<Writer> {
+fn open(path: &Path, width: i32, height: i32, fps: u32) -> windows::core::Result<Writer> {
     // SAFETY: plain Media Foundation calls on objects created here.
     unsafe {
         let mut attributes = None;
-        MFCreateAttributes(&mut attributes, 1)?;
+        MFCreateAttributes(&mut attributes, 2)?;
         let attributes = attributes.ok_or_else(windows::core::Error::empty)?;
         attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+        // The capture loop already owns frame pacing; avoid a second wait here.
+        attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
         let url = HSTRING::from(path.to_string_lossy().as_ref());
         let sink = MFCreateSinkWriterFromURL(&url, None, &attributes)?;
-        let output = video_type(&MFVideoFormat_H264, width, height)?;
-        let bitrate = (width as f64 * height as f64 * FPS as f64 * 0.1).clamp(2e6, 20e6) as u32;
+        let output = video_type(&MFVideoFormat_H264, width, height, fps)?;
+        let bitrate = (width as f64 * height as f64 * fps as f64 * 0.1)
+            .clamp(2e6, 20e6 * f64::from(fps) / 30.0) as u32;
         output.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
         let stream = sink.AddStream(&output)?;
-        let input = video_type(&MFVideoFormat_RGB32, width, height)?;
+        let input = video_type(&MFVideoFormat_RGB32, width, height, fps)?;
         // A positive stride marks the rows as top-down, like the DIB section.
         input.SetUINT32(&MF_MT_DEFAULT_STRIDE, (width * 4) as u32)?;
         sink.SetInputMediaType(stream, &input, None)?;
@@ -169,33 +192,48 @@ fn write(writer: &Writer, pixels: &[u8], time: i64, duration: i64) -> windows::c
     }
 }
 
-/// Draws the mouse cursor, which BitBlt does not include, into the frame.
-unsafe fn draw_cursor(dc: HDC, area: &RECT) {
-    let mut info: CURSORINFO = std::mem::zeroed();
-    info.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
-    if GetCursorInfo(&mut info) == 0 || info.flags & CURSOR_SHOWING == 0 {
-        return;
-    }
-    let mut icon: ICONINFO = std::mem::zeroed();
-    if GetIconInfo(info.hCursor, &mut icon) == 0 {
-        return;
-    }
-    DrawIconEx(
-        dc,
-        info.ptScreenPos.x - icon.xHotspot as i32 - area.left,
-        info.ptScreenPos.y - icon.yHotspot as i32 - area.top,
-        info.hCursor,
-        0,
-        0,
-        0,
-        null_mut(),
-        DI_NORMAL,
-    );
-    if !icon.hbmMask.is_null() {
-        DeleteObject(icon.hbmMask);
-    }
-    if !icon.hbmColor.is_null() {
-        DeleteObject(icon.hbmColor);
+/// Cursor hotspot metadata is cached until the cursor changes. GetIconInfo
+/// allocates two GDI bitmaps, so calling it for every frame is unnecessary.
+struct Cursor {
+    icon: HCURSOR,
+    hotspot: POINT,
+}
+
+impl Cursor {
+    unsafe fn draw(&mut self, dc: HDC, area: &RECT) {
+        let mut info: CURSORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<CURSORINFO>() as u32;
+        if GetCursorInfo(&mut info) == 0 || info.flags & CURSOR_SHOWING == 0 {
+            return;
+        }
+        if self.icon != info.hCursor {
+            let mut icon: ICONINFO = std::mem::zeroed();
+            if GetIconInfo(info.hCursor, &mut icon) == 0 {
+                return;
+            }
+            self.icon = info.hCursor;
+            self.hotspot = POINT {
+                x: icon.xHotspot as i32,
+                y: icon.yHotspot as i32,
+            };
+            if !icon.hbmMask.is_null() {
+                DeleteObject(icon.hbmMask);
+            }
+            if !icon.hbmColor.is_null() {
+                DeleteObject(icon.hbmColor);
+            }
+        }
+        DrawIconEx(
+            dc,
+            info.ptScreenPos.x - self.hotspot.x - area.left,
+            info.ptScreenPos.y - self.hotspot.y - area.top,
+            info.hCursor,
+            0,
+            0,
+            0,
+            null_mut(),
+            DI_NORMAL,
+        );
     }
 }
 
@@ -248,10 +286,11 @@ struct Grabber {
     area: RECT,
     length: usize,
     outside: Vec<Range<usize>>,
+    cursor: Option<Cursor>,
 }
 
 impl Grabber {
-    unsafe fn new(area: RECT, points: &[POINT]) -> Option<Grabber> {
+    unsafe fn new(area: RECT, points: &[POINT], cursor: bool) -> Option<Grabber> {
         let (width, height) = (area.right - area.left, area.bottom - area.top);
         let screen = GetDC(null_mut());
         let mem = CreateCompatibleDC(screen);
@@ -278,6 +317,10 @@ impl Grabber {
             area,
             length: width as usize * height as usize * 4,
             outside: outside_runs(width, height, points),
+            cursor: cursor.then_some(Cursor {
+                icon: null_mut(),
+                hotspot: POINT { x: 0, y: 0 },
+            }),
         };
         // Dropping releases whatever was created.
         (!screen.is_null() && !mem.is_null() && !bitmap.is_null() && !bits.is_null())
@@ -301,7 +344,9 @@ impl Grabber {
             self.area.top,
             SRCCOPY | CAPTUREBLT,
         );
-        draw_cursor(self.mem, &self.area);
+        if let Some(cursor) = &mut self.cursor {
+            cursor.draw(self.mem, &self.area);
+        }
         GdiFlush();
         let pixels = std::slice::from_raw_parts_mut(self.bits, self.length);
         for run in &self.outside {
@@ -337,12 +382,13 @@ fn run(
     stop: &AtomicBool,
     clock: &OnceLock<Instant>,
     points: &[POINT],
+    options: Options,
 ) -> Result<Frame, String> {
     // SAFETY: COM and Media Foundation are initialized and shut down on this thread only.
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
         let started = MFStartup(MF_VERSION, MFSTARTUP_FULL).is_ok();
-        let result = record(area, path, stop, clock, points);
+        let result = record(area, path, stop, clock, points, options);
         if started {
             let _ = MFShutdown();
         }
@@ -362,11 +408,12 @@ unsafe fn record(
     stop: &AtomicBool,
     clock: &OnceLock<Instant>,
     points: &[POINT],
+    options: Options,
 ) -> Result<Frame, String> {
     let (width, height) = (area.right - area.left, area.bottom - area.top);
-    let mut grabber =
-        Grabber::new(area, points).ok_or(tr("Could not prepare the screen capture."))?;
-    let writer = open(path, width, height).map_err(|e| {
+    let mut grabber = Grabber::new(area, points, options.cursor)
+        .ok_or(tr("Could not prepare the screen capture."))?;
+    let writer = open(path, width, height, options.fps).map_err(|e| {
         format!(
             "{}: {}",
             tr("Could not start the video encoder"),
@@ -380,7 +427,7 @@ unsafe fn record(
         .0
         .iter_mut()
         .for_each(|p| p[3] = 255);
-    let duration = TICKS / FPS as i64;
+    let duration = TICKS / options.fps as i64;
     let mut failure = write(&writer, &first, 0, duration)
         .err()
         .map(|e| format!("{}: {}", tr("Could not write a video frame"), e.message()));
@@ -390,14 +437,26 @@ unsafe fn record(
     if wrote_first {
         let _ = clock.set(begin);
     }
-    let frame = Duration::from_nanos(1_000_000_000 / FPS as u64);
+    let frame = Duration::from_nanos(1_000_000_000 / options.fps as u64);
     let mut next = begin;
+    #[cfg(test)]
+    let (mut captured_frames, mut capture_time, mut encode_time) =
+        (1, Duration::ZERO, Duration::ZERO);
     while failure.is_none() && !stop.load(Ordering::Acquire) {
+        #[cfg(test)]
+        let capture_begin = Instant::now();
         let pixels = grabber.grab();
+        #[cfg(test)]
+        {
+            captured_frames += 1;
+            capture_time += capture_begin.elapsed();
+        }
         // Some encoders take a long time to open or accept the first sample.
         // Starting at one frame interval prevents filling that wait with copies
         // of the first image; later timestamps still follow real elapsed time.
         let time = duration + begin.elapsed().as_nanos() as i64 / 100;
+        #[cfg(test)]
+        let encode_begin = Instant::now();
         if let Err(error) = write(&writer, pixels, time, duration) {
             failure = Some(format!(
                 "{}: {}",
@@ -405,6 +464,10 @@ unsafe fn record(
                 error.message()
             ));
             break;
+        }
+        #[cfg(test)]
+        {
+            encode_time += encode_begin.elapsed();
         }
         next += frame;
         let now = Instant::now();
@@ -431,6 +494,12 @@ unsafe fn record(
         height,
         pixels: first,
         warning,
+        #[cfg(test)]
+        captured_frames,
+        #[cfg(test)]
+        capture_time,
+        #[cfg(test)]
+        encode_time,
     })
 }
 
@@ -440,8 +509,78 @@ mod tests {
 
     #[test]
     #[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
+    fn recording_throughput() {
+        // SAFETY: the benchmark owns its capture DC and bitmap on this thread.
+        unsafe {
+            let mut grabber = Grabber::new(
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+                &[],
+                true,
+            )
+            .unwrap();
+            let begin = Instant::now();
+            let mut frames = 0;
+            while begin.elapsed() < Duration::from_secs(2) {
+                grabber.grab();
+                frames += 1;
+            }
+            eprintln!(
+                "1080p capture-only capacity: {:.1} frames/s",
+                f64::from(frames) / begin.elapsed().as_secs_f64()
+            );
+        }
+        for fps in crate::config::FRAME_RATES {
+            let path = std::env::temp_dir().join(format!(
+                "snippinglite-throughput-{}-{fps}.mp4",
+                std::process::id()
+            ));
+            let recording = start(
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+                path.clone(),
+                Vec::new(),
+                Options { fps, cursor: true },
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while recording.started.get().is_none()
+                && !recording.failed()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_secs(2));
+            let elapsed = recording.elapsed();
+            let (_, frame) = recording.stop().unwrap();
+            std::fs::remove_file(path).unwrap();
+            let count = f64::from(frame.captured_frames.saturating_sub(1));
+            eprintln!(
+                "1080p / {fps} fps target: {:.1} fresh frames/s; capture {:.2}ms; encode {:.2}ms",
+                count / elapsed.as_secs_f64(),
+                frame.capture_time.as_secs_f64() * 1000.0 / count,
+                frame.encode_time.as_secs_f64() * 1000.0 / count
+            );
+            assert!(frame.warning.is_none(), "{:?}", frame.warning);
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
     fn records_rectangular_and_freeform_mp4() {
         for freeform in [false, true] {
+            let options = Options {
+                fps: if freeform { 60 } else { 30 },
+                cursor: freeform,
+            };
             let path = std::env::temp_dir().join(format!(
                 "snippinglite-recording-test-{}-{freeform}.mp4",
                 std::process::id()
@@ -469,6 +608,7 @@ mod tests {
                 },
                 path.clone(),
                 points,
+                options,
             )
             .expect("Start the recording worker");
             let deadline = Instant::now() + Duration::from_secs(15);
@@ -507,7 +647,7 @@ mod tests {
                 .expect("MP4 sample sizes");
             let samples = u32::from_be_bytes(bytes[sizes + 12..sizes + 16].try_into().unwrap());
             assert!(samples > 1, "The MP4 must contain multiple video frames");
-            let maximum = (elapsed.as_secs_f64() * f64::from(FPS)).ceil() as u32 + 3;
+            let maximum = (elapsed.as_secs_f64() * f64::from(options.fps)).ceil() as u32 + 3;
             assert!(samples <= maximum,
                 "Encoder warm-up added repeated frames: {samples} frames for {elapsed:?} of recording");
             let media = bytes
@@ -524,7 +664,7 @@ mod tests {
             let first_delta =
                 u32::from_be_bytes(bytes[timing + 16..timing + 20].try_into().unwrap());
             assert!(
-                u64::from(first_delta) * u64::from(FPS) <= 2 * u64::from(timescale),
+                u64::from(first_delta) * u64::from(options.fps) <= 2 * u64::from(timescale),
                 "The first frame lasts {:.3}s; encoder initialization must not freeze it",
                 f64::from(first_delta) / f64::from(timescale)
             );
