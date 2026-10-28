@@ -1412,10 +1412,7 @@ unsafe fn paint_record(hwnd: HWND, dc: HDC) {
     };
     let s = state();
     let (theme, scale) = (&s.theme, s.scale);
-    let elapsed = s
-        .recording
-        .as_ref()
-        .map_or(0, |r| r.started.elapsed().as_secs());
+    let elapsed = s.recording.as_ref().map_or(0, |r| r.elapsed().as_secs());
     let text = ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32);
     canvas.fill_round_rect(
         [14.0 * scale, 18.0 * scale, 26.0 * scale, 30.0 * scale],

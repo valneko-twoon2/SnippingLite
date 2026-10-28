@@ -8,7 +8,7 @@ use std::{
     ptr::null_mut,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     thread::JoinHandle,
     time::{Duration, Instant},
@@ -45,7 +45,7 @@ pub struct Frame {
 pub struct Recording {
     stop: Arc<AtomicBool>,
     thread: JoinHandle<Result<Frame, String>>,
-    pub started: Instant,
+    started: Arc<OnceLock<Instant>>,
     pub path: PathBuf,
 }
 
@@ -71,11 +71,11 @@ pub fn start(area: RECT, path: PathBuf, points: Vec<POINT>) -> Result<Recording,
         ..area
     };
     let stop = Arc::new(AtomicBool::new(false));
-    // The encoder starts on the recorder thread; the clock starts now.
-    let started = Instant::now();
+    // Publish the clock only after the encoder accepts the first frame.
+    let started = Arc::new(OnceLock::new());
     let thread = {
-        let (stop, path) = (stop.clone(), path.clone());
-        std::thread::spawn(move || run(area, &path, &stop, started, &points))
+        let (stop, path, started) = (stop.clone(), path.clone(), started.clone());
+        std::thread::spawn(move || run(area, &path, &stop, &started, &points))
     };
     Ok(Recording {
         stop,
@@ -86,6 +86,11 @@ pub fn start(area: RECT, path: PathBuf, points: Vec<POINT>) -> Result<Recording,
 }
 
 impl Recording {
+    /// Encoder warm-up is excluded from both the file timeline and the UI timer.
+    pub fn elapsed(&self) -> Duration {
+        self.started.get().map(Instant::elapsed).unwrap_or_default()
+    }
+
     /// The recorder thread ended by itself, which only happens after a failure.
     pub fn failed(&self) -> bool {
         self.thread.is_finished()
@@ -330,14 +335,14 @@ fn run(
     area: RECT,
     path: &Path,
     stop: &AtomicBool,
-    begin: Instant,
+    clock: &OnceLock<Instant>,
     points: &[POINT],
 ) -> Result<Frame, String> {
     // SAFETY: COM and Media Foundation are initialized and shut down on this thread only.
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
         let started = MFStartup(MF_VERSION, MFSTARTUP_FULL).is_ok();
-        let result = record(area, path, stop, begin, points);
+        let result = record(area, path, stop, clock, points);
         if started {
             let _ = MFShutdown();
         }
@@ -355,19 +360,12 @@ unsafe fn record(
     area: RECT,
     path: &Path,
     stop: &AtomicBool,
-    begin: Instant,
+    clock: &OnceLock<Instant>,
     points: &[POINT],
 ) -> Result<Frame, String> {
     let (width, height) = (area.right - area.left, area.bottom - area.top);
     let mut grabber =
         Grabber::new(area, points).ok_or(tr("Could not prepare the screen capture."))?;
-    // The first frame is taken at once; the encoder needs a moment to start.
-    let mut first = grabber.grab().to_vec();
-    first
-        .as_chunks_mut::<4>()
-        .0
-        .iter_mut()
-        .for_each(|p| p[3] = 255);
     let writer = open(path, width, height).map_err(|e| {
         format!(
             "{}: {}",
@@ -375,17 +373,31 @@ unsafe fn record(
             e.message()
         )
     })?;
+    // Capture only after opening the encoder so the first image is current.
+    let mut first = grabber.grab().to_vec();
+    first
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .for_each(|p| p[3] = 255);
     let duration = TICKS / FPS as i64;
     let mut failure = write(&writer, &first, 0, duration)
         .err()
         .map(|e| format!("{}: {}", tr("Could not write a video frame"), e.message()));
     // A failure after the first frame still leaves a playable file to keep.
-    let started = failure.is_none();
+    let wrote_first = failure.is_none();
+    let begin = Instant::now();
+    if wrote_first {
+        let _ = clock.set(begin);
+    }
     let frame = Duration::from_nanos(1_000_000_000 / FPS as u64);
-    let mut next = Instant::now();
+    let mut next = begin;
     while failure.is_none() && !stop.load(Ordering::Acquire) {
         let pixels = grabber.grab();
-        let time = begin.elapsed().as_nanos() as i64 / 100;
+        // Some encoders take a long time to open or accept the first sample.
+        // Starting at one frame interval prevents filling that wait with copies
+        // of the first image; later timestamps still follow real elapsed time.
+        let time = duration + begin.elapsed().as_nanos() as i64 / 100;
         if let Err(error) = write(&writer, pixels, time, duration) {
             failure = Some(format!(
                 "{}: {}",
@@ -409,7 +421,7 @@ unsafe fn record(
         .Finalize()
         .map_err(|e| format!("{}: {}", tr("Could not finish the video file"), e.message()));
     let warning = match (failure, finalized) {
-        (Some(error), Ok(())) if started => Some(error),
+        (Some(error), Ok(())) if wrote_first => Some(error),
         (Some(error), _) => return Err(error),
         (None, Err(error)) => return Err(error),
         (None, Ok(())) => None,
@@ -459,9 +471,30 @@ mod tests {
                 points,
             )
             .expect("Start the recording worker");
-            std::thread::sleep(Duration::from_secs(1));
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while recording.started.get().is_none()
+                && !recording.failed()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            let elapsed = recording.elapsed();
             let (_, frame) = recording.stop().expect("Finalize the MP4 recording");
             let bytes = std::fs::read(&path).expect("Read the generated MP4");
+            if let Some(folder) = std::env::var_os("SNIPPINGLITE_RECORDING_TEST_OUTPUT") {
+                let folder = PathBuf::from(folder);
+                std::fs::create_dir_all(&folder).expect("Create the recording diagnostics folder");
+                std::fs::write(
+                    folder.join(if freeform {
+                        "freeform.mp4"
+                    } else {
+                        "rectangle.mp4"
+                    }),
+                    &bytes,
+                )
+                .expect("Save the diagnostic recording");
+            }
             std::fs::remove_file(&path).expect("Remove the temporary recording");
             assert_eq!((frame.width, frame.height), (640, 480));
             assert!(frame.warning.is_none(), "{:?}", frame.warning);
@@ -474,6 +507,27 @@ mod tests {
                 .expect("MP4 sample sizes");
             let samples = u32::from_be_bytes(bytes[sizes + 12..sizes + 16].try_into().unwrap());
             assert!(samples > 1, "The MP4 must contain multiple video frames");
+            let maximum = (elapsed.as_secs_f64() * f64::from(FPS)).ceil() as u32 + 3;
+            assert!(samples <= maximum,
+                "Encoder warm-up added repeated frames: {samples} frames for {elapsed:?} of recording");
+            let media = bytes
+                .windows(4)
+                .rposition(|atom| atom == b"mdhd")
+                .expect("MP4 media header");
+            let scale_offset = media + if bytes[media + 4] == 1 { 24 } else { 16 };
+            let timescale =
+                u32::from_be_bytes(bytes[scale_offset..scale_offset + 4].try_into().unwrap());
+            let timing = bytes
+                .windows(4)
+                .rposition(|atom| atom == b"stts")
+                .expect("MP4 sample timing");
+            let first_delta =
+                u32::from_be_bytes(bytes[timing + 16..timing + 20].try_into().unwrap());
+            assert!(
+                u64::from(first_delta) * u64::from(FPS) <= 2 * u64::from(timescale),
+                "The first frame lasts {:.3}s; encoder initialization must not freeze it",
+                f64::from(first_delta) / f64::from(timescale)
+            );
             if freeform {
                 let outside = (300 * frame.width as usize + 400) * 4;
                 assert_eq!(&frame.pixels[outside..outside + 4], &[0, 0, 0, 255]);
