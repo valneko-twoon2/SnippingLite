@@ -22,16 +22,16 @@ use windows_sys::Win32::{
 use crate::i18n::tr;
 use crate::{
     config::{self, DELAYS, HISTORY_LIMITS},
-    imaging, ui, w, MAIN, NEW, SETTINGS_TITLE, TRAY_HISTORY, TRAY_RELOAD,
+    imaging, ui, w, MAIN, SETTINGS_TITLE, TRAY_HISTORY, TRAY_RELOAD,
 };
 
 const SEMIBOLD: &str = "semibold";
 /// Downward shift of Japanese glyphs as a fraction of the font size.
 const JAPANESE_Y_OFFSET: f32 = 0.2;
-const WIDTH: f32 = 560.0;
+const WIDTH: f32 = 696.0;
 const HEIGHT: f32 = 760.0;
-const MARGIN: f32 = 24.0;
-const ROW: f32 = 48.0;
+const MARGIN: f32 = 56.0;
+const ROW: f32 = 64.0;
 
 pub(crate) struct Palette {
     /// Translucent colors let the Mica backdrop show through.
@@ -361,20 +361,7 @@ impl eframe::App for SettingsApp {
         let ui = &mut body;
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         ui.add_space(20.0);
-        ui.label(RichText::new("Snipping Lite").font(semibold(20.0)));
-        ui.add_space(4.0);
-        ui.label(
-            RichText::new(tr("Capture screenshots with Alt + Shift + S"))
-                .size(12.0)
-                .color(p.secondary),
-        );
-        ui.add_space(12.0);
-        if accent_button(ui, tr("New snip"), &p).clicked() {
-            // Let the tray process bring the capture overlay to the foreground.
-            // SAFETY: the call has no pointer arguments.
-            unsafe { AllowSetForegroundWindow(ASFW_ANY) };
-            post(WM_COMMAND, NEW);
-        }
+        ui.label(RichText::new(tr("Settings")).font(semibold(20.0)));
         ui.add_space(16.0);
         let before = self.settings();
         let warning = self
@@ -565,16 +552,14 @@ const ROW_TALL: f32 = 64.0;
 /// A section heading above a card.
 fn section(ui: &mut egui::Ui, p: &Palette, title: &str, gap: bool) {
     ui.add_space(if gap { 24.0 } else { 4.0 });
-    ui.label(RichText::new(title).font(semibold(14.0)).color(p.text));
+    ui.label(RichText::new(title).size(14.0).color(p.text));
     ui.add_space(8.0);
 }
 
 /// A rounded card that holds the rows of one section.
-fn card(ui: &mut egui::Ui, p: &Palette, width: f32, content: impl FnOnce(&mut egui::Ui)) {
+fn card(ui: &mut egui::Ui, _p: &Palette, width: f32, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
-        .fill(p.card)
-        .stroke(Stroke::new(1.0, p.stroke))
-        .corner_radius(8.0)
+        .fill(Color32::TRANSPARENT)
         .show(ui, |ui| {
             ui.set_width(width - 2.0);
             content(ui);
@@ -592,6 +577,8 @@ fn row(
 ) {
     let height = if note.is_some() { ROW_TALL } else { ROW };
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(4), p.card);
     let offset = if note.is_some() { -10.0 } else { 0.0 };
     ui.painter().text(
         rect.left_center() + Vec2::new(16.0, offset),
@@ -626,6 +613,8 @@ enum FolderAction {
 fn folder_row(ui: &mut egui::Ui, p: &Palette, title: &str, path: &Path) -> Option<FolderAction> {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_TALL), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(4), p.card);
     let left = 32.0;
     ui.painter().text(
         rect.left_center() + Vec2::new(left, -10.0),
@@ -723,15 +712,14 @@ fn outline_button(ui: &mut egui::Ui, label: &str, p: &Palette) -> egui::Response
 
 /// A toggle switch with its On or Off label to the left, as in the Windows settings.
 fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, p: &Palette) {
-    toggle(ui, on, label, p);
-    ui.add_space(10.0);
     let text = if *on { tr("On") } else { tr("Off") };
     ui.label(RichText::new(text).size(13.0).color(p.text));
+    ui.add_space(10.0);
+    toggle(ui, on, label, p);
 }
 
-fn divider(ui: &mut egui::Ui, p: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, p.stroke);
+fn divider(ui: &mut egui::Ui, _p: &Palette) {
+    ui.add_space(6.0);
 }
 
 /// A Windows 11 toggle switch.
@@ -770,37 +758,6 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool, label: &str, p: &Palette) -> egui::R
         painter.rect_stroke(
             rect.expand(3.0),
             CornerRadius::same(13),
-            Stroke::new(2.0, p.text),
-            StrokeKind::Outside,
-        );
-    }
-    response
-}
-
-/// The accent colored primary button.
-fn accent_button(ui: &mut egui::Ui, label: &str, p: &Palette) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(120.0, 32.0), Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    let fill = if response.is_pointer_button_down_on() {
-        p.accent.gamma_multiply(0.8)
-    } else if response.hovered() {
-        p.accent.gamma_multiply(0.9)
-    } else {
-        p.accent
-    };
-    let painter = ui.painter();
-    painter.rect_filled(rect, CornerRadius::same(4), fill);
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        label,
-        FontId::new(14.0, FontFamily::Proportional),
-        p.on_accent,
-    );
-    if response.has_focus() {
-        painter.rect_stroke(
-            rect.expand(2.0),
-            CornerRadius::same(6),
             Stroke::new(2.0, p.text),
             StrokeKind::Outside,
         );

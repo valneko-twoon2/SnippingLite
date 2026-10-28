@@ -370,30 +370,6 @@ impl Canvas {
         }
     }
 
-    /// Copies premultiplied BGRA pixels to (x, y), blending over the canvas.
-    pub fn image(&mut self, x: i32, y: i32, width: i32, height: i32, pixels: &[u8]) {
-        let canvas_width = self.width;
-        let canvas_height = self.height;
-        let target = self.pixels();
-        for row in 0..height {
-            let ty = y + row;
-            if ty < 0 || ty >= canvas_height {
-                continue;
-            }
-            for column in 0..width {
-                let tx = x + column;
-                let source = ((row * width + column) * 4) as usize;
-                if tx < 0 || tx >= canvas_width || source + 4 > pixels.len() {
-                    continue;
-                }
-                let p = &pixels[source..source + 4];
-                let color = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
-                let i = (ty * canvas_width + tx) as usize;
-                target[i] = blend(target[i], color);
-            }
-        }
-    }
-
     pub unsafe fn present(&self, dc: HDC) {
         BitBlt(dc, 0, 0, self.width, self.height, self.dc, 0, 0, SRCCOPY);
     }

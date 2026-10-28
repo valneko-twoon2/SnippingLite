@@ -29,18 +29,15 @@ const DISMISS: usize = 2;
 const WIDTH: f32 = 364.0;
 const PADDING: f32 = 16.0;
 const HEADER: f32 = 20.0;
-const IMAGE_MAX: f32 = 188.0;
 const SLIDE_MS: f32 = 250.0;
 const VISIBLE_MS: u32 = 6000;
 
 pub struct Toast {
     hwnd: HWND,
-    thumbnail: Vec<u8>,
-    thumb_width: i32,
-    thumb_height: i32,
     title: &'static str,
     body: String,
     path: Option<PathBuf>,
+    can_open: bool,
     scale: f32,
     left: i32,
     right: i32,
@@ -51,20 +48,13 @@ pub struct Toast {
     close_hover: bool,
 }
 
-fn layout(scale: f32, thumb_height: i32) -> (f32, f32, f32) {
-    let image_top = PADDING + HEADER + 12.0;
-    let title_top = image_top + thumb_height as f32 / scale + 12.0;
-    let height = title_top + 20.0 + 2.0 + 18.0 + PADDING;
-    (image_top, title_top, height)
-}
-
 /// Shows a notification for a finished capture, replacing an existing one.
 pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: Option<PathBuf>) {
     let (title, body) = match (copied, &path) {
-        (true, Some(p)) => (
-            tr("Snip copied to clipboard"),
-            tr("Saved as {name}").replace("{name}", &display_name(p)),
-        ),
+        (true, Some(p)) => (tr("Snip copied to clipboard"), {
+            let _ = p;
+            tr("Saved automatically to the Screenshots folder").to_string()
+        }),
         (true, None) => (
             tr("Snip copied to clipboard"),
             tr("Paste it into a document or app").to_string(),
@@ -89,9 +79,9 @@ pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathB
 }
 
 unsafe fn present(
-    pixels: &[u8],
-    width: i32,
-    height: i32,
+    _pixels: &[u8],
+    _width: i32,
+    _height: i32,
     title: &'static str,
     body: String,
     path: Option<PathBuf>,
@@ -103,11 +93,7 @@ unsafe fn present(
         x: work.right - 1,
         y: work.bottom - 1,
     });
-    let inner = (WIDTH - 2.0 * PADDING) * scale;
-    let fit = (inner / width as f32).min(IMAGE_MAX * scale / height as f32);
-    let thumb_width = ((width as f32 * fit).round() as i32).max(1);
-    let thumb_height = ((height as f32 * fit).round() as i32).max(1);
-    let (_, _, toast_height) = layout(scale, thumb_height);
+    let toast_height = 156.0;
     let toast_width = (WIDTH * scale).round() as i32;
     let toast_height = (toast_height * scale).round() as i32;
     let margin = (12.0 * scale).round() as i32;
@@ -131,11 +117,9 @@ unsafe fn present(
     }
     state().toast = Some(Box::new(Toast {
         hwnd,
-        thumbnail: ui::thumbnail(pixels, width, height, thumb_width, thumb_height),
-        thumb_width,
-        thumb_height,
         title,
         body,
+        can_open: path.is_some() || state().history,
         path,
         scale,
         left: right - toast_width,
@@ -193,7 +177,7 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
     };
     let theme = ui::theme();
     let s = toast.scale;
-    let (image_top, title_top, _) = layout(s, toast.thumb_height);
+    let title_top = 48.0;
     if toast.hover {
         canvas.fill_round_rect(
             [0.0, 0.0, client.right as f32, client.bottom as f32],
@@ -227,7 +211,7 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
         DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         theme.secondary,
     );
-    if toast.hover {
+    {
         let button = close_button(s, client.right);
         if toast.close_hover {
             canvas.fill_round_rect(
@@ -250,15 +234,8 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
             theme.text,
         );
     }
-    canvas.image(
-        (PADDING * s).round() as i32,
-        (image_top * s).round() as i32,
-        toast.thumb_width,
-        toast.thumb_height,
-        &toast.thumbnail,
-    );
-    let title = Font::new(ui::TEXT_FONT, 14.0 * s, FW_SEMIBOLD as i32);
-    let body = Font::new(ui::TEXT_FONT, 12.0 * s, FW_NORMAL as i32);
+    let title = Font::new(ui::TEXT_FONT, 14.0 * s, FW_NORMAL as i32);
+    let body = Font::new(ui::TEXT_FONT, 14.0 * s, FW_NORMAL as i32);
     canvas.text(
         toast.title,
         &title,
@@ -283,6 +260,17 @@ unsafe fn paint(toast: &Toast, dc: HDC) {
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
         theme.secondary,
     );
+    if toast.can_open {
+        let button = [PADDING * s, 108.0 * s, (WIDTH - PADDING) * s, 140.0 * s];
+        canvas.fill_round_rect(button, 4.0 * s, theme.selected);
+        canvas.text(
+            tr("Open"),
+            &body,
+            ui::rect(button[0], button[1], button[2], button[3]),
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            theme.text,
+        );
+    }
     canvas.present(dc);
 }
 

@@ -167,9 +167,13 @@ const JAPANESE: &[(&str, &str)] = &[
     // Notification
     (
         "Snip copied to clipboard",
-        "切り取りをクリップボードにコピーしました",
+        "スクリーンショットをクリップボードにコピーしました",
     ),
     ("Saved as {name}", "{name} として保存しました"),
+    (
+        "Saved automatically to the Screenshots folder",
+        "スクリーンショット フォルダーに自動的に保存されました。",
+    ),
     (
         "Paste it into a document or app",
         "ドキュメントやアプリに貼り付けできます",

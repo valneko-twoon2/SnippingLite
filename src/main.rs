@@ -358,14 +358,15 @@ const BAR_PADDING: f32 = 4.0;
 const BAR_GAP: f32 = 4.0;
 const DIVIDER: f32 = 9.0;
 const BAR_HEIGHT: f32 = BUTTON + 2.0 * BAR_PADDING;
-const BAR_WIDTH: f32 = 2.0 * BAR_PADDING + 6.0 * BUTTON + 4.0 * BAR_GAP + DIVIDER;
-const GLYPHS: [&str; 6] = [
-    "\u{EF20}", "\u{EA49}", "\u{E7C4}", "\u{E7F4}", "\u{E714}", "\u{E711}",
+const BAR_WIDTH: f32 = 2.0 * BAR_PADDING + 7.0 * BUTTON + 5.0 * BAR_GAP + DIVIDER;
+const GLYPHS: [&str; 7] = [
+    "\u{EF20}", "\u{EA49}", "\u{E7C4}", "\u{E7F4}", "\u{E714}", "\u{E700}", "\u{E711}",
 ];
-const CLOSE_BUTTON: i32 = 5;
+const SETTINGS_BUTTON: i32 = 5;
+const CLOSE_BUTTON: i32 = 6;
 fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     let mut left = BAR_PADDING + index as f32 * (BUTTON + BAR_GAP);
-    if index == CLOSE_BUTTON {
+    if index >= SETTINGS_BUTTON {
         left += DIVIDER - BAR_GAP;
     }
     [
@@ -1500,6 +1501,9 @@ unsafe extern "system" fn toolbar_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPA
             if hit >= 0 && hit == pressed {
                 if hit == CLOSE_BUTTON {
                     cancel();
+                } else if hit == SETTINGS_BUTTON {
+                    cancel();
+                    launch_settings();
                 } else {
                     set_mode(hit);
                 }
