@@ -360,6 +360,10 @@ unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
     if state().copy && !copied {
         errors.push(tr("Could not copy the image to the clipboard."));
     }
+    let png = saved.clone().filter(|path| {
+        path.extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("png"))
+    });
     if errors.is_empty() {
         toast::show(&pixels, width, height, copied, saved);
     } else {
@@ -367,7 +371,7 @@ unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
     }
     // The history is written last so it never delays the clipboard or the notification.
     if state().history {
-        let _ = history::add(&pixels, width, height);
+        let _ = history::add(&pixels, width, height, png.as_deref());
     }
 }
 pub(crate) unsafe fn cancel() {

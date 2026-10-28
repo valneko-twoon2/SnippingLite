@@ -71,11 +71,12 @@ pub fn clear() {
 }
 
 /// Stores a capture (straight-alpha top-down BGRA) and trims the history.
-pub fn add(pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+/// `png` is an already saved PNG of the same pixels, copied instead of encoded again.
+pub fn add(pixels: &[u8], width: i32, height: i32, png: Option<&Path>) -> std::io::Result<()> {
     let folder = folder().ok_or_else(|| std::io::Error::other("LOCALAPPDATA is unavailable"))?;
     fs::create_dir_all(&folder)?;
     let new = entry(&folder, imaging::timestamp()?);
-    if let Err(error) = store(&new, pixels, width, height) {
+    if let Err(error) = store(&new, pixels, width, height, png) {
         remove_entry(&new);
         return Err(error);
     }
@@ -85,11 +86,17 @@ pub fn add(pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
 
 /// Replaces the pictures of an existing entry, for example after annotating it.
 pub fn replace(entry: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
-    store(entry, pixels, width, height)
+    store(entry, pixels, width, height, None)
 }
 
 /// Writes the full-size image and its thumbnail.
-fn store(new: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+fn store(
+    new: &Entry,
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    png: Option<&Path>,
+) -> std::io::Result<()> {
     let scale = (THUMB_WIDTH as f32 / width as f32).min(THUMB_HEIGHT as f32 / height as f32);
     let (tw, th) = if scale < 1.0 {
         (
@@ -102,6 +109,10 @@ fn store(new: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io::Result
     let mut thumbnail = ui::thumbnail(pixels, width, height, tw, th);
     unpremultiply(&mut thumbnail);
     imaging::encode(&new.thumbnail, &thumbnail, tw, th)?;
+    // PNG encoding is the slowest step of a capture, so reuse the saved file.
+    if png.is_some_and(|png| fs::copy(png, &new.image).is_ok()) {
+        return Ok(());
+    }
     imaging::encode(&new.image, pixels, width, height)
 }
 
