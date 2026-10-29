@@ -44,6 +44,27 @@ pub fn outline(pixels: &mut [u8], width: i32, height: i32, border: i32, color: [
     }
 }
 
+/// The image pixel under a point given in pixels from the image's top-left corner.
+/// Rounding goes down, so a point just left of or above the image is outside it.
+pub fn pixel_of(x: f32, y: f32) -> (i32, i32) {
+    (x.floor() as i32, y.floor() as i32)
+}
+
+/// The color of a pixel of top-down BGRA pixels, or `None` outside the image.
+pub fn color_at(pixels: &[u8], width: i32, height: i32, (x, y): (i32, i32)) -> Option<[u8; 3]> {
+    if x < 0 || y < 0 || x >= width || y >= height {
+        return None;
+    }
+    let at = (y as usize * width as usize + x as usize) * 4;
+    let pixel = pixels.get(at..at + 4)?;
+    Some([pixel[2], pixel[1], pixel[0]])
+}
+
+/// A color as `#RRGGBB`.
+pub fn hex(color: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2])
+}
+
 /// The highlighter is translucent, the pen is opaque.
 pub fn opacity(highlight: bool) -> f32 {
     if highlight {
@@ -222,6 +243,48 @@ mod tests {
                 40 * 30 - (40 - 2 * b) * (30 - 2 * b)
             );
         }
+    }
+
+    #[test]
+    fn color_at_reads_rgb_and_stops_at_the_edges() {
+        // 3x2 image; each pixel is BGRA with a distinct color.
+        let pixels: Vec<u8> = (0..6u8).flat_map(|i| [i, i + 10, i + 20, 255]).collect();
+        assert_eq!(color_at(&pixels, 3, 2, (0, 0)), Some([20, 10, 0]));
+        assert_eq!(color_at(&pixels, 3, 2, (2, 0)), Some([22, 12, 2]));
+        assert_eq!(color_at(&pixels, 3, 2, (0, 1)), Some([23, 13, 3]));
+        assert_eq!(color_at(&pixels, 3, 2, (2, 1)), Some([25, 15, 5]));
+        // Boundary: one step outside on every side.
+        for outside in [
+            (-1, 0),
+            (0, -1),
+            (3, 0),
+            (0, 2),
+            (3, 2),
+            (i32::MIN, 0),
+            (0, i32::MAX),
+        ] {
+            assert_eq!(color_at(&pixels, 3, 2, outside), None, "{outside:?}");
+        }
+        // Errors: an empty image, a zero size and pixels shorter than the size claims.
+        assert_eq!(color_at(&[], 0, 0, (0, 0)), None);
+        assert_eq!(color_at(&pixels, 0, 2, (0, 0)), None);
+        assert_eq!(color_at(&pixels[..20], 3, 2, (2, 1)), None);
+    }
+
+    #[test]
+    fn pixel_of_rounds_down_so_the_left_edge_stays_outside() {
+        assert_eq!(pixel_of(0.0, 0.0), (0, 0));
+        assert_eq!(pixel_of(0.99, 1.0), (0, 1));
+        assert_eq!(pixel_of(-0.01, -0.5), (-1, -1));
+        assert_eq!(pixel_of(2.5, 7.999), (2, 7));
+    }
+
+    #[test]
+    fn hex_has_six_uppercase_digits() {
+        assert_eq!(hex([0, 0, 0]), "#000000");
+        assert_eq!(hex([255, 255, 255]), "#FFFFFF");
+        assert_eq!(hex([0xe8, 0x11, 0x23]), "#E81123");
+        assert_eq!(hex([1, 10, 171]), "#010AAB");
     }
 
     #[test]

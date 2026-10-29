@@ -92,6 +92,7 @@ enum Tool {
     Pen,
     Highlighter,
     Crop,
+    Picker,
 }
 
 /// How far back the gallery reaches.

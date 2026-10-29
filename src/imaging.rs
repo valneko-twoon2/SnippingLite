@@ -184,26 +184,53 @@ pub fn copy_to_clipboard(owner: HWND, pixels: &[u8], width: i32, height: i32) ->
             std::ptr::copy_nonoverlapping(line.as_ptr(), data.add(header + i * row), row);
         }
         GlobalUnlock(global);
-        let mut owned = false;
-        // Another application (a clipboard manager, for example) may hold it briefly.
-        let mut opened = false;
-        for attempt in 0..10 {
-            opened = OpenClipboard(owner) != 0;
-            if opened || attempt == 9 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        if opened {
-            EmptyClipboard();
-            owned = !SetClipboardData(17, global).is_null();
-            CloseClipboard();
-        }
-        if !owned {
-            GlobalFree(global);
-        }
-        owned
+        put_on_clipboard(owner, 17, global)
     }
+}
+
+/// Puts text on the clipboard as Unicode text.
+pub fn copy_text(owner: HWND, text: &str) -> bool {
+    let units: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    let bytes = units.len() * 2;
+    // SAFETY: the allocation holds exactly the UTF-16 units copied into it.
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if global.is_null() {
+            return false;
+        }
+        let data = GlobalLock(global).cast::<u16>();
+        if data.is_null() {
+            GlobalFree(global);
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(units.as_ptr(), data, units.len());
+        GlobalUnlock(global);
+        put_on_clipboard(owner, 13, global)
+    }
+}
+
+/// Replaces the clipboard content with `global` in `format`. On success the
+/// clipboard owns the memory; otherwise it is freed here.
+unsafe fn put_on_clipboard(owner: HWND, format: u32, global: *mut std::ffi::c_void) -> bool {
+    let mut owned = false;
+    // Another application (a clipboard manager, for example) may hold it briefly.
+    let mut opened = false;
+    for attempt in 0..10 {
+        opened = OpenClipboard(owner) != 0;
+        if opened || attempt == 9 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if opened {
+        EmptyClipboard();
+        owned = !SetClipboardData(format, global).is_null();
+        CloseClipboard();
+    }
+    if !owned {
+        GlobalFree(global);
+    }
+    owned
 }
 
 /// The screenshot folder from the settings, created when missing.
@@ -344,4 +371,49 @@ pub fn timestamp() -> std::io::Result<u128> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(std::io::Error::other)?
         .as_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, OpenClipboard,
+    };
+
+    fn clipboard_text() -> Option<String> {
+        // SAFETY: the clipboard is opened and closed here, and the text is copied out while locked.
+        unsafe {
+            if OpenClipboard(null_mut()) == 0 {
+                return None;
+            }
+            let global = GetClipboardData(13);
+            let text = (!global.is_null()).then(|| {
+                let data = GlobalLock(global).cast::<u16>();
+                let mut length = 0;
+                while *data.add(length) != 0 {
+                    length += 1;
+                }
+                let text = String::from_utf16_lossy(std::slice::from_raw_parts(data, length));
+                GlobalUnlock(global);
+                text
+            });
+            CloseClipboard();
+            text
+        }
+    }
+
+    #[test]
+    #[ignore = "Replaces the clipboard content"]
+    fn copied_text_reads_back_unchanged() {
+        for text in [
+            "#E81123",
+            "",
+            "日本語 text\r\nline 2",
+            "emoji 😀 and \u{3042}",
+            &"x".repeat(100_000),
+        ] {
+            assert!(copy_text(null_mut(), text), "{text:.20}");
+            assert_eq!(clipboard_text().as_deref(), Some(text));
+        }
+    }
 }

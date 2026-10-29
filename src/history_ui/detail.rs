@@ -10,7 +10,7 @@ impl HistoryApp {
         let Some(opened) = self.opened.as_mut() else {
             return;
         };
-        if tool != Tool::None {
+        if !matches!(tool, Tool::None | Tool::Picker) {
             let response = ui.interact(
                 shown,
                 ui.make_persistent_id("canvas"),
@@ -98,6 +98,70 @@ impl HistoryApp {
                 Stroke::new(1.5, Color32::WHITE),
                 StrokeKind::Inside,
             );
+        }
+    }
+
+    /// Shows the color under the pointer; a click copies it as `#RRGGBB`.
+    fn pick_color(&mut self, ui: &mut egui::Ui, shown: Rect, scale: f32, p: &Palette) {
+        let response = ui.interact(shown, ui.make_persistent_id("picker"), Sense::click());
+        let Some(pos) = response.hover_pos() else {
+            return;
+        };
+        ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Crosshair);
+        let Some(opened) = &self.opened else {
+            return;
+        };
+        let pixel =
+            annotate::pixel_of((pos.x - shown.min.x) / scale, (pos.y - shown.min.y) / scale);
+        let Some(color) = annotate::color_at(&opened.pixels, opened.size.0, opened.size.1, pixel)
+        else {
+            return;
+        };
+        let text = annotate::hex(color);
+        // The readout follows the pointer and stays on the screen at the right edge.
+        let size = Vec2::new(108.0, 32.0);
+        let mut min = pos + Vec2::new(16.0, 16.0);
+        if min.x + size.x > ui.max_rect().right() {
+            min.x = pos.x - 16.0 - size.x;
+        }
+        let card = Rect::from_min_size(min, size);
+        let painter = ui.painter();
+        painter.rect_filled(card, CornerRadius::same(4), p.card);
+        painter.rect_stroke(
+            card,
+            CornerRadius::same(4),
+            Stroke::new(1.0, p.stroke),
+            StrokeKind::Inside,
+        );
+        let chip = Rect::from_min_size(card.min + Vec2::new(4.0, 4.0), Vec2::splat(24.0));
+        painter.rect_filled(
+            chip,
+            CornerRadius::same(3),
+            Color32::from_rgb(color[0], color[1], color[2]),
+        );
+        painter.rect_stroke(
+            chip,
+            CornerRadius::same(3),
+            Stroke::new(1.0, p.stroke),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            pos2(chip.right() + 8.0, card.center().y),
+            Align2::LEFT_CENTER,
+            &text,
+            FontId::new(13.0, FontFamily::Monospace),
+            p.text,
+        );
+        if response.clicked() {
+            let copied = imaging::copy_text(window(), &text);
+            self.notice = Some((
+                Instant::now(),
+                if copied {
+                    tr("Copied the color.")
+                } else {
+                    tr("Could not copy the color.")
+                },
+            ));
         }
     }
 
@@ -219,6 +283,7 @@ impl HistoryApp {
                 (Tool::Pen, tr("Pen")),
                 (Tool::Highlighter, tr("Highlighter")),
                 (Tool::Crop, tr("Crop")),
+                (Tool::Picker, tr("Pick color")),
             ];
             for (tool, label) in tools {
                 if chip(ui, label, p, self.tool == tool).clicked() {
@@ -289,6 +354,9 @@ impl HistoryApp {
         }
         if let Some((shown, scale)) = canvas {
             self.draw_marks(ui, shown, scale);
+            if self.tool == Tool::Picker {
+                self.pick_color(ui, shown, scale, p);
+            }
         }
         if undo {
             if let Some(opened) = &mut self.opened {
