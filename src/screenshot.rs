@@ -326,8 +326,10 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
         None
     };
     DeleteObject(bitmap);
+    // Decided before `cancel` below clears the points.
+    let shaped = freeform && state().points.len() >= 3;
     if let Some(data) = pixels.as_mut() {
-        if freeform && state().points.len() >= 3 {
+        if shaped {
             let points: Vec<POINT> = state()
                 .points
                 .iter()
@@ -354,7 +356,7 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
         return;
     };
     // A freeform shape has no straight edge to draw the border on.
-    let pixels = if freeform && state().points.len() >= 3 {
+    let pixels = if shaped {
         pixels
     } else {
         with_outline(pixels, width, height)
