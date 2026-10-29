@@ -433,3 +433,6 @@ pub(crate) unsafe fn restore_windows() {
         show_kept_toolbar();
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -380,6 +380,107 @@ unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
     };
     RegisterClassW(&class);
 }
+/// The state of a fresh tray process, taken from the saved settings.
+fn initial_state(settings: &config::Settings) -> Box<State> {
+    Box::new(State {
+        owner: null_mut(),
+        overlay: null_mut(),
+        screen: null_mut(),
+        screen_dc: null_mut(),
+        previous: null_mut(),
+        dim_canvas: None,
+        toolbar: null_mut(),
+        toolbar_dark: None,
+        keep_toolbar: settings.keep_toolbar,
+        outline: settings.outline,
+        outline_color: settings.outline_color,
+        outline_width: settings.outline_width,
+        toolbar_open: false,
+        active: false,
+        hover_button: -1,
+        pressed_button: -1,
+        hover_window: None,
+        hover_hwnd: null_mut(),
+        scale: 1.0,
+        theme: ui::theme(),
+        toast: None,
+        origin: POINT { x: 0, y: 0 },
+        width: 0,
+        height: 0,
+        mode: MODE_RECT,
+        video: false,
+        start: POINT { x: 0, y: 0 },
+        end: POINT { x: 0, y: 0 },
+        points: Vec::new(),
+        dragging: false,
+        hidden: Vec::new(),
+        copy: settings.copy,
+        save: settings.save,
+        ask: settings.ask,
+        delay: settings.delay,
+        pending: false,
+        history: settings.history,
+        hotkey_ok: false,
+        recording: None,
+        record_window: null_mut(),
+        record_frame: null_mut(),
+        tray_icon: null_mut(),
+        live: None,
+        freeze: settings.freeze,
+        notify: settings.notify,
+        mic: settings.mic,
+        system_audio: settings.system_audio,
+        app_audio: settings.app_audio,
+        ask_video: settings.ask_video,
+        countdown: settings.countdown,
+        skip_title: settings.skip_title,
+        record_cursor: settings.record_cursor,
+        record_fps: settings.record_fps,
+        count_window: null_mut(),
+        count_left: 0,
+        count_points: Vec::new(),
+        count_target: None,
+        count_area: RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        },
+    })
+}
+/// Registers the window classes of the tray, the overlay, the toolbar and the recording windows.
+unsafe fn register_classes() {
+    register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
+    register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
+    register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
+    register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
+    register(COUNT, Some(count_proc), null_mut(), IDC_ARROW);
+    // The frame around a recording is a solid red window shaped like a ring.
+    register(
+        FRAME,
+        Some(DefWindowProcW),
+        CreateSolidBrush(0x002311e8),
+        IDC_ARROW,
+    );
+    register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
+}
+/// Creates the tray window, which is never shown; it receives the tray, hotkey and timer messages.
+unsafe fn create_main_window() -> HWND {
+    CreateWindowExW(
+        WS_EX_TOOLWINDOW,
+        w(MAIN).as_ptr(),
+        w(MAIN).as_ptr(),
+        WS_POPUP,
+        0,
+        0,
+        0,
+        0,
+        null_mut(),
+        null_mut(),
+        GetModuleHandleW(null()),
+        null(),
+    )
+}
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--history") {
@@ -394,101 +495,10 @@ fn main() {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let settings = config::load_settings();
         ui::set_theme_choice(settings.theme);
-        let mut app = Box::new(State {
-            owner: null_mut(),
-            overlay: null_mut(),
-            screen: null_mut(),
-            screen_dc: null_mut(),
-            previous: null_mut(),
-            dim_canvas: None,
-            toolbar: null_mut(),
-            toolbar_dark: None,
-            keep_toolbar: settings.keep_toolbar,
-            outline: settings.outline,
-            outline_color: settings.outline_color,
-            outline_width: settings.outline_width,
-            toolbar_open: false,
-            active: false,
-            hover_button: -1,
-            pressed_button: -1,
-            hover_window: None,
-            hover_hwnd: null_mut(),
-            scale: 1.0,
-            theme: ui::theme(),
-            toast: None,
-            origin: POINT { x: 0, y: 0 },
-            width: 0,
-            height: 0,
-            mode: MODE_RECT,
-            video: false,
-            start: POINT { x: 0, y: 0 },
-            end: POINT { x: 0, y: 0 },
-            points: Vec::new(),
-            dragging: false,
-            hidden: Vec::new(),
-            copy: settings.copy,
-            save: settings.save,
-            ask: settings.ask,
-            delay: settings.delay,
-            pending: false,
-            history: settings.history,
-            hotkey_ok: false,
-            recording: None,
-            record_window: null_mut(),
-            record_frame: null_mut(),
-            tray_icon: null_mut(),
-            live: None,
-            freeze: settings.freeze,
-            notify: settings.notify,
-            mic: settings.mic,
-            system_audio: settings.system_audio,
-            app_audio: settings.app_audio,
-            ask_video: settings.ask_video,
-            countdown: settings.countdown,
-            skip_title: settings.skip_title,
-            record_cursor: settings.record_cursor,
-            record_fps: settings.record_fps,
-            count_window: null_mut(),
-            count_left: 0,
-            count_points: Vec::new(),
-            count_target: None,
-            count_area: RECT {
-                left: 0,
-                top: 0,
-                right: 0,
-                bottom: 0,
-            },
-        });
+        let mut app = initial_state(&settings);
         STATE = &mut *app;
-        register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
-        register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
-        register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
-        register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
-        register(COUNT, Some(count_proc), null_mut(), IDC_ARROW);
-        // The frame around a recording is a solid red window shaped like a ring.
-        register(
-            FRAME,
-            Some(DefWindowProcW),
-            CreateSolidBrush(0x002311e8),
-            IDC_ARROW,
-        );
-        register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
-        // The tray window is never shown; it receives the tray, hotkey and timer messages.
-        let hwnd = CreateWindowExW(
-            WS_EX_TOOLWINDOW,
-            w(MAIN).as_ptr(),
-            w(MAIN).as_ptr(),
-            WS_POPUP,
-            0,
-            0,
-            0,
-            0,
-            null_mut(),
-            null_mut(),
-            GetModuleHandleW(null()),
-            null(),
-        );
-        if hwnd.is_null() {
+        register_classes();
+        if create_main_window().is_null() {
             return;
         }
         create_windows();
@@ -508,5 +518,254 @@ mod tests {
     fn selection_bounds_are_sorted_and_clipped() {
         let r = bounds(POINT { x: 140, y: 40 }, POINT { x: -10, y: 10 }, 100, 100);
         assert_eq!((r.left, r.top, r.right, r.bottom), (0, 10, 100, 40));
+    }
+
+    use crate::test_support::{answer_dialog, answer_menu, desk::Desk, stub_window};
+    use std::time::Duration;
+
+    fn s() -> &'static mut State {
+        // SAFETY: the test owns the state and runs on the thread that created it.
+        unsafe { state() }
+    }
+
+    fn shown(window: HWND) -> bool {
+        // SAFETY: plain window query.
+        unsafe { IsWindowVisible(window) != 0 }
+    }
+
+    #[test]
+    fn mouse_positions_are_signed_sixteen_bit_halves() {
+        let lp = |x: i16, y: i16| ((y as u16 as isize) << 16) | (x as u16 as isize);
+        for (x, y) in [
+            (0, 0),
+            (1, 2),
+            (-1, -1),
+            (-32768, 32767),
+            (32767, -32768),
+            (1919, 1079),
+            (-1920, -300),
+        ] {
+            let p = point(lp(x, y));
+            assert_eq!((p.x, p.y), (x as i32, y as i32));
+        }
+    }
+
+    #[test]
+    fn rectangles_grow_by_the_same_amount_on_every_side() {
+        let r = inflate(
+            RECT {
+                left: 10,
+                top: 20,
+                right: 30,
+                bottom: 40,
+            },
+            5,
+        );
+        assert_eq!((r.left, r.top, r.right, r.bottom), (5, 15, 35, 45));
+        let same = inflate(r, 0);
+        assert_eq!((same.left, same.right), (5, 35));
+        let shrunk = inflate(r, -5);
+        assert_eq!(
+            (shrunk.left, shrunk.top, shrunk.right, shrunk.bottom),
+            (10, 20, 30, 40)
+        );
+    }
+
+    #[test]
+    fn selections_are_sorted_and_stay_inside_the_screen() {
+        // Equivalence: either corner first, and corners beyond the edges.
+        for (a, b, expected) in [
+            ((10, 20), (50, 60), (10, 20, 50, 60)),
+            ((50, 60), (10, 20), (10, 20, 50, 60)),
+            ((-5, -5), (200, 300), (0, 0, 100, 100)),
+            ((40, 40), (40, 40), (40, 40, 40, 40)),
+        ] {
+            let r = bounds(POINT { x: a.0, y: a.1 }, POINT { x: b.0, y: b.1 }, 100, 100);
+            assert_eq!((r.left, r.top, r.right, r.bottom), expected);
+        }
+    }
+
+    #[test]
+    #[ignore = "Creates the tray window"]
+    fn starting_registers_the_tray_icon_the_shortcut_and_the_windows() {
+        let desk = Desk::start();
+        assert_eq!(s().owner, desk.main);
+        assert!(!s().overlay.is_null() && !s().toolbar.is_null());
+        // The overlay and the toolbar are made once and reused.
+        let (overlay, toolbar) = (s().overlay, s().toolbar);
+        // SAFETY: the windows belong to this test.
+        assert!(unsafe { create_windows() });
+        assert_eq!((s().overlay, s().toolbar), (overlay, toolbar));
+        assert!(!s().tray_icon.is_null());
+        assert_eq!(unsafe { find_window("SnippingLite.Nothing") }, null_mut());
+    }
+
+    #[test]
+    #[ignore = "Creates the tray window"]
+    fn new_settings_reach_the_running_tray_process() {
+        let desk = Desk::start();
+        let mut settings = config::parse_settings("");
+        settings.copy = false;
+        settings.save = true;
+        settings.ask = true;
+        settings.delay = 5;
+        settings.history = false;
+        settings.countdown = false;
+        settings.skip_title = false;
+        settings.record_cursor = false;
+        settings.record_fps = 30;
+        settings.freeze = true;
+        settings.notify = false;
+        settings.keep_toolbar = true;
+        settings.outline = true;
+        settings.outline_color = 1;
+        settings.outline_width = 2;
+        settings.mic = true;
+        settings.system_audio = false;
+        settings.app_audio = false;
+        settings.ask_video = true;
+        config::save_settings(&settings).unwrap();
+        desk.send(desk.main, TRAY_RELOAD, 0, 0);
+        let state = s();
+        assert!(!state.copy && state.save && state.ask && !state.history);
+        assert_eq!((state.delay, state.record_fps), (5, 30));
+        assert!(!state.countdown && !state.skip_title && !state.record_cursor);
+        assert!(state.freeze && !state.notify && state.keep_toolbar && state.outline);
+        assert_eq!((state.outline_color, state.outline_width), (1, 2));
+        assert!(state.mic && !state.system_audio && !state.app_audio && state.ask_video);
+        // Switching "keep the toolbar" off closes an idle kept toolbar, but not one in use.
+        state.toolbar_open = true;
+        unsafe { ShowWindow(state.toolbar, SW_SHOWNOACTIVATE) };
+        settings.keep_toolbar = false;
+        config::save_settings(&settings).unwrap();
+        desk.send(desk.main, TRAY_RELOAD, 0, 0);
+        assert!(!s().toolbar_open && !shown(s().toolbar));
+        s().toolbar_open = true;
+        s().active = true;
+        unsafe { ShowWindow(s().toolbar, SW_SHOWNOACTIVATE) };
+        desk.send(desk.main, TRAY_RELOAD, 0, 0);
+        assert!(!s().toolbar_open && shown(s().toolbar));
+        s().active = false;
+        unsafe { ShowWindow(s().toolbar, SW_HIDE) };
+    }
+
+    #[test]
+    #[ignore = "Covers the screen"]
+    fn the_tray_commands_start_a_snip_and_open_the_windows() {
+        let desk = Desk::start();
+        let settings = stub_window(SETTINGS_WINDOW);
+        let history = stub_window(HISTORY_WINDOW);
+        for window in [settings, history] {
+            // SAFETY: the windows belong to this test.
+            unsafe { ShowWindow(window, SW_HIDE) };
+        }
+        desk.send(desk.main, WM_COMMAND, TRAY_SETTINGS, 0);
+        assert!(shown(settings) && !shown(history));
+        desk.send(desk.main, WM_COMMAND, TRAY_HISTORY, 0);
+        assert!(shown(history));
+        // Stopping with nothing recorded, and unknown commands, do nothing.
+        desk.send(desk.main, WM_COMMAND, TRAY_STOP, 0);
+        desk.send(desk.main, WM_COMMAND, 9999, 0);
+        assert!(!s().active);
+        desk.send(desk.main, WM_COMMAND, NEW, 0);
+        assert!(s().active);
+        desk.key(s().overlay, 0x1b);
+        // The shortcut and a left click on the icon start a snip too.
+        desk.send(desk.main, WM_HOTKEY, HOTKEY as usize, 0);
+        assert!(s().active);
+        desk.key(s().overlay, 0x1b);
+        desk.send(desk.main, TRAY_MESSAGE, 1, WM_LBUTTONUP as isize);
+        assert!(s().active);
+        desk.key(s().overlay, 0x1b);
+        // Another hotkey id is not ours.
+        desk.send(desk.main, WM_HOTKEY, 99, 0);
+        assert!(!s().active);
+        unsafe {
+            DestroyWindow(settings);
+            DestroyWindow(history);
+        }
+    }
+
+    #[test]
+    #[ignore = "Shows a menu"]
+    fn the_tray_menu_offers_the_commands() {
+        let desk = Desk::start();
+        let history = stub_window(HISTORY_WINDOW);
+        unsafe { ShowWindow(history, SW_HIDE) };
+        // Menu entries without a recording: New snip, History, Settings, Exit.
+        let answer = answer_menu(0);
+        desk.send(desk.main, TRAY_MESSAGE, 1, WM_RBUTTONUP as isize);
+        assert!(answer.join().unwrap());
+        // The menu posts its command, so it arrives with the next messages.
+        assert!(
+            desk.pump_until(Duration::from_secs(2), || s().active),
+            "New snip"
+        );
+        desk.key(s().overlay, 0x1b);
+        let answer = answer_menu(1);
+        desk.send(desk.main, TRAY_MESSAGE, 1, WM_RBUTTONUP as isize);
+        assert!(answer.join().unwrap());
+        assert!(
+            desk.pump_until(Duration::from_secs(2), || shown(history)),
+            "History"
+        );
+        // Leaving the menu does nothing.
+        let answer = answer_menu(usize::MAX);
+        desk.send(desk.main, TRAY_MESSAGE, 1, WM_RBUTTONUP as isize);
+        assert!(answer.join().unwrap());
+        assert!(!s().active);
+        // Other mouse messages from the icon are ignored.
+        desk.send(desk.main, TRAY_MESSAGE, 1, WM_MOUSEMOVE as isize);
+        unsafe { DestroyWindow(history) };
+    }
+
+    #[test]
+    #[ignore = "Covers the screen"]
+    fn the_delay_timer_takes_the_picture_and_closing_only_hides() {
+        let desk = Desk::start();
+        s().pending = true;
+        desk.send(desk.main, WM_TIMER, DELAY_TIMER, 0);
+        assert!(!s().pending && s().active);
+        desk.key(s().overlay, 0x1b);
+        // Other timers are left to Windows.
+        desk.send(desk.main, WM_TIMER, 77, 0);
+        assert!(!s().active);
+        assert_eq!(desk.send(desk.main, WM_CLOSE, 0, 0), 0);
+        assert!(!shown(desk.main));
+    }
+
+    #[test]
+    #[ignore = "Creates the tray window"]
+    fn exiting_removes_the_tray_icon_and_ends_the_message_loop() {
+        let desk = Desk::start();
+        desk.send(desk.main, WM_COMMAND, TRAY_EXIT, 0);
+        assert!(unsafe { IsWindow(desk.main) } == 0);
+        assert!(s().tray_icon.is_null(), "the icon is released");
+        assert!(!unsafe { toast::visible() });
+    }
+
+    #[test]
+    #[ignore = "Shows a message box"]
+    fn a_message_box_has_the_app_name_and_waits_for_a_click() {
+        let desk = Desk::start();
+        let answer = answer_dialog(2);
+        // SAFETY: the window belongs to this test.
+        unsafe { message(desk.main, "Something happened") };
+        assert!(answer.join().unwrap());
+    }
+
+    #[test]
+    #[ignore = "Creates a process"]
+    fn opening_a_window_that_is_not_running_starts_another_copy_of_the_program() {
+        let desk = Desk::start();
+        // The test program stands in for the program: it exits on the unknown option.
+        // SAFETY: the state belongs to this test.
+        unsafe {
+            launch_settings();
+            launch_history(true);
+            s().hotkey_ok = true;
+            launch_history(false);
+        }
+        desk.pump(Duration::from_millis(100));
     }
 }
