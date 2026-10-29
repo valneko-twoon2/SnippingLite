@@ -1,5 +1,5 @@
 //! Screen recording to MP4: GDI frames go through the Media Foundation sink
-//! writer, which encodes H.264 (hardware when available). Only video is recorded.
+//! writer, which encodes H.264 (hardware when available) and optional AAC audio.
 
 use crate::{
     i18n::tr,
