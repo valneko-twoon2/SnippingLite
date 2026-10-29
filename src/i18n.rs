@@ -293,6 +293,14 @@ const JAPANESE: &[(&str, &str)] = &[
         "About ページを開けませんでした。",
     ),
     ("Stop", "停止"),
+    ("Play", "再生"),
+    ("Pause", "一時停止"),
+    ("Seek", "シーク"),
+    ("Volume", "音量"),
+    (
+        "This video cannot be played.",
+        "このビデオは再生できません。",
+    ),
     (
         "Could not capture the desktop.",
         "デスクトップを取り込めませんでした。",

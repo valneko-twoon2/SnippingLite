@@ -425,10 +425,16 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                 return 0;
             } else if !toast.close_hover {
                 if toast.edit || toast.path.is_none() {
-                    // Screenshot actions open the built-in editor; recordings open their file.
+                    // Screenshot actions open the built-in editor; recordings open the player.
                     if state().history {
                         crate::launch_history(true);
                     }
+                } else if let Some(path) = toast
+                    .path
+                    .as_ref()
+                    .filter(|p| p.extension().is_some_and(|e| e == "mp4"))
+                {
+                    crate::launch_player(path);
                 } else if let Some(path) = &toast.path {
                     let file: Vec<u16> =
                         std::os::windows::ffi::OsStrExt::encode_wide(path.as_os_str())

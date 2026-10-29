@@ -464,12 +464,7 @@ fn main() {
         println!("{}", env!("CARGO_PKG_VERSION"));
         return;
     }
-    if args.iter().any(|a| a == "--history") {
-        history_ui::run(args.iter().any(|a| a == "--latest"));
-        return;
-    }
-    if args.iter().any(|a| a == "--settings") {
-        settings_ui::run(args.iter().any(|a| a == "--hotkey-ok"));
+    if run_window_process(&args) {
         return;
     }
     unsafe {

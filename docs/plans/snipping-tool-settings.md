@@ -74,7 +74,9 @@ Stages:
 1. Spike: open a recorded MP4 with `MediaPlayer`, get a frame, seek, read the duration. A test on a
    file made by the recorder proves it. Decide here whether the engine holds; if not, fall back to
    Media Foundation `IMFSourceReader` + WASAPI.
-2. Player window: frame, play/pause, time, seek, volume; opened by `--player` and by the history.
+2. Player window: frame, play/pause, time, seek, volume; opened by `--player` and by the
+   recording notification. Done: the engine opens without blocking, because the window's message
+   loop delivers the player's events.
 3. Trim: start/end handles on the seek bar; save as a new file, or replace.
 4. Save, copy, more (open folder, delete); open the window when a recording ends (setting-driven).
 5. Settings that depend on it: copy a recording automatically, keep the original recording

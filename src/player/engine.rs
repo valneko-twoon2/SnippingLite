@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 use windows::{
     core::{Error, Interface, Result, HSTRING},
@@ -32,9 +32,6 @@ use windows::{
     },
 };
 
-/// How long a file may take to open before it counts as unplayable.
-const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// One decoded video frame, top-down BGRA.
 pub struct Picture {
     pub width: usize,
@@ -42,15 +39,29 @@ pub struct Picture {
     pub pixels: Vec<u8>,
 }
 
-pub struct Engine {
-    player: MediaPlayer,
-    fresh: Arc<AtomicBool>,
+/// The Direct3D side, built once the video is open and its size is known.
+struct Surface {
     context: ID3D11DeviceContext,
     target: ID3D11Texture2D,
     surface: IDirect3DSurface,
     staging: ID3D11Texture2D,
     width: usize,
     height: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Status {
+    Opening,
+    Ready,
+    Failed,
+}
+
+pub struct Engine {
+    player: MediaPlayer,
+    opened: Arc<AtomicBool>,
+    broken: Arc<AtomicBool>,
+    fresh: Arc<AtomicBool>,
+    surface: Option<Surface>,
     // COM references above must be released before the apartment is uninitialized.
     _apartment: Apartment,
 }
@@ -82,45 +93,73 @@ fn address(path: &Path) -> Result<Uri> {
 }
 
 impl Engine {
-    /// Opens `path` paused at the first frame.
+    /// Starts opening `path`. The player reports through events that the window's message
+    /// loop delivers, so this does not wait; ask `status` until it leaves `Opening`.
     pub fn open(path: &Path) -> Result<Self> {
         let apartment = Apartment::new()?;
         let player = MediaPlayer::new()?;
         player.SetAutoPlay(false)?;
         player.SetIsVideoFrameServerEnabled(true)?;
-        let opened = Arc::new(AtomicBool::new(false));
-        let broken = Arc::new(AtomicBool::new(false));
-        let (done, fail) = (opened.clone(), broken.clone());
-        player.MediaOpened(&TypedEventHandler::new(move |_, _| {
-            done.store(true, Ordering::Release);
-            Ok(())
-        }))?;
+        let (opened, broken, fresh) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let flag = |value: &Arc<AtomicBool>| {
+            let value = value.clone();
+            TypedEventHandler::new(move |_, _| {
+                value.store(true, Ordering::Release);
+                Ok(())
+            })
+        };
+        player.MediaOpened(&flag(&opened))?;
+        let failed = broken.clone();
         player.MediaFailed(&TypedEventHandler::new(move |_, _| {
-            fail.store(true, Ordering::Release);
+            failed.store(true, Ordering::Release);
             Ok(())
         }))?;
-        let fresh = Arc::new(AtomicBool::new(false));
-        let signal = fresh.clone();
-        player.VideoFrameAvailable(&TypedEventHandler::new(move |_, _| {
-            signal.store(true, Ordering::Release);
-            Ok(())
-        }))?;
+        player.VideoFrameAvailable(&flag(&fresh))?;
         player.SetSource(&MediaSource::CreateFromUri(&address(path)?)?)?;
-        let deadline = Instant::now() + OPEN_TIMEOUT;
-        while !opened.load(Ordering::Acquire) {
-            if broken.load(Ordering::Acquire) || Instant::now() >= deadline {
-                let _ = player.Close();
-                return Err(failure());
-            }
-            std::thread::sleep(Duration::from_millis(5));
+        Ok(Self {
+            player,
+            opened,
+            broken,
+            fresh,
+            surface: None,
+            _apartment: apartment,
+        })
+    }
+
+    /// Where the opening stands. Once the video is open this builds the Direct3D surface.
+    pub fn status(&mut self) -> Status {
+        if self.broken.load(Ordering::Acquire) {
+            return Status::Failed;
         }
-        let session = player.PlaybackSession()?;
+        if self.surface.is_some() {
+            return Status::Ready;
+        }
+        if !self.opened.load(Ordering::Acquire) {
+            return Status::Opening;
+        }
+        match self.build() {
+            Ok(surface) => {
+                self.surface = Some(surface);
+                Status::Ready
+            }
+            Err(_) => {
+                self.broken.store(true, Ordering::Release);
+                Status::Failed
+            }
+        }
+    }
+
+    fn build(&self) -> Result<Surface> {
+        let session = self.player.PlaybackSession()?;
         let (width, height) = (
             session.NaturalVideoWidth()? as usize,
             session.NaturalVideoHeight()? as usize,
         );
         if width == 0 || height == 0 {
-            let _ = player.Close();
             return Err(Error::from_hresult(E_INVALIDARG));
         }
         // SAFETY: the Direct3D objects are created and used on this thread only.
@@ -164,22 +203,15 @@ impl Engine {
             let dxgi: IDXGISurface = target.cast()?;
             let surface: IDirect3DSurface =
                 CreateDirect3D11SurfaceFromDXGISurface(&dxgi)?.cast()?;
-            Ok(Self {
-                player,
-                fresh,
+            Ok(Surface {
                 context,
                 target,
                 surface,
                 staging: staging.ok_or_else(failure)?,
                 width,
                 height,
-                _apartment: apartment,
             })
         }
-    }
-
-    pub fn size(&self) -> (usize, usize) {
-        (self.width, self.height)
     }
 
     pub fn duration(&self) -> Duration {
@@ -235,33 +267,36 @@ impl Engine {
 
     /// The newest frame, or `None` while the player has no new one.
     pub fn frame(&mut self) -> Result<Option<Picture>> {
-        if !self.fresh.swap(false, Ordering::AcqRel) {
+        if self.status() != Status::Ready || !self.fresh.swap(false, Ordering::AcqRel) {
             return Ok(None);
         }
-        self.player.CopyFrameToVideoSurface(&self.surface)?;
+        let Some(gpu) = &self.surface else {
+            return Ok(None);
+        };
+        self.player.CopyFrameToVideoSurface(&gpu.surface)?;
         // SAFETY: the mapped rows are bounds checked against the pitch.
         unsafe {
-            self.context.CopyResource(&self.staging, &self.target);
+            gpu.context.CopyResource(&gpu.staging, &gpu.target);
             let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-            self.context
-                .Map(&self.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-            let row = self.width * 4;
+            gpu.context
+                .Map(&gpu.staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+            let row = gpu.width * 4;
             if mapped.pData.is_null() || (mapped.RowPitch as usize) < row {
-                self.context.Unmap(&self.staging, 0);
+                gpu.context.Unmap(&gpu.staging, 0);
                 return Err(failure());
             }
-            let mut pixels = vec![0u8; row * self.height];
-            for y in 0..self.height {
+            let mut pixels = vec![0u8; row * gpu.height];
+            for y in 0..gpu.height {
                 std::ptr::copy_nonoverlapping(
                     (mapped.pData as *const u8).add(y * mapped.RowPitch as usize),
                     pixels.as_mut_ptr().add(y * row),
                     row,
                 );
             }
-            self.context.Unmap(&self.staging, 0);
+            gpu.context.Unmap(&gpu.staging, 0);
             Ok(Some(Picture {
-                width: self.width,
-                height: self.height,
+                width: gpu.width,
+                height: gpu.height,
                 pixels,
             }))
         }

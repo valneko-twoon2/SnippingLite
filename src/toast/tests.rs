@@ -326,7 +326,7 @@ fn clicking_the_notification_opens_the_editor_or_the_file_and_the_x_just_closes(
     assert!(unsafe { IsWindowVisible(history) } == 0);
     assert!(current().closing);
     unsafe { close() };
-    // A recording notification opens the file itself.
+    // A recording notification opens the player on the file.
     let video = desk.sandbox.path().join("missing.mp4");
     unsafe { show_recording(&[0; 4], 1, 1, video.clone()) };
     let hwnd = current().hwnd;
@@ -335,7 +335,10 @@ fn clicking_the_notification_opens_the_editor_or_the_file_and_the_x_just_closes(
     desk.mouse(hwnd, WM_LBUTTONUP, in_text.0, in_text.1);
     assert_eq!(
         crate::test_support::take_shell_opened(),
-        vec![(video.to_string_lossy().into_owned(), None)]
+        vec![(
+            video.to_string_lossy().into_owned(),
+            Some("--player".to_owned())
+        )]
     );
     assert!(current().closing);
     unsafe {

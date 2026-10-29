@@ -268,3 +268,15 @@ fn opening_a_window_that_is_not_running_starts_another_copy_of_the_program() {
     }
     desk.pump(Duration::from_millis(100));
 }
+
+#[test]
+fn only_a_window_flag_makes_a_window_process() {
+    let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+    assert!(!run_window_process(&args(&["snippinglite.exe"])));
+    assert!(!run_window_process(&args(&[
+        "snippinglite.exe",
+        "--latest"
+    ])));
+    // A player without a file has nothing to show and ends at once.
+    assert!(run_window_process(&args(&["snippinglite.exe", "--player"])));
+}
