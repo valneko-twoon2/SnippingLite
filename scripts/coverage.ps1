@@ -9,6 +9,12 @@ param(
 $ErrorActionPreference = 'Stop'
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
+    # The tests find windows by their title and take over the screen, so a running Snipping Lite
+    # (or its history and settings windows) makes them wait for dialogs that never come.
+    $running = @(Get-Process -Name snippinglite -ErrorAction SilentlyContinue)
+    if ($running.Count -gt 0) {
+        throw "Close Snipping Lite before measuring coverage (process $($running.Id -join ', ') is running)."
+    }
     # Test helpers and the end-to-end tests are not part of the product, so they are not measured.
     $ignore = 'test_support|[\\/]tests[\\/]|[\\/](tests|flows|leaks)\.rs$'
     $report = if ($Html) { '--html' } else { '--summary-only' }
