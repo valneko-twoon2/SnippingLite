@@ -262,15 +262,18 @@ impl eframe::App for SettingsApp {
                     row(ui, &p, title, None, |ui| {
                         switch(ui, &mut self.system_audio, title, &p);
                     });
-                    divider(ui, &p);
-                    let title = tr("Record only the sound of the window's app");
-                    let note = (
-                        tr("Turn off to record all system audio when recording a window"),
-                        p.secondary,
-                    );
-                    row(ui, &p, title, Some(note), |ui| {
-                        switch(ui, &mut self.app_audio, title, &p);
-                    });
+                    // Only meaningful while system audio is recorded at all.
+                    if self.system_audio {
+                        divider(ui, &p);
+                        let title = tr("Record only the sound of the window's app");
+                        let note = (
+                            tr("Turn off to record all system audio when recording a window"),
+                            p.secondary,
+                        );
+                        row(ui, &p, title, Some(note), |ui| {
+                            switch(ui, &mut self.app_audio, title, &p);
+                        });
+                    }
                     divider(ui, &p);
                     row(ui, &p, tr("Recording frame rate"), None, |ui| {
                         egui::ComboBox::from_id_salt("record_fps")
