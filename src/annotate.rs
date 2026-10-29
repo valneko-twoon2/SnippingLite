@@ -60,6 +60,35 @@ pub fn color_at(pixels: &[u8], width: i32, height: i32, (x, y): (i32, i32)) -> O
     Some([pixel[2], pixel[1], pixel[0]])
 }
 
+/// The color of one pixel as it is shown, with the marks drawn over it. A
+/// transparent pixel (outside a freeform shape) has no color to pick.
+pub fn shown_color(
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    marks: &[Mark],
+    (x, y): (i32, i32),
+) -> Option<[u8; 3]> {
+    color_at(pixels, width, height, (x, y))?;
+    let at = (y as usize * width as usize + x as usize) * 4;
+    let mut pixel = pixels[at..at + 4].to_vec();
+    // Drawing on a 1x1 image with the marks moved by the same offset gives the
+    // same coverage and blending as drawing on the whole image.
+    let moved: Vec<Mark> = marks
+        .iter()
+        .map(|mark| Mark {
+            points: mark
+                .points
+                .iter()
+                .map(|&(px, py)| (px - x as f32, py - y as f32))
+                .collect(),
+            ..mark.clone()
+        })
+        .collect();
+    draw(&mut pixel, 1, 1, &moved);
+    (pixel[3] != 0).then(|| [pixel[2], pixel[1], pixel[0]])
+}
+
 /// A color as `#RRGGBB`.
 pub fn hex(color: [u8; 3]) -> String {
     format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2])
@@ -269,6 +298,66 @@ mod tests {
         assert_eq!(color_at(&[], 0, 0, (0, 0)), None);
         assert_eq!(color_at(&pixels, 0, 2, (0, 0)), None);
         assert_eq!(color_at(&pixels[..20], 3, 2, (2, 1)), None);
+    }
+
+    #[test]
+    fn shown_color_matches_the_flattened_image_everywhere() {
+        let (width, height) = (24, 16);
+        // A gradient with a transparent corner, like a freeform capture.
+        let mut pixels: Vec<u8> = (0..width * height)
+            .flat_map(|i| [(i * 7) as u8, (i * 3) as u8, (i * 11) as u8, 255])
+            .collect();
+        for y in 0..4 {
+            for x in 0..4 {
+                pixels[((y * width + x) * 4) as usize..][..4].copy_from_slice(&[255, 255, 255, 0]);
+            }
+        }
+        let marks = [
+            Mark {
+                highlight: true,
+                color: COLORS[1],
+                radius: HIGHLIGHTER_RADII[0],
+                points: vec![(2.0, 8.0), (20.0, 8.0), (2.0, 9.0)],
+            },
+            Mark {
+                highlight: false,
+                color: COLORS[0],
+                radius: PEN_RADII[1],
+                points: vec![(12.5, 2.0), (12.5, 14.0)],
+            },
+            Mark {
+                highlight: false,
+                color: COLORS[3],
+                radius: PEN_RADII[2],
+                points: vec![(1.0, 1.0)],
+            },
+        ];
+        let mut flattened = pixels.clone();
+        draw(&mut flattened, width, height, &marks);
+        // Loop over every pixel: the picked color is what the flattened image shows.
+        for y in 0..height {
+            for x in 0..width {
+                let expected = color_at(&flattened, width, height, (x, y))
+                    .filter(|_| flattened[((y * width + x) * 4 + 3) as usize] != 0);
+                assert_eq!(
+                    shown_color(&pixels, width, height, &marks, (x, y)),
+                    expected,
+                    "{x},{y}"
+                );
+            }
+        }
+        // A pen mark over a transparent pixel makes it pickable.
+        assert_eq!(
+            shown_color(&pixels, width, height, &marks, (1, 1)),
+            Some(COLORS[3])
+        );
+        // Without marks, a transparent pixel has no color and outside the image is nothing.
+        assert_eq!(shown_color(&pixels, width, height, &[], (3, 3)), None);
+        assert_eq!(
+            shown_color(&pixels, width, height, &marks, (width, 0)),
+            None
+        );
+        assert_eq!(shown_color(&pixels, width, height, &marks, (0, -1)), None);
     }
 
     #[test]

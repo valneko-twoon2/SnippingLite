@@ -138,7 +138,9 @@ impl HistoryApp {
         };
         let pixel =
             annotate::pixel_of((pos.x - shown.min.x) / scale, (pos.y - shown.min.y) / scale);
-        let Some(color) = annotate::color_at(&opened.pixels, opened.size.0, opened.size.1, pixel)
+        let (width, height) = opened.size;
+        let Some(color) =
+            annotate::shown_color(&opened.pixels, width, height, &opened.marks, pixel)
         else {
             return;
         };
