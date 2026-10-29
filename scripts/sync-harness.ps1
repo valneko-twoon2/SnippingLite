@@ -27,7 +27,13 @@ foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
 $command = 'pwsh -NoProfile -File "$(git rev-parse --show-toplevel)/scripts/agent-stop.ps1"'
 $hooks = [ordered]@{ Stop = @([ordered]@{ hooks = @([ordered]@{ type = 'command'; command = $command; timeout = 15 }) }) }
 Sync-Text '.codex/hooks.json' ([ordered]@{ hooks = $hooks } | ConvertTo-Json -Depth 10)
-Sync-Text '.claude/settings.json' ([ordered]@{ hooks = $hooks } | ConvertTo-Json -Depth 10)
+# Claude Code also checks the file length right after each edit, so a file is split as soon as it grows too long.
+$lengthCommand = 'pwsh -NoProfile -File "$(git rev-parse --show-toplevel)/scripts/check-file-length.ps1" -Hook'
+$claudeHooks = [ordered]@{
+    PostToolUse = @([ordered]@{ matcher = 'Edit|Write|MultiEdit'; hooks = @([ordered]@{ type = 'command'; command = $lengthCommand; timeout = 15 }) })
+    Stop = $hooks.Stop
+}
+Sync-Text '.claude/settings.json' ([ordered]@{ hooks = $claudeHooks } | ConvertTo-Json -Depth 10)
 
 $directory = Join-Path $root '.claude/skills'
 if (Test-Path -LiteralPath $directory) {

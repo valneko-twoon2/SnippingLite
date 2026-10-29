@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$(git rev-parse --show-toplevel)/scripts/check-file-length.ps1\" -Hook",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
