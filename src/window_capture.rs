@@ -179,9 +179,9 @@ unsafe extern "system" fn other_process(
     1
 }
 
-struct Apartment(bool);
+pub(crate) struct Apartment(bool);
 impl Apartment {
-    fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         // WinRT activation factories are cached for the process. Keep the MTA
         // alive across individual snapshots and recorder threads as well.
         static MTA: OnceLock<std::result::Result<(), HRESULT>> = OnceLock::new();

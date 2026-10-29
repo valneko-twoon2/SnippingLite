@@ -46,11 +46,39 @@ Switch layout: the switch, then the オン/オフ label to its right, then the c
    and ask before saving an edited recording.
 6. Verify in dark and light against screenshots, run `validate.ps1` and `coverage.ps1`.
 
-## Open questions
+## Decisions (later)
 
-- HDR color corrector: capture goes through GDI and has no HDR path. Needs a decision: leave it
-  out, or implement tone mapping for HDR monitors.
-- 編集した画面録画の保存を依頼する: there is no recording editor, so the meaning would be
-  "ask whether to keep the recording when it ends". Needs confirmation.
-- The back arrow of the page has nothing to go back to; planned to leave it out.
-- The theme options and the rest of the 外観 section are not in the screenshots.
+- The HDR color corrector is left out: capture goes through GDI and has no HDR path.
+- The back arrow is left out; the page has nothing to go back to.
+- Theme options are Light, Dark and Use system setting. After 外観 only the license items remain.
+- Stages 1-4 are done (4dcfa38). The recording editor is in scope (see below), which also gives the
+  recording-side settings a meaning.
+
+## Recording editor
+
+Goal: after a recording ends, a window like the Snipping Tool's opens on it: video with play/pause,
+elapsed/total time, seek slider, volume, trim, save, copy, and "more" (open folder, delete).
+
+Shape: a separate process, `snippinglite --player <file>`, like `--history`, drawn with egui so it
+shares the palette and the theme. History lists recordings too and opens them in the same window.
+
+Engine, with no new dependency (only `windows` crate feature flags):
+
+- Playback: WinRT `MediaPlayer` in frame-server mode. It decodes, plays the audio, seeks and sets the
+  volume; each frame is copied to a D3D11 texture and read back into an egui texture.
+- Trim and save: WinRT `MediaComposition` (`MediaClip` trimmed from start/end, rendered to MP4).
+- Copy: put the file on the clipboard as a file drop (`CF_HDROP`), as Explorer does.
+
+Stages:
+
+1. Spike: open a recorded MP4 with `MediaPlayer`, get a frame, seek, read the duration. A test on a
+   file made by the recorder proves it. Decide here whether the engine holds; if not, fall back to
+   Media Foundation `IMFSourceReader` + WASAPI.
+2. Player window: frame, play/pause, time, seek, volume; opened by `--player` and by the history.
+3. Trim: start/end handles on the seek bar; save as a new file, or replace.
+4. Save, copy, more (open folder, delete); open the window when a recording ends (setting-driven).
+5. Settings that depend on it: copy a recording automatically, keep the original recording
+   (with the recording-folder expander), ask before saving an edited recording.
+6. Same for the screenshot editor: confirm on closing an edited screenshot, open each screenshot in
+   its own window.
+7. Verify with screenshots, `validate.ps1`, `coverage.ps1`.

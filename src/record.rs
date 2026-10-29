@@ -364,3 +364,29 @@ unsafe fn record(
 
 #[cfg(test)]
 mod tests;
+
+/// Writes a short test video: `frames` solid frames of changing color at 30 fps, no sound.
+#[cfg(test)]
+pub(crate) fn write_sample(
+    path: &Path,
+    width: i32,
+    height: i32,
+    frames: u32,
+) -> windows::core::Result<()> {
+    // SAFETY: Media Foundation is started and shut down around the calls on this thread.
+    unsafe {
+        MFStartup(MF_VERSION, MFSTARTUP_FULL)?;
+        let result = (|| {
+            let writer = open_with(path, width, height, 30, false)?;
+            let step = TICKS / 30;
+            for i in 0..frames {
+                let shade = (i * 255 / frames.max(1)) as u8;
+                let pixels = [shade, 255 - shade, 128, 255].repeat((width * height) as usize);
+                write(&writer, &pixels, i64::from(i) * step, step)?;
+            }
+            writer.sink.Finalize()
+        })();
+        let _ = MFShutdown();
+        result
+    }
+}

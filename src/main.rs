@@ -12,6 +12,7 @@ mod launch;
 mod leaks;
 mod ocr;
 mod overlay;
+mod player;
 mod record;
 mod screenshot;
 mod settings_ui;
