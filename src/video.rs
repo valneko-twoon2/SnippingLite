@@ -5,6 +5,10 @@ use super::*;
 /// Recording indicator in DIPs: a red dot, the elapsed time and a Stop label.
 const RECORD_WIDTH: f32 = 168.0;
 const RECORD_HEIGHT: f32 = 48.0;
+/// The Stop button of the recording indicator; only a click on it ends the recording.
+fn stop_button(scale: f32) -> [f32; 4] {
+    [100.0 * scale, 8.0 * scale, 160.0 * scale, 40.0 * scale]
+}
 /// Sends a selected shape to the active screenshot or recording destination.
 pub(crate) unsafe fn complete_selection(rect: RECT, freeform: bool) {
     if state().video {
@@ -380,11 +384,7 @@ unsafe fn paint_record(hwnd: HWND, dc: HDC) {
         DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         theme.text,
     );
-    canvas.fill_round_rect(
-        [100.0 * scale, 8.0 * scale, 160.0 * scale, 40.0 * scale],
-        4.0 * scale,
-        theme.selected,
-    );
+    canvas.fill_round_rect(stop_button(scale), 4.0 * scale, theme.selected);
     canvas.fill_round_rect(
         [110.0 * scale, 18.0 * scale, 122.0 * scale, 30.0 * scale],
         2.0 * scale,
@@ -432,7 +432,11 @@ pub(crate) unsafe extern "system" fn record_proc(
             0
         }
         WM_LBUTTONUP => {
-            stop_recording();
+            let p = point(lp);
+            let [l, t, r, b] = stop_button(state().scale);
+            if (p.x as f32) >= l && (p.x as f32) < r && (p.y as f32) >= t && (p.y as f32) < b {
+                stop_recording();
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
