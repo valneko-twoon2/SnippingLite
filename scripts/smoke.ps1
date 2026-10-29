@@ -20,6 +20,11 @@ foreach ($pair in 'APPDATA=roaming', 'LOCALAPPDATA=local', 'USERPROFILE=profile'
     $name, $folder = $pair -split '='
     $info.Environment[$name] = Join-Path $work $folder
 }
+# The installer lists this version in Settings > Apps, so it must match the crate version.
+$crate = [regex]::Match([IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\src\Cargo.toml')), '(?m)^version = "([^"]+)"').Groups[1].Value
+$reported = (& $Exe --version | Out-String).Trim()
+if ($reported -ne $crate) { throw "The executable reports version '$reported', but the crate is $crate." }
+
 $process = $null
 try {
     if ([Smoke.Native]::FindWindowW('SnippingLiteMain', [NullString]::Value) -ne [IntPtr]::Zero) {

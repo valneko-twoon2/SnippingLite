@@ -1,5 +1,5 @@
 # Tests install.ps1 and uninstall.ps1 against a local web server that plays the GitHub release.
-# Nothing is installed outside a temporary folder. Usage: pwsh -File scripts/test-installer.ps1
+# Nothing is installed outside a temporary folder, and the registry entries go under a throwaway key. Usage: pwsh -File scripts/test-installer.ps1
 $ErrorActionPreference = 'Stop'
 $install = Join-Path $PSScriptRoot 'install.ps1'
 $uninstall = Join-Path $PSScriptRoot 'uninstall.ps1'
@@ -8,6 +8,9 @@ $release = Join-Path $work 'release'
 $null = New-Item -ItemType Directory -Path $release -Force
 $failures = [Collections.Generic.List[string]]::new()
 $count = 0
+$registry = 'HKCU:\Software\SnippingLiteInstallerTest-' + [guid]::NewGuid().ToString('N')
+$uninstallKey = "$registry\Microsoft\Windows\CurrentVersion\Uninstall\SnippingLite"
+$runKey = "$registry\Microsoft\Windows\CurrentVersion\Run"
 
 function Test([string]$Name, [scriptblock]$Body) {
     $script:count++
@@ -15,7 +18,9 @@ function Test([string]$Name, [scriptblock]$Body) {
 }
 function Assert([bool]$Condition, [string]$Message) { if (!$Condition) { throw $Message } }
 function Run-Script([string]$Script, [string[]]$Arguments) {
-    $output = pwsh -NoProfile -File $Script @Arguments 2>&1 | Out-String
+    $extra = @('-RegistryRoot', $registry)
+    if ((Split-Path $Script -Leaf) -eq 'install.ps1') { $extra += '-NoStart' }
+    $output = pwsh -NoProfile -File $Script @Arguments @extra 2>&1 | Out-String
     [pscustomobject]@{ Code = $LASTEXITCODE; Output = $output }
 }
 function Publish-Release([string]$Content, [string]$Hash) {
@@ -110,11 +115,6 @@ try {
         Publish-Release 'version one' $null
     }
 
-    Test 'the placeholder repository is refused' {
-        $r = Run-Script $install @('-Directory', (Join-Path $work 'e'))
-        Assert ($r.Code -ne 0 -and $r.Output -match 'not set yet') "unexpected: $($r.Output)"
-    }
-
     Test '-Source installs a local executable' {
         $dir = Join-Path $work 'f'
         $r = Run-Script $install @('-Directory', $dir, '-Source', (Join-Path $release 'snippinglite.exe'))
@@ -145,6 +145,41 @@ try {
         Assert (!(Test-Path -LiteralPath (Join-Path $dir 'snippinglite.exe'))) 'the executable stayed'
     }
 
+    Test 'the app is listed in Settings > Apps and starts at sign-in' {
+        $dir = Join-Path $work 'reg'
+        $null = Run-Script $install @('-Directory', $dir, '-BaseUrl', $base)
+        $entry = Get-ItemProperty -LiteralPath $uninstallKey
+        Assert ($entry.DisplayName -eq 'Snipping Lite') 'no display name'
+        Assert ($entry.InstallLocation -eq $dir) 'wrong install location'
+        Assert ($entry.UninstallString -like "*$dir*uninstall.ps1*") "uninstall command: $($entry.UninstallString)"
+        Assert ($entry.NoModify -eq 1 -and $entry.EstimatedSize -ge 0) 'missing flags'
+        $run = (Get-ItemProperty -LiteralPath $runKey).SnippingLite
+        Assert ($run -eq "`"$(Join-Path $dir 'snippinglite.exe')`"") "run value: $run"
+        $r = Run-Script (Join-Path $dir 'uninstall.ps1') @('-Directory', $dir)
+        Assert ($r.Code -eq 0) $r.Output
+        Assert (!(Test-Path -LiteralPath $uninstallKey)) 'the Apps entry stayed'
+        Assert (!(Get-ItemProperty -LiteralPath $runKey).SnippingLite) 'the sign-in start stayed'
+    }
+
+    Test 'uninstalling keeps settings and history unless -RemoveData is given' {
+        $dir = Join-Path $work 'data'
+        $roaming = Join-Path $work 'roaming'; $local = Join-Path $work 'local'
+        $null = New-Item -ItemType Directory -Path "$roaming\Snipping Lite", "$local\Snipping Lite\history" -Force
+        Set-Content -LiteralPath "$roaming\Snipping Lite\settings.ini" -Value 'save=1'
+        $saved = @($env:APPDATA, $env:LOCALAPPDATA)
+        $env:APPDATA = $roaming; $env:LOCALAPPDATA = $local
+        try {
+            $null = Run-Script $install @('-Directory', $dir, '-BaseUrl', $base)
+            $null = Run-Script $uninstall @('-Directory', $dir)
+            Assert (Test-Path -LiteralPath "$roaming\Snipping Lite\settings.ini") 'settings were removed without -RemoveData'
+            $null = Run-Script $install @('-Directory', $dir, '-BaseUrl', $base)
+            $r = Run-Script $uninstall @('-Directory', $dir, '-RemoveData')
+            Assert ($r.Code -eq 0) $r.Output
+            Assert (!(Test-Path -LiteralPath "$roaming\Snipping Lite")) 'settings stayed with -RemoveData'
+            Assert (!(Test-Path -LiteralPath "$local\Snipping Lite")) 'history stayed with -RemoveData'
+        } finally { $env:APPDATA = $saved[0]; $env:LOCALAPPDATA = $saved[1] }
+    }
+
     Test 'uninstalling something that is not installed fails' {
         $r = Run-Script $uninstall @('-Directory', (Join-Path $work 'nothing-here'))
         Assert ($r.Code -ne 0 -and $r.Output -match 'not installed') "unexpected: $($r.Output)"
@@ -153,6 +188,7 @@ try {
     Stop-Job $server -ErrorAction SilentlyContinue
     Remove-Job $server -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $registry -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if ($failures.Count -gt 0) {

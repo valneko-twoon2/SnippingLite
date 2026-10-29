@@ -7,12 +7,11 @@ Snipping Lite は Windows ネイティブのスクリーンショットツール
 ツールバーと通知は Windows 11 の Snipping Tool に合わせたデザインで、アプリのライト・ダークテーマに従います。設定画面は Windows 11 の設定アプリ風（トグル、カード、システムのテーマ、Windows 11 22H2 以降では Mica 背景）にしていますが、ピクセル単位の完全再現ではなく、ツールチップは未対応で、書き込みは履歴から開いた画像でのみ使えます。フリーフォームの範囲外は、PNG ファイルと透過を読み取れるアプリへのクリップボード貼り付けでは透明になり、それ以外（BMP を含む）では白になります。
 ## インストール
 
-GitHub のリポジトリができたら、`OWNER/REPO` をその名前に置き換えてください。
-
 ```powershell
-irm https://github.com/OWNER/REPO/releases/latest/download/install.ps1 | iex
+irm https://github.com/valneko-twoon2/SnippingLite/releases/latest/download/install.ps1 | iex
 ```
 
-最新リリースの `snippinglite.exe` をダウンロードし、SHA-256 を確かめてから `%LOCALAPPDATA%\Programs\Snipping Lite` に入れます。別のフォルダに入れるときは `& ([scriptblock]::Create((irm <install.ps1 の URL>))) -Directory <フォルダ>` を使います。アンインストールは `& "$env:LOCALAPPDATA\Programs\Snipping Lite\uninstall.ps1"` で、設定は残ります。
+現在のユーザー向けに（管理者権限なしで）`%LocalAppData%\Programs\Snipping Lite` へインストールし、ダウンロードの SHA-256 を確かめ、アプリを起動して、サインインのたびに起動するようにします。同じコマンドをもう一度実行すると更新できます。別のフォルダやリポジトリを使うときは、`install.ps1` をダウンロードして `-Directory <フォルダ>` や `-Repo <owner/name>` を付けて実行します。
 
+削除するには、設定の「アプリ」を使います。設定と履歴は、インストール先の `uninstall.ps1` を `-RemoveData` 付きで実行しない限り残ります。保存したスクリーンショットと録画は削除されません。
 リリースは、クレートのバージョンと同じタグ（例: `v0.1.0`）を push すると公開されます。同じファイルは `scripts/publish.ps1` でも `artifacts/` に作れます。

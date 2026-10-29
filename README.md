@@ -7,12 +7,11 @@ The screen stays live while you snip, so videos and apps keep running and only t
 The toolbar and notification follow the Windows 11 Snipping Tool style, including the light or dark app theme. The settings window imitates the Windows 11 settings style (toggles, cards, the system theme, and the Mica backdrop on Windows 11 22H2 or later) but is not a pixel-exact copy; tooltips are not implemented, and annotation is only available for screenshots opened from the history. The outside of a freeform capture is transparent in PNG files and in applications that read transparency from the clipboard, and white elsewhere (including BMP files).
 ## Install
 
-Replace `OWNER/REPO` with the GitHub repository once it exists.
-
 ```powershell
-irm https://github.com/OWNER/REPO/releases/latest/download/install.ps1 | iex
+irm https://github.com/valneko-twoon2/SnippingLite/releases/latest/download/install.ps1 | iex
 ```
 
-The script downloads `snippinglite.exe` from the latest release, checks its SHA-256 and installs it to `%LOCALAPPDATA%\Programs\Snipping Lite`. To pick another folder, run `& ([scriptblock]::Create((irm <install.ps1 URL>))) -Directory <folder>`. Uninstall with `& "$env:LOCALAPPDATA\Programs\Snipping Lite\uninstall.ps1"`; your settings are kept.
+Installs for the current user (no administrator rights) to `%LocalAppData%\Programs\Snipping Lite`, checks the SHA-256 of the download, starts the app, and starts it at every sign-in. Run the same command again to update. To use another folder or repository, download `install.ps1` and run it with `-Directory <folder>` or `-Repo <owner/name>`.
 
+To remove it, use Settings > Apps. Your settings and history are kept unless you run `uninstall.ps1` from the install folder with `-RemoveData`; saved screenshots and recordings are never deleted.
 A release is published by pushing a tag that matches the crate version, for example `v0.1.0`. `scripts/publish.ps1` builds the same files locally into `artifacts/`.

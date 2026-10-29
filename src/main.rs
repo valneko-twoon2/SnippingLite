@@ -451,6 +451,11 @@ unsafe fn create_main_window() -> HWND {
 }
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // The installer asks for the version to list the app in Settings > Apps.
+    if args.iter().any(|a| a == "--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     if args.iter().any(|a| a == "--history") {
         history_ui::run(args.iter().any(|a| a == "--latest"));
         return;
