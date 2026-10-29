@@ -34,10 +34,10 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Screen Recordings", "画面録画"),
     ("Screenshot folder", "スクリーンショットの保存先"),
     ("Recording folder", "画面録画の保存先"),
-    ("Automatically copy screenshots", "自動的にコピー"),
+    ("Automatically copy screenshots", "自動的に変更にコピー"),
     (
         "Screenshots are copied to the clipboard automatically",
-        "スクリーンショットはクリップボードに自動的にコピーされます",
+        "スクリーンショットの編集内容はクリップボードに自動的にコピーされます",
     ),
     (
         "Automatically save screenshots",
@@ -72,11 +72,11 @@ const JAPANESE: &[(&str, &str)] = &[
     ),
     (
         "Include microphone input in recordings",
-        "録画にマイク入力を含める",
+        "画面録画の開始時に既定でマイク入力を含める",
     ),
     (
         "Include system audio in recordings",
-        "録画にシステム オーディオを含める",
+        "画面録画の開始時に既定でシステム オーディオを含める",
     ),
     (
         "Record only the sound of the window's app",
@@ -189,10 +189,16 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Crop", "切り抜き"),
     (
         "Add a border to screenshots",
-        "スクリーンショットに枠線を付ける",
+        "各スクリーンショットに境界を追加",
     ),
-    ("Border color", "枠線の色"),
-    ("Border thickness", "枠線の太さ"),
+    ("Border color", "色"),
+    ("Border thickness", "太さ"),
+    ("About this app", "このアプリについて"),
+    (
+        "Review third-party software",
+        "サードパーティ製ソフトウェアの確認",
+    ),
+    ("Send feedback", "フィードバックの送信"),
     ("Red", "赤"),
     ("Yellow", "黄"),
     ("Green", "緑"),

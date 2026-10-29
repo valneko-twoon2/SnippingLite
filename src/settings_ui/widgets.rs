@@ -75,12 +75,15 @@ pub(super) fn folder_row(
     p: &Palette,
     title: &str,
     path: &Path,
+    filled: bool,
 ) -> Option<FolderAction> {
     let (rect, _) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_TALL), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(4), p.card);
-    let left = 32.0;
+    if filled {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(4), p.card);
+    }
+    let left = if filled { 16.0 } else { 32.0 };
     ui.painter().text(
         rect.left_center() + Vec2::new(left, -10.0),
         Align2::LEFT_CENTER,

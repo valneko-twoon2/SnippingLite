@@ -17,7 +17,7 @@ fn notices_parse_into_credits_with_license_text() {
 #[test]
 fn the_license_is_the_one_of_this_program() {
     assert!(LICENSE.contains("MIT License") || LICENSE.contains("Permission is hereby granted"));
-    assert!(page().contains("Permission is hereby granted"));
+    assert!(page("").contains("Permission is hereby granted"));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn blocks_keep_headings_indents_and_drop_edge_gaps() {
 
 #[test]
 fn page_has_a_section_per_crate_and_escapes_text() {
-    let html = page();
+    let html = page("");
     let credits = parse_credits(NOTICES);
     assert!(html.contains(&format!("id=\"crate-{}\"", credits.len() - 1)));
     assert!(html.contains(env!("CARGO_PKG_VERSION")));
@@ -57,7 +57,7 @@ fn page_has_a_section_per_crate_and_escapes_text() {
 
 #[test]
 fn the_page_is_written_as_a_complete_html_file() {
-    let path = write_page().unwrap();
+    let path = write_page("about.html", "").unwrap();
     assert!(path.ends_with("about.html"));
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.starts_with("<!doctype html>") && text.trim_end().ends_with("</html>"));

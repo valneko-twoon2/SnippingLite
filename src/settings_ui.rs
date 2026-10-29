@@ -26,8 +26,12 @@ use crate::{
 };
 
 mod app;
+mod expander;
+mod icons;
 mod widgets;
 use app::*;
+use expander::*;
+use icons::*;
 use widgets::*;
 
 const SEMIBOLD: &str = "semibold";

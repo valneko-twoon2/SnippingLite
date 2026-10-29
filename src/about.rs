@@ -40,25 +40,34 @@ struct Block {
 /// Writes the page to the user's temporary folder and opens it in the default
 /// browser on the About section.
 pub fn show() -> std::io::Result<()> {
-    let path = write_page()?;
+    open("about.html", "")
+}
+
+/// The same page, opened on the Credits section.
+pub fn show_credits() -> std::io::Result<()> {
+    open("credits.html", "#credits")
+}
+
+fn open(name: &str, fragment: &str) -> std::io::Result<()> {
+    let path = write_page(name, fragment)?;
     imaging::shell_open(&w(&path.to_string_lossy()), None);
     Ok(())
 }
 
-fn write_page() -> std::io::Result<PathBuf> {
+fn write_page(name: &str, start: &str) -> std::io::Result<PathBuf> {
     let folder = std::env::temp_dir().join("Snipping Lite");
     std::fs::create_dir_all(&folder)?;
-    let path = folder.join("about.html");
+    let path = folder.join(name);
     // Written beside the target and renamed, so a browser never reads half a page.
-    let staging = folder.join("about.html.tmp");
-    std::fs::write(&staging, page())?;
+    let staging = folder.join(format!("{name}.tmp"));
+    std::fs::write(&staging, page(start))?;
     std::fs::rename(&staging, &path)?;
     Ok(path)
 }
 
 /// The whole page. Every section is present; the script shows the one the
 /// fragment names (`#about`, `#credits`, or `#crate-<index>`).
-fn page() -> String {
+fn page(start: &str) -> String {
     let credits = parse_credits(NOTICES);
     let mut html = String::with_capacity(NOTICES.len() * 2);
     let _ = write!(
@@ -147,7 +156,7 @@ fn page() -> String {
 
     let _ = write!(
         html,
-        "</main>\n<script>\n{SCRIPT}</script>\n</body>\n</html>\n"
+        "</main>\n<script>\nif (!location.hash) {{ location.hash = \"{start}\"; }}\n{SCRIPT}</script>\n</body>\n</html>\n"
     );
     html
 }

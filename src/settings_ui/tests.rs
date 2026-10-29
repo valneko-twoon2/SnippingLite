@@ -71,6 +71,11 @@ impl Window {
     }
 }
 
+/// Where the controls of the border card sit on the test screen, from the right edge of a row.
+const SWATCH_X: f32 = 588.0;
+const STRIP_X: [f32; 5] = [442.0, 478.0, 514.0, 550.0, 586.0];
+const SLIDER_END: f32 = 606.0;
+
 fn saved() -> config::Settings {
     config::load_settings()
 }
@@ -230,15 +235,20 @@ fn rows_that_depend_on_a_switch_appear_with_it() {
     let sandbox = Sandbox::new();
     let mut window = Window::open(true, false);
     let folder = tr("Screenshot folder");
+    // Switching a setting on opens its card; clicking the card closes and opens it again.
+    assert!(!window.screen.has(folder));
     window.toggle(tr("Automatically save screenshots"));
     assert!(window.screen.has(folder));
-    window.toggle(tr("Automatically save screenshots"));
+    window.click_text(tr("Automatically save screenshots"));
     assert!(!window.screen.has(folder));
+    window.click_text(tr("Automatically save screenshots"));
+    assert!(window.screen.has(folder));
 
+    assert!(!window.screen.has(tr("Border color")));
     window.toggle(tr("Add a border to screenshots"));
     assert!(window.screen.has(tr("Border color")));
     assert!(window.screen.has(tr("Border thickness")));
-    window.toggle(tr("Add a border to screenshots"));
+    window.click_text(tr("Add a border to screenshots"));
     assert!(!window.screen.has(tr("Border color")));
 
     let app_audio = tr("Record only the sound of the window's app");
@@ -275,21 +285,26 @@ fn drop_downs_store_the_chosen_value() {
     );
     assert_eq!(saved().history_limit, 50);
 
+    // The border color is a swatch that opens a strip of colors; the thickness is a slider.
     window.toggle(tr("Add a border to screenshots"));
-    window.choose(tr("Blue"), tr("Red"));
+    let color = window.screen.find(tr("Border color")).unwrap().center().y;
+    window.act(|screen, show| screen.click(pos2(SWATCH_X, color), show));
+    window.act(|screen, show| screen.click(pos2(STRIP_X[0], color + 48.0), show));
     assert_eq!(saved().outline_color, 0);
-    window.choose(tr("Medium"), tr("Thick"));
+    let thickness = window
+        .screen
+        .find(tr("Border thickness"))
+        .unwrap()
+        .center()
+        .y;
+    window.act(|screen, show| screen.click(pos2(SLIDER_END, thickness), show));
     assert_eq!(saved().outline_width, 2);
 
-    window.choose(
-        config::AppTheme::System.label(),
-        config::AppTheme::Dark.label(),
-    );
+    // The theme card opens to three radio choices.
+    window.click_text(tr("App theme"));
+    window.click_text(config::AppTheme::Dark.label());
     assert_eq!(saved().theme, config::AppTheme::Dark);
-    window.choose(
-        config::AppTheme::Dark.label(),
-        config::AppTheme::Light.label(),
-    );
+    window.click_text(config::AppTheme::Light.label());
     assert_eq!(saved().theme, config::AppTheme::Light);
     ui::set_theme_choice(config::AppTheme::System);
 }
