@@ -358,3 +358,38 @@ mod input;
 use input::*;
 mod screen;
 use screen::*;
+
+#[test]
+#[ignore = "Takes over the mouse, the keyboard and the screen"]
+fn a_border_chosen_in_the_settings_applies_to_the_next_screenshot_without_a_restart() {
+    let (_desktop, backdrop) = desktop();
+    let app = App::start(
+        "border-reload",
+        "copy=1\r\nsave=0\r\nhistory=0\r\nnotify=0\r\nfreeze=0\r\nkeep_toolbar=1\r\noutline=0\r\noutline_color=0\r\noutline_width=2",
+    );
+    let has_red_edge = |pixels: &[u8], width: i32| {
+        let (color, _) = pixel(pixels, width, 0, 0);
+        near(color, RED, 4)
+    };
+    clear_clipboard();
+    shortcut();
+    select(backdrop.free(), 200, 120);
+    let (width, _, pixels) = wait_for(10, clipboard_image).expect("A screenshot");
+    assert!(!has_red_edge(&pixels, width), "no border while it is off");
+    // Switch the border on the way the settings window does: write the file, tell the tray.
+    let file = app.root.join("roaming/Snipping Lite/settings.ini");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.replace("outline=0", "outline=1")).unwrap();
+    let tray = unsafe { FindWindowW(wide("SnippingLiteMain").as_ptr(), std::ptr::null()) };
+    assert!(!tray.is_null(), "the tray window is found by its class");
+    unsafe { PostMessageW(tray, WM_APP + 2, 0, 0) };
+    settle(500);
+    clear_clipboard();
+    shortcut();
+    select(backdrop.free(), 200, 120);
+    let (width, _, pixels) = wait_for(10, clipboard_image).expect("A second screenshot");
+    assert!(
+        has_red_edge(&pixels, width),
+        "the border appears after the change"
+    );
+}
