@@ -388,3 +388,5 @@ fn over_and_blend_cover_their_extreme_cases() {
     assert_eq!(over(0xff102030, 0xff112233, 1.0), 0xff112233);
     assert_eq!(over(0, 0x00ffffff, 1.0), 0);
 }
+
+mod dpi;

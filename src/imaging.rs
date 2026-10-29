@@ -64,8 +64,29 @@ fn wide(path: &Path) -> Vec<u16> {
     path.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 
+/// Whether `pixels` holds exactly the 4 bytes of each pixel of a `width` x `height` image.
+pub fn fits(pixels: &[u8], width: i32, height: i32) -> bool {
+    width > 0
+        && height > 0
+        && (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4))
+            == Some(pixels.len())
+}
+
+/// The error for pixels that do not match the stated size.
+pub fn bad_size() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        "The pixels do not match the image size",
+    )
+}
+
 /// Encodes straight-alpha top-down BGRA pixels; the extension picks PNG or BMP.
 pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+    if !fits(pixels, width, height) {
+        return Err(bad_size());
+    }
     if !start_gdiplus() {
         return Err(std::io::Error::other("Could not start GDI+"));
     }
@@ -151,6 +172,9 @@ pub fn decode(path: &Path) -> Option<(i32, i32, Vec<u8>)> {
 
 /// Puts the image on the clipboard as a 32-bit DIB with alpha.
 pub fn copy_to_clipboard(owner: HWND, pixels: &[u8], width: i32, height: i32) -> bool {
+    if !fits(pixels, width, height) {
+        return false;
+    }
     // SAFETY: the allocation is sized for the header and all pixel rows.
     unsafe {
         let header = std::mem::size_of::<BITMAPV5HEADER>();

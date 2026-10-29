@@ -207,11 +207,13 @@ fn a_picked_window_is_captured_by_itself() {
     let fixture = CoveredWindow::new();
     begin(&desk);
     unsafe { set_mode(MODE_WINDOW) };
+    // The fixture sits on the primary monitor, which is not at the overlay's origin when another monitor is to its left or above.
+    let (x, y) = (200 - s().origin.x, 200 - s().origin.y);
     // The cover is the top window at this point; hovering finds a window and highlights it.
-    desk.mouse(s().overlay, WM_MOUSEMOVE, 200, 200);
+    desk.mouse(s().overlay, WM_MOUSEMOVE, x, y);
     assert!(!s().hover_hwnd.is_null());
     let rect = s().hover_window.expect("a window is highlighted");
-    desk.mouse(s().overlay, WM_LBUTTONDOWN, 200, 200);
+    desk.mouse(s().overlay, WM_LBUTTONDOWN, x, y);
     assert!(!s().active);
     let entry = history::list().remove(0);
     let (width, height, _) = imaging::decode(&entry.image).unwrap();

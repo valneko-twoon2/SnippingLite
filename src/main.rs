@@ -7,6 +7,8 @@ mod history_ui;
 mod i18n;
 mod imaging;
 mod launch;
+#[cfg(test)]
+mod leaks;
 mod ocr;
 mod overlay;
 mod record;

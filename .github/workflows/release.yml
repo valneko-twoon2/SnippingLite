@@ -21,6 +21,9 @@ jobs:
       - name: Build and collect the release files
         shell: pwsh
         run: scripts/publish.ps1
+      - name: Smoke test the release executable
+        shell: pwsh
+        run: scripts/smoke.ps1 -Exe artifacts/snippinglite.exe
       - name: Publish the release
         shell: pwsh
         env:

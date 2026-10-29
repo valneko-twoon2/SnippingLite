@@ -97,6 +97,9 @@ fn store(
     height: i32,
     png: Option<&Path>,
 ) -> std::io::Result<()> {
+    if !imaging::fits(pixels, width, height) {
+        return Err(imaging::bad_size());
+    }
     let scale = (THUMB_WIDTH as f32 / width as f32).min(THUMB_HEIGHT as f32 / height as f32);
     let (tw, th) = if scale < 1.0 {
         (
@@ -349,5 +352,17 @@ mod tests {
         // The Unix epoch is on the last day of 1969 or the first of 1970.
         let (year, month, ..) = local_time(0);
         assert!((year == 1969 && month == 12) || (year == 1970 && month == 1));
+    }
+
+    #[test]
+    fn a_picture_that_does_not_fit_its_size_is_refused_and_leaves_nothing() {
+        let _sandbox = crate::test_support::Sandbox::new();
+        for (len, width, height) in [(0, 0, 0), (15, 2, 2), (17, 2, 2), (16, 0, 4), (16, -2, -2)] {
+            let error = add(&vec![255; len], width, height, None).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+        assert!(list().is_empty());
+        // The folder may exist, but it holds no half-written entry.
+        assert!(folder().is_none_or(|f| fs::read_dir(f).is_ok_and(|d| d.count() == 0)));
     }
 }

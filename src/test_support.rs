@@ -347,3 +347,16 @@ pub mod screen;
 /// The tray process running inside the test: its state, window classes and windows are the
 /// real ones, and the test plays the part of the message loop and of the mouse.
 pub mod desk;
+
+/// The GDI and USER objects this process owns, to see whether a flow gives them all back.
+pub fn gui_objects() -> (u32, u32) {
+    use windows_sys::Win32::Foundation::HANDLE;
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetGuiResources(process: HANDLE, flags: u32) -> u32;
+    }
+    // -1 is the pseudo handle of the current process; flag 0 counts GDI and 1 USER objects.
+    let process = -1isize as HANDLE;
+    // SAFETY: a plain query about this process.
+    unsafe { (GetGuiResources(process, 0), GetGuiResources(process, 1)) }
+}

@@ -25,7 +25,8 @@ try {
         foreach ($name in 'snippinglite.exe', 'snippinglite.exe.sha256', 'uninstall.ps1', 'LICENSE', 'THIRD-PARTY-NOTICES.txt') {
             Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/$name" -OutFile (Join-Path $scratch $name)
         }
-        $expected = (Get-Content -LiteralPath (Join-Path $scratch 'snippinglite.exe.sha256') -Raw).Trim().ToLower()
+        # Either the bare hash or the "hash  file name" form of sha256sum.
+        $expected = ((Get-Content -LiteralPath (Join-Path $scratch 'snippinglite.exe.sha256') -Raw).Trim() -split '\s+')[0].ToLower()
         $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $scratch 'snippinglite.exe')).Hash.ToLower()
         if ($actual -ne $expected) { throw "Checksum mismatch for snippinglite.exe (expected $expected, got $actual)." }
     }

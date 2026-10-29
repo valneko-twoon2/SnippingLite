@@ -234,3 +234,5 @@ fn copied_text_reads_back_unchanged() {
         assert_eq!(clipboard_text().as_deref(), Some(text));
     }
 }
+
+mod inputs;

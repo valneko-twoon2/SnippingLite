@@ -406,3 +406,5 @@ fn a_chosen_folder_wins_and_the_defaults_are_per_user() {
     );
     assert!(known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Pictures).is_some());
 }
+
+mod compat;
