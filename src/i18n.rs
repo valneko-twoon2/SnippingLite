@@ -272,6 +272,20 @@ const JAPANESE: &[(&str, &str)] = &[
     // Tray menu, recording and capture messages
     ("Stop recording", "録画を停止"),
     ("Exit", "終了"),
+    ("About", "About"),
+    ("Credits", "Credits"),
+    ("Version", "バージョン"),
+    ("License", "ライセンス"),
+    (
+        "{n} open source libraries",
+        "{n} 個のオープンソース ライブラリ",
+    ),
+    ("Homepage", "ホームページ"),
+    ("Back", "戻る"),
+    (
+        "Could not open the About page.",
+        "About ページを開けませんでした。",
+    ),
     ("Stop", "停止"),
     (
         "Could not capture the desktop.",

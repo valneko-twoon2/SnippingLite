@@ -28,8 +28,6 @@ function Publish-Release([string]$Content, [string]$Hash) {
     if (!$Hash) { $Hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $release 'snippinglite.exe')).Hash }
     Set-Content -LiteralPath (Join-Path $release 'snippinglite.exe.sha256') -Value $Hash -NoNewline
     Copy-Item -LiteralPath $uninstall -Destination $release -Force
-    Set-Content -LiteralPath (Join-Path $release 'LICENSE') -Value 'license'
-    Set-Content -LiteralPath (Join-Path $release 'THIRD-PARTY-NOTICES.txt') -Value 'notices'
 }
 function Content-Of([string]$Directory) {
     (Get-Content -LiteralPath (Join-Path $Directory 'snippinglite.exe') -Raw)
@@ -70,7 +68,7 @@ try {
         $dir = Join-Path $work 'a'
         $r = Run-Script $install @('-Directory', $dir, '-BaseUrl', $base)
         Assert ($r.Code -eq 0) "exit $($r.Code): $($r.Output)"
-        foreach ($name in 'snippinglite.exe', 'uninstall.ps1', 'LICENSE', 'THIRD-PARTY-NOTICES.txt') {
+        foreach ($name in 'snippinglite.exe', 'uninstall.ps1') {
             Assert (Test-Path -LiteralPath (Join-Path $dir $name)) "missing $name"
         }
         Assert (!(Test-Path -LiteralPath (Join-Path $dir 'snippinglite.exe.sha256'))) 'the checksum file must not be installed'
@@ -108,7 +106,7 @@ try {
 
     Test 'a missing release file installs nothing' {
         $dir = Join-Path $work 'd'
-        Remove-Item -LiteralPath (Join-Path $release 'LICENSE')
+        Remove-Item -LiteralPath (Join-Path $release 'uninstall.ps1')
         $r = Run-Script $install @('-Directory', $dir, '-BaseUrl', $base)
         Assert ($r.Code -ne 0) 'the install must fail'
         Assert (!(Test-Path -LiteralPath $dir)) 'nothing may be created'

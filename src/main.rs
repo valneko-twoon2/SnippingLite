@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod about;
 mod annotate;
 mod config;
 mod history;
@@ -66,6 +67,7 @@ const TRAY_SETTINGS: usize = 201;
 const TRAY_HISTORY: usize = 203;
 const TRAY_EXIT: usize = 202;
 const TRAY_STOP: usize = 204;
+const TRAY_ABOUT: usize = 205;
 const MODE_RECT: i32 = 0;
 const MODE_FREE: i32 = 1;
 const MODE_WINDOW: i32 = 2;
@@ -259,6 +261,11 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 TRAY_SETTINGS => launch_settings(),
                 TRAY_HISTORY => launch_history(false),
                 TRAY_STOP => stop_recording(),
+                TRAY_ABOUT => {
+                    if about::show().is_err() {
+                        message(hwnd, tr("Could not open the About page."));
+                    }
+                }
                 TRAY_EXIT => {
                     DestroyWindow(hwnd);
                 }
@@ -275,11 +282,11 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 if state().recording.is_some() {
                     AppendMenuW(menu, MF_STRING, TRAY_STOP, w(tr("Stop recording")).as_ptr());
                 }
-                AppendMenuW(menu, MF_STRING, NEW, w(tr("New snip")).as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_HISTORY, w(tr("History")).as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w(tr("Settings")).as_ptr());
-                AppendMenuW(menu, MF_SEPARATOR, 0, null());
+                // The first entry carries the icon's name and opens the app's window.
+                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Snipping Lite").as_ptr());
+                AppendMenuW(menu, MF_STRING, TRAY_ABOUT, w(tr("About")).as_ptr());
                 AppendMenuW(menu, MF_STRING, TRAY_EXIT, w(tr("Exit")).as_ptr());
+                SetMenuDefaultItem(menu, TRAY_SETTINGS as u32, 0);
                 let mut cursor: POINT = std::mem::zeroed();
                 GetCursorPos(&mut cursor);
                 SetForegroundWindow(hwnd);

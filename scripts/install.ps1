@@ -24,7 +24,7 @@ try {
         Copy-Item -LiteralPath $Source -Destination (Join-Path $scratch 'snippinglite.exe')
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'uninstall.ps1') -Destination $scratch
     } else {
-        foreach ($name in 'snippinglite.exe', 'snippinglite.exe.sha256', 'uninstall.ps1', 'LICENSE', 'THIRD-PARTY-NOTICES.txt') {
+        foreach ($name in 'snippinglite.exe', 'snippinglite.exe.sha256', 'uninstall.ps1') {
             Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/$name" -OutFile (Join-Path $scratch $name)
         }
         # Either the bare hash or the "hash  file name" form of sha256sum.

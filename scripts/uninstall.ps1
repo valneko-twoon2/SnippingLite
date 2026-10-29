@@ -18,9 +18,7 @@ Start-Sleep -Milliseconds 300
 Remove-Item -LiteralPath "$RegistryRoot\Microsoft\Windows\CurrentVersion\Uninstall\SnippingLite" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -LiteralPath "$RegistryRoot\Microsoft\Windows\CurrentVersion\Run" -Name SnippingLite -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $target
-foreach ($name in 'LICENSE', 'THIRD-PARTY-NOTICES.txt', 'uninstall.ps1') {
-    Remove-Item -LiteralPath (Join-Path $Directory $name) -ErrorAction SilentlyContinue
-}
+Remove-Item -LiteralPath (Join-Path $Directory 'uninstall.ps1') -ErrorAction SilentlyContinue
 # Only an empty folder is removed, so files the user added stay.
 if (!(Get-ChildItem -LiteralPath $Directory -Force)) { Remove-Item -LiteralPath $Directory }
 if ($RemoveData) {

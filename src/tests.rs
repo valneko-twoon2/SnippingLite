@@ -173,26 +173,28 @@ fn the_tray_commands_start_a_snip_and_open_the_windows() {
 
 #[test]
 #[ignore = "Shows a menu"]
-fn the_tray_menu_offers_the_commands() {
+fn the_tray_menu_offers_the_app_about_and_exit() {
     let desk = Desk::start();
-    let history = stub_window(HISTORY_WINDOW);
-    unsafe { ShowWindow(history, SW_HIDE) };
-    // Menu entries without a recording: New snip, History, Settings, Exit.
+    let settings = stub_window(SETTINGS_WINDOW);
+    unsafe { ShowWindow(settings, SW_HIDE) };
+    crate::test_support::take_shell_opened();
+    // Menu entries without a recording: Snipping Lite, About, Exit.
     let answer = answer_menu(0);
     desk.send(desk.main, TRAY_MESSAGE, 1, WM_RBUTTONUP as isize);
     assert!(answer.join().unwrap());
     // The menu posts its command, so it arrives with the next messages.
     assert!(
-        desk.pump_until(Duration::from_secs(2), || s().active),
-        "New snip"
+        desk.pump_until(Duration::from_secs(2), || shown(settings)),
+        "Snipping Lite opens the window"
     );
-    desk.key(s().overlay, 0x1b);
     let answer = answer_menu(1);
     desk.send(desk.main, TRAY_MESSAGE, 1, WM_RBUTTONUP as isize);
     assert!(answer.join().unwrap());
     assert!(
-        desk.pump_until(Duration::from_secs(2), || shown(history)),
-        "History"
+        desk.pump_until(Duration::from_secs(2), || {
+            !crate::test_support::take_shell_opened().is_empty()
+        }),
+        "About opens the page"
     );
     // Leaving the menu does nothing.
     let answer = answer_menu(usize::MAX);
@@ -201,9 +203,19 @@ fn the_tray_menu_offers_the_commands() {
     assert!(!s().active);
     // Other mouse messages from the icon are ignored.
     desk.send(desk.main, TRAY_MESSAGE, 1, WM_MOUSEMOVE as isize);
-    unsafe { DestroyWindow(history) };
+    unsafe { DestroyWindow(settings) };
 }
 
+#[test]
+#[ignore = "Creates the tray window"]
+fn the_about_command_opens_the_page_in_the_browser() {
+    let desk = Desk::start();
+    crate::test_support::take_shell_opened();
+    desk.send(desk.main, WM_COMMAND, TRAY_ABOUT, 0);
+    let opened = crate::test_support::take_shell_opened();
+    assert_eq!(opened.len(), 1);
+    assert!(opened[0].0.ends_with("about.html"), "{:?}", opened[0]);
+}
 #[test]
 #[ignore = "Covers the screen"]
 fn the_delay_timer_takes_the_picture_and_closing_only_hides() {
