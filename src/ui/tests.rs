@@ -76,6 +76,29 @@ fn thumbnail_averages_and_premultiplies() {
 }
 
 #[test]
+fn contains_includes_the_top_left_edges_only() {
+    let r = [10.0, 20.0, 30.0, 40.0];
+    let at = |x, y| contains(r, POINT { x, y });
+    // Inside, and the top and left edges.
+    assert!(at(20, 30));
+    assert!(at(10, 20));
+    assert!(at(29, 39));
+    // Just outside each edge; the right and bottom edges belong to the next area.
+    assert!(!at(9, 30));
+    assert!(!at(20, 19));
+    assert!(!at(30, 30));
+    assert!(!at(20, 40));
+    // Fractional edges from scaling round toward the outside of the area.
+    assert!(!contains([10.5, 0.0, 20.0, 10.0], POINT { x: 10, y: 5 }));
+    assert!(contains([10.5, 0.0, 20.0, 10.0], POINT { x: 11, y: 5 }));
+    // An empty or inverted area contains nothing.
+    assert!(!contains([10.0, 10.0, 10.0, 20.0], POINT { x: 10, y: 15 }));
+    assert!(!contains([20.0, 20.0, 10.0, 10.0], POINT { x: 15, y: 15 }));
+    // Negative client coordinates are outside a button at the origin.
+    assert!(!contains([0.0, 0.0, 8.0, 8.0], POINT { x: -1, y: 0 }));
+}
+
+#[test]
 fn blend_keeps_premultiplied_range() {
     assert_eq!(blend(0xffffffff, 0x80000000), 0xff7f7f7f);
     assert_eq!(over(0, 0xffffffff, 0.5), 0x80808080);

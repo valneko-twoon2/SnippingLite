@@ -319,3 +319,76 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SCALES: [f32; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
+
+    fn at(x: i32, y: i32) -> i32 {
+        button_at(POINT { x, y }, 1.0)
+    }
+
+    #[test]
+    fn every_button_is_found_at_its_center_on_every_scale() {
+        for scale in SCALES {
+            for index in 0..GLYPHS.len() as i32 {
+                let [l, t, r, b] = toolbar_button(index, scale);
+                let center = POINT {
+                    x: ((l + r) / 2.0) as i32,
+                    y: ((t + b) / 2.0) as i32,
+                };
+                assert_eq!(button_at(center, scale), index, "scale {scale}");
+            }
+        }
+    }
+
+    #[test]
+    fn button_edges_and_the_gaps_that_move_the_toolbar() {
+        // The camera and video buttons touch: the shared edge belongs to video.
+        assert_eq!(at(7, 24), -1);
+        assert_eq!(at(8, 24), CAMERA_BUTTON);
+        assert_eq!(at(43, 24), CAMERA_BUTTON);
+        assert_eq!(at(44, 24), VIDEO_BUTTON);
+        assert_eq!(at(79, 24), VIDEO_BUTTON);
+        assert_eq!(at(80, 24), -1);
+        assert_eq!(at(92, 24), AREA_BUTTON);
+        assert_eq!(at(139, 24), AREA_BUTTON);
+        assert_eq!(at(323, 24), CLOSE_BUTTON);
+        assert_eq!(at(324, 24), -1);
+        // Above and below the buttons.
+        assert_eq!(at(26, 7), -1);
+        assert_eq!(at(26, 8), CAMERA_BUTTON);
+        assert_eq!(at(26, 39), CAMERA_BUTTON);
+        assert_eq!(at(26, 40), -1);
+        // Every gap between groups is free for dragging.
+        for x in [86, 144, 190, 234, 280] {
+            assert_eq!(at(x, 24), -1, "x {x}");
+        }
+        // Outside the bar.
+        assert_eq!(at(-1, 24), -1);
+        assert_eq!(at(BAR_WIDTH as i32, 24), -1);
+        assert_eq!(at(26, BAR_HEIGHT as i32), -1);
+    }
+
+    #[test]
+    fn buttons_never_overlap_and_stay_inside_the_bar() {
+        for scale in SCALES {
+            let (width, height) = ((BAR_WIDTH * scale) as i32, (BAR_HEIGHT * scale) as i32);
+            for y in 0..height {
+                for x in 0..width {
+                    let p = POINT { x, y };
+                    let hits = (0..GLYPHS.len() as i32)
+                        .filter(|&i| ui::contains(toolbar_button(i, scale), p))
+                        .count();
+                    assert!(hits <= 1, "{hits} buttons at {x},{y} on scale {scale}");
+                }
+            }
+            for index in 0..GLYPHS.len() as i32 {
+                let [l, t, r, b] = toolbar_button(index, scale);
+                assert!(l >= 0.0 && t >= 0.0 && r <= width as f32 && b <= height as f32);
+            }
+        }
+    }
+}

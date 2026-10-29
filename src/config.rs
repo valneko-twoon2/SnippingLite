@@ -345,6 +345,86 @@ mod tests {
     }
 
     #[test]
+    fn keep_toolbar_is_on_only_for_the_exact_line() {
+        for (text, expected) in [
+            ("keep_toolbar=1", true),
+            ("notify=0\r\nkeep_toolbar=1\r\nmic=1\r\n", true),
+            ("keep_toolbar=0", false),
+            ("", false),
+            ("keep_toolbar=", false),
+            ("keep_toolbar=true", false),
+            ("keep_toolbar=2", false),
+            ("keep_toolbar=11", false),
+            (" keep_toolbar=1", false),
+            ("keep_toolbar=1 ", false),
+            ("KEEP_TOOLBAR=1", false),
+            ("# keep_toolbar=1", false),
+        ] {
+            assert_eq!(parse_settings(text).keep_toolbar, expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn saved_settings_read_back_unchanged() {
+        let base = parse_settings("");
+        let mut variants = vec![base.clone()];
+        // Flip every switch on its own so a key mismatch in one of them shows up.
+        for flip in [
+            |s: &mut Settings| s.copy ^= true,
+            |s: &mut Settings| s.save ^= true,
+            |s: &mut Settings| s.ask ^= true,
+            |s: &mut Settings| s.history ^= true,
+            |s: &mut Settings| s.countdown ^= true,
+            |s: &mut Settings| s.skip_title ^= true,
+            |s: &mut Settings| s.record_cursor ^= true,
+            |s: &mut Settings| s.freeze ^= true,
+            |s: &mut Settings| s.notify ^= true,
+            |s: &mut Settings| s.keep_toolbar ^= true,
+            |s: &mut Settings| s.mic ^= true,
+            |s: &mut Settings| s.system_audio ^= true,
+            |s: &mut Settings| s.app_audio ^= true,
+            |s: &mut Settings| s.ask_video ^= true,
+        ] {
+            let mut settings = base.clone();
+            flip(&mut settings);
+            assert_ne!(settings, base);
+            variants.push(settings);
+        }
+        for delay in DELAYS {
+            variants.push(Settings {
+                delay,
+                ..base.clone()
+            });
+        }
+        for history_limit in HISTORY_LIMITS {
+            variants.push(Settings {
+                history_limit,
+                ..base.clone()
+            });
+        }
+        for record_fps in FRAME_RATES {
+            variants.push(Settings {
+                record_fps,
+                ..base.clone()
+            });
+        }
+        for theme in AppTheme::ALL {
+            variants.push(Settings {
+                theme,
+                ..base.clone()
+            });
+        }
+        variants.push(Settings {
+            screenshot_folder: "D:\\Shots".to_owned(),
+            video_folder: "E:\\録画".to_owned(),
+            ..base.clone()
+        });
+        for settings in variants {
+            assert_eq!(parse_settings(&settings_text(&settings)), settings);
+        }
+    }
+
+    #[test]
     fn atomic_write_replaces_the_file_and_leaves_no_temporary() {
         let folder =
             std::env::temp_dir().join(format!("snipping-lite-config-{}", std::process::id()));
