@@ -435,9 +435,7 @@ pub(crate) unsafe extern "system" fn record_proc(
             0
         }
         WM_LBUTTONUP => {
-            let p = point(lp);
-            let [l, t, r, b] = stop_button(state().scale);
-            if (p.x as f32) >= l && (p.x as f32) < r && (p.y as f32) >= t && (p.y as f32) < b {
+            if ui::contains(stop_button(state().scale), point(lp)) {
                 stop_recording();
             }
             0

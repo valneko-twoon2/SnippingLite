@@ -389,5 +389,11 @@ pub fn rect(left: f32, top: f32, right: f32, bottom: f32) -> RECT {
     }
 }
 
+/// Whether `p` lies in `[left, top, right, bottom]`; the right and bottom edges are outside.
+pub fn contains([left, top, right, bottom]: [f32; 4], p: POINT) -> bool {
+    let (x, y) = (p.x as f32, p.y as f32);
+    x >= left && x < right && y >= top && y < bottom
+}
+
 #[cfg(test)]
 mod tests;

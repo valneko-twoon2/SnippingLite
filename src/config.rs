@@ -245,31 +245,33 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
         path.parent()
             .ok_or_else(|| std::io::Error::other("Invalid settings path"))?,
     )?;
-    write_atomic(
-        &path,
-        format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
-            settings.copy as u8,
-            settings.save as u8,
-            settings.ask as u8,
-            settings.delay,
-            settings.history as u8,
-            settings.history_limit,
-            settings.countdown as u8,
-            settings.skip_title as u8,
-            settings.record_cursor as u8,
-            settings.record_fps,
-            settings.freeze as u8,
-            settings.notify as u8,
-            settings.keep_toolbar as u8,
-            settings.mic as u8,
-            settings.system_audio as u8,
-            settings.app_audio as u8,
-            settings.ask_video as u8,
-            settings.theme.key(),
-            settings.screenshot_folder,
-            settings.video_folder
-        ),
+    write_atomic(&path, settings_text(settings))
+}
+
+/// The settings file contents that `parse_settings` reads back.
+fn settings_text(settings: &Settings) -> String {
+    format!(
+        "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+        settings.copy as u8,
+        settings.save as u8,
+        settings.ask as u8,
+        settings.delay,
+        settings.history as u8,
+        settings.history_limit,
+        settings.countdown as u8,
+        settings.skip_title as u8,
+        settings.record_cursor as u8,
+        settings.record_fps,
+        settings.freeze as u8,
+        settings.notify as u8,
+        settings.keep_toolbar as u8,
+        settings.mic as u8,
+        settings.system_audio as u8,
+        settings.app_audio as u8,
+        settings.ask_video as u8,
+        settings.theme.key(),
+        settings.screenshot_folder,
+        settings.video_folder
     )
 }
 

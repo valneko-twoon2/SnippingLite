@@ -119,13 +119,14 @@ pub(crate) unsafe fn place_toolbar(cursor: POINT) {
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
 }
-unsafe fn toolbar_hit(p: POINT) -> i32 {
+/// The button under `p` in client coordinates, or -1 for the space that moves the toolbar.
+fn button_at(p: POINT, scale: f32) -> i32 {
     (0..GLYPHS.len() as i32)
-        .find(|&i| {
-            let [l, t, r, b] = toolbar_button(i, state().scale);
-            (p.x as f32) >= l && (p.x as f32) < r && (p.y as f32) >= t && (p.y as f32) < b
-        })
+        .find(|&i| ui::contains(toolbar_button(i, scale), p))
         .unwrap_or(-1)
+}
+unsafe fn toolbar_hit(p: POINT) -> i32 {
+    button_at(p, state().scale)
 }
 unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
     let mut client: RECT = std::mem::zeroed();
