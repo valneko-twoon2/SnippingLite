@@ -51,7 +51,7 @@ unsafe fn start_recording(rect: RECT, freeform: bool) {
             }
         }
     }
-    if area.right - area.left < 16 || area.bottom - area.top < 16 {
+    if area.right - area.left < record::MIN_SIZE || area.bottom - area.top < record::MIN_SIZE {
         refresh_overlay();
         return;
     }

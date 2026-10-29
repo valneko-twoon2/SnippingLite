@@ -225,6 +225,99 @@ fn records_rectangular_and_freeform_mp4() {
     }
 }
 
+fn area(width: i32, height: i32) -> RECT {
+    RECT {
+        left: 10,
+        top: 10,
+        right: 10 + width,
+        bottom: 10 + height,
+    }
+}
+
+fn options(fps: u32) -> Options {
+    Options {
+        fps,
+        cursor: false,
+        window: None,
+        audio: Audio::default(),
+    }
+}
+
+#[test]
+fn start_rejects_bad_settings_without_creating_a_file() {
+    let path =
+        std::env::temp_dir().join(format!("snippinglite-rejected-{}.mp4", std::process::id()));
+    let error = |area, options| match start(area, path.clone(), Vec::new(), options) {
+        Ok(recording) => {
+            let _ = recording.stop();
+            panic!("The recording should not start")
+        }
+        Err(error) => error,
+    };
+    for fps in [0, 1, 29, 31, 59, 61, 120, u32::MAX] {
+        assert_eq!(
+            error(area(320, 240), options(fps)),
+            tr("Unsupported recording frame rate."),
+            "{fps} fps"
+        );
+    }
+    // Sizes are rounded down to even numbers and must reach MIN_SIZE (34): 33 becomes 32.
+    for (width, height) in [
+        (0, 0),
+        (32, 240),
+        (320, 32),
+        (33, 240),
+        (320, 33),
+        (34, 33),
+        (33, 35),
+        (-40, 240),
+        (320, -40),
+    ] {
+        assert_eq!(
+            error(area(width, height), options(30)),
+            tr("The selected area is too small to record."),
+            "{width}x{height}"
+        );
+    }
+    // A window that does not exist (anymore) is refused instead of recording the desktop.
+    let gone = Options {
+        window: Some(Target::new(null_mut(), false)),
+        ..options(30)
+    };
+    assert_eq!(
+        error(area(320, 240), gone),
+        tr("Could not capture the selected window.")
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+#[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
+fn records_the_smallest_areas_at_even_sizes() {
+    for ((width, height), expected) in [
+        ((34, 34), (34, 34)),
+        ((35, 35), (34, 34)),
+        ((35, 67), (34, 66)),
+        ((34, 240), (34, 240)),
+    ] {
+        let path = std::env::temp_dir().join(format!(
+            "snippinglite-small-{width}x{height}-{}.mp4",
+            std::process::id()
+        ));
+        let recording = start(area(width, height), path.clone(), Vec::new(), options(30)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while recording.started.get().is_none() && !recording.failed() && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let (_, frame) = recording.stop().expect("Record a small area");
+        assert_eq!((frame.width, frame.height), expected);
+        assert_eq!(&std::fs::read(&path).unwrap()[4..8], b"ftyp");
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 #[test]
 fn recording_mask_preserves_concave_selection() {
     let polygon = [(0, 0), (4, 0), (4, 2), (2, 2), (2, 4), (0, 4)].map(|(x, y)| POINT { x, y });

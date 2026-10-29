@@ -39,6 +39,9 @@ pub struct Options {
 }
 /// Hundreds of nanoseconds per second, the unit of Media Foundation times.
 const TICKS: i64 = 10_000_000;
+/// The smallest even width and height the Windows H.264 encoders accept; both
+/// the hardware and the software encoder refuse 32 pixels or less.
+pub const MIN_SIZE: i32 = 34;
 
 /// The first frame of a finished recording, used as the notification preview.
 pub struct Frame {
@@ -91,7 +94,7 @@ pub fn start(
         .map_err(|_| tr("Could not capture the selected window.").to_string())?;
     let width = (area.right - area.left) & !1;
     let height = (area.bottom - area.top) & !1;
-    if width < 16 || height < 16 {
+    if width < MIN_SIZE || height < MIN_SIZE {
         return Err(tr("The selected area is too small to record.").into());
     }
     let area = RECT {
