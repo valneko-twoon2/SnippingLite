@@ -72,6 +72,10 @@ struct State {
     dim_canvas: Option<ui::Canvas>,
     toolbar: HWND,
     toolbar_dark: Option<bool>,
+    /// The toolbar stays on the screen between snips until it is closed.
+    keep_toolbar: bool,
+    /// The kept toolbar is open; it returns after each snip or recording.
+    toolbar_open: bool,
     active: bool,
     hover_button: i32,
     pressed_button: i32,
@@ -256,6 +260,13 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().record_fps = settings.record_fps;
             state().freeze = settings.freeze;
             state().notify = settings.notify;
+            state().keep_toolbar = settings.keep_toolbar;
+            if !settings.keep_toolbar && state().toolbar_open {
+                state().toolbar_open = false;
+                if !state().active {
+                    ShowWindow(state().toolbar, SW_HIDE);
+                }
+            }
             state().mic = settings.mic;
             state().system_audio = settings.system_audio;
             state().app_audio = settings.app_audio;
@@ -381,6 +392,8 @@ fn main() {
             dim_canvas: None,
             toolbar: null_mut(),
             toolbar_dark: None,
+            keep_toolbar: settings.keep_toolbar,
+            toolbar_open: false,
             active: false,
             hover_button: -1,
             pressed_button: -1,

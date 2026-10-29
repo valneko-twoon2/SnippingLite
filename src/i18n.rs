@@ -63,6 +63,14 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Dark", "ダーク"),
     ("Show notifications", "通知を表示する"),
     (
+        "Keep the toolbar open after a snip",
+        "撮影後もツールバーを表示したままにする",
+    ),
+    (
+        "Close it with the × button. Drag an empty part to move it",
+        "× ボタンで閉じます。ボタン以外の部分をドラッグすると移動できます",
+    ),
+    (
         "Include microphone input in recordings",
         "録画にマイク入力を含める",
     ),

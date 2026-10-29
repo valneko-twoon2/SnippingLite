@@ -73,6 +73,8 @@ pub struct Settings {
     pub freeze: bool,
     /// Show a notification after a screenshot or recording is saved.
     pub notify: bool,
+    /// Keep the toolbar on the screen after a snip until it is closed.
+    pub keep_toolbar: bool,
     /// Include the microphone in recordings.
     pub mic: bool,
     /// Include the sound that plays on the PC in recordings.
@@ -156,6 +158,7 @@ pub fn parse_settings(text: &str) -> Settings {
             .unwrap_or(DEFAULT_FRAME_RATE),
         freeze: text.lines().any(|s| s == "freeze=1"),
         notify: !text.lines().any(|s| s == "notify=0"),
+        keep_toolbar: text.lines().any(|s| s == "keep_toolbar=1"),
         mic: text.lines().any(|s| s == "mic=1"),
         system_audio: !text.lines().any(|s| s == "system_audio=0"),
         app_audio: !text.lines().any(|s| s == "app_audio=0"),
@@ -245,7 +248,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
     write_atomic(
         &path,
         format!(
-            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+            "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
             settings.copy as u8,
             settings.save as u8,
             settings.ask as u8,
@@ -258,6 +261,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
             settings.record_fps,
             settings.freeze as u8,
             settings.notify as u8,
+            settings.keep_toolbar as u8,
             settings.mic as u8,
             settings.system_audio as u8,
             settings.app_audio as u8,
@@ -290,6 +294,7 @@ mod tests {
                 record_fps: 60,
                 freeze: false,
                 notify: true,
+                keep_toolbar: false,
                 mic: false,
                 system_audio: true,
                 app_audio: true,
@@ -300,7 +305,7 @@ mod tests {
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nkeep_toolbar=1\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -317,6 +322,7 @@ mod tests {
                 record_fps: 30,
                 freeze: true,
                 notify: false,
+                keep_toolbar: true,
                 mic: true,
                 system_audio: false,
                 app_audio: false,

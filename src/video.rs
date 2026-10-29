@@ -55,10 +55,13 @@ unsafe fn start_recording(rect: RECT, freeform: bool) {
         refresh_overlay();
         return;
     }
-    // The overlay closes first; our own windows stay hidden until the recording ends.
+    // The overlay closes first; our own windows, including a kept toolbar, stay
+    // hidden until the recording ends.
     let hidden = std::mem::take(&mut state().hidden);
+    let open = std::mem::take(&mut state().toolbar_open);
     cancel();
     state().hidden = hidden;
+    state().toolbar_open = open;
     if state().countdown {
         begin_countdown(area, points, target);
     } else {

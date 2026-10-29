@@ -15,6 +15,7 @@ pub(super) struct SettingsApp {
     record_fps: u32,
     freeze: bool,
     notify: bool,
+    keep_toolbar: bool,
     mic: bool,
     system_audio: bool,
     app_audio: bool,
@@ -44,6 +45,7 @@ impl SettingsApp {
             record_fps: settings.record_fps,
             freeze: settings.freeze,
             notify: settings.notify,
+            keep_toolbar: settings.keep_toolbar,
             mic: settings.mic,
             system_audio: settings.system_audio,
             app_audio: settings.app_audio,
@@ -72,6 +74,7 @@ impl SettingsApp {
             record_fps: self.record_fps,
             freeze: self.freeze,
             notify: self.notify,
+            keep_toolbar: self.keep_toolbar,
             mic: self.mic,
             system_audio: self.system_audio,
             app_audio: self.app_audio,
@@ -227,6 +230,15 @@ impl eframe::App for SettingsApp {
                     let note = (tr("After a screenshot or recording is saved"), p.secondary);
                     row(ui, &p, title, Some(note), |ui| {
                         switch(ui, &mut self.notify, title, &p);
+                    });
+                    divider(ui, &p);
+                    let title = tr("Keep the toolbar open after a snip");
+                    let note = (
+                        tr("Close it with the × button. Drag an empty part to move it"),
+                        p.secondary,
+                    );
+                    row(ui, &p, title, Some(note), |ui| {
+                        switch(ui, &mut self.keep_toolbar, title, &p);
                     });
                 });
                 section(ui, &p, tr("Screen recording"), true);

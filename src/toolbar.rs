@@ -69,8 +69,15 @@ unsafe fn choose_capture_area(hwnd: HWND) {
         null(),
     );
     DestroyMenu(menu);
-    if command > 0 {
+    if command > 0 && state().active {
         set_mode(command - 1);
+    } else if command > 0 {
+        // A kept toolbar between snips starts a new snip in the chosen mode.
+        state().mode = command - 1;
+        begin_capture();
+        if state().active {
+            set_mode(command - 1);
+        }
     }
     if state().active {
         SetForegroundWindow(state().overlay);
@@ -92,11 +99,21 @@ pub(crate) unsafe fn place_toolbar(cursor: POINT) {
         ui::acrylic(state().toolbar, state().theme.dark);
         state().toolbar_dark = Some(state().theme.dark);
     }
+    // A kept toolbar stays where it was moved; a newly opened one starts at the top center.
+    let mut bounds: RECT = std::mem::zeroed();
+    let (left, top) = if state().toolbar_open && GetWindowRect(state().toolbar, &mut bounds) != 0 {
+        (bounds.left, bounds.top)
+    } else {
+        (
+            (monitor.left + monitor.right - width) / 2,
+            monitor.top + (12.0 * scale).round() as i32,
+        )
+    };
     SetWindowPos(
         state().toolbar,
         null_mut(),
-        (monitor.left + monitor.right - width) / 2,
-        monitor.top + (12.0 * scale).round() as i32,
+        left,
+        top,
         width,
         height,
         SWP_NOACTIVATE | SWP_NOZORDER,
@@ -206,6 +223,24 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
 ) -> LRESULT {
     match msg {
         WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+        // The space between the buttons acts as a title bar for moving the toolbar.
+        WM_NCHITTEST => {
+            let mut p = point(lp);
+            ScreenToClient(hwnd, &mut p);
+            if toolbar_hit(p) < 0 {
+                HTCAPTION as LRESULT
+            } else {
+                HTCLIENT as LRESULT
+            }
+        }
+        WM_NCLBUTTONDBLCLK => 0,
+        WM_EXITSIZEMOVE => {
+            // Moving may take the keyboard away from the overlay, which handles Escape.
+            if state().active {
+                SetForegroundWindow(state().overlay);
+            }
+            0
+        }
         WM_ERASEBKGND => 1,
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -247,7 +282,11 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             let pressed = std::mem::replace(&mut state().pressed_button, -1);
             if hit >= 0 && hit == pressed {
                 match hit {
-                    CLOSE_BUTTON => cancel(),
+                    CLOSE_BUTTON => {
+                        state().toolbar_open = false;
+                        ShowWindow(hwnd, SW_HIDE);
+                        cancel();
+                    }
                     SETTINGS_BUTTON => {
                         cancel();
                         launch_settings();
@@ -258,8 +297,11 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                     }
                     CAMERA_BUTTON | VIDEO_BUTTON => {
                         state().video = hit == VIDEO_BUTTON;
-                        // Refresh window bounds because recordings may exclude the title bar.
-                        if hovers_windows() {
+                        if !state().active {
+                            // A kept toolbar between snips starts a new snip.
+                            begin_capture();
+                        } else if hovers_windows() {
+                            // Refresh window bounds because recordings may exclude the title bar.
                             let mode = state().mode;
                             set_mode(mode);
                         }

@@ -26,8 +26,13 @@ pub(crate) unsafe fn begin_capture() {
             state().hidden.push(identity);
         }
     }
+    // A kept toolbar must not appear in the capture either; it comes back with the overlay.
+    let kept = IsWindowVisible(state().toolbar) != 0;
+    if kept {
+        ShowWindow(state().toolbar, SW_HIDE);
+    }
     // Only wait for the compositor when one of our windows has to leave the screen first.
-    let flush = !state().hidden.is_empty() || toast::visible();
+    let flush = kept || !state().hidden.is_empty() || toast::visible();
     toast::close();
     if state().delay > 0 && SetTimer(owner, DELAY_TIMER, state().delay * 1000, None) != 0 {
         state().pending = true;
@@ -76,6 +81,7 @@ pub(crate) unsafe fn capture(flush: bool) {
     state().active = true;
     SetWindowPos(overlay, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
     place_toolbar(cursor);
+    state().toolbar_open = state().keep_toolbar;
     set_layered(overlay, live);
     if live {
         live_draw(RECT {
@@ -391,5 +397,14 @@ pub(crate) unsafe fn restore_windows() {
         if !window.is_null() {
             ShowWindow(window, SW_SHOW);
         }
+    }
+    let s = state();
+    if s.toolbar_open
+        && !s.active
+        && !s.pending
+        && s.recording.is_none()
+        && s.count_window.is_null()
+    {
+        ShowWindow(s.toolbar, SW_SHOWNOACTIVATE);
     }
 }
