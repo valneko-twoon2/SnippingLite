@@ -1,0 +1,28 @@
+name: release
+
+# Pushing a tag such as v0.1.0 builds the release and publishes artifacts/ as a GitHub release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the crate version
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path src/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match version $version." }
+      - name: Build and collect the release files
+        shell: pwsh
+        run: scripts/publish.ps1
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME (Get-ChildItem artifacts -File).FullName --title $env:GITHUB_REF_NAME --generate-notes

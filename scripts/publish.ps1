@@ -7,6 +7,6 @@ try {
     Copy-Item -LiteralPath src/target/release/snippinglite.exe -Destination artifacts/snippinglite.exe -Force
     $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath artifacts/snippinglite.exe).Hash.ToLower()
     [IO.File]::WriteAllText("$PWD/artifacts/snippinglite.exe.sha256", $hash, [Text.Encoding]::ASCII)
-    Copy-Item -LiteralPath LICENSE, THIRD-PARTY-NOTICES.txt -Destination artifacts -Force
-    Write-Host 'Release executable, checksum and licenses are in artifacts/.'
+    Copy-Item -LiteralPath LICENSE, THIRD-PARTY-NOTICES.txt, scripts/install.ps1, scripts/uninstall.ps1 -Destination artifacts -Force
+    Write-Host 'Release executable, checksum, licenses and install scripts are in artifacts/.'
 } finally { Pop-Location }
