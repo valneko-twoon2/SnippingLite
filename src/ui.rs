@@ -17,8 +17,8 @@ use windows_sys::Win32::{
         Controls::MARGINS,
         HiDpi::*,
         WindowsAndMessaging::{
-            FindWindowExW, GetPropW, GetWindowThreadProcessId, LoadImageW, SetPropW, HICON,
-            IMAGE_ICON,
+            FindWindowExW, GetPropW, GetWindowThreadProcessId, LoadImageW, SetPropW, SetWindowPos,
+            HICON, HWND_TOPMOST, IMAGE_ICON, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
         },
     },
 };
@@ -199,6 +199,22 @@ pub unsafe fn disable_transitions(hwnd: HWND) {
         DWMWA_TRANSITIONS_FORCEDISABLED as u32,
         (&value as *const BOOL).cast(),
         4,
+    );
+}
+
+/// Puts a topmost window above the other topmost windows without activating it.
+/// Closing the snipping overlay activates the window used before the snip, and
+/// if that one is always on top, its own thread raises it a moment later over
+/// the windows shown since; they call this again after that.
+pub unsafe fn raise(hwnd: HWND) {
+    SetWindowPos(
+        hwnd,
+        HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
 }
 

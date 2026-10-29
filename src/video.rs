@@ -201,6 +201,7 @@ pub(crate) unsafe extern "system" fn count_proc(
                 DestroyWindow(hwnd);
                 begin_recording(area, points, target);
             } else {
+                ui::raise(hwnd);
                 InvalidateRect(hwnd, null(), 0);
             }
             0
@@ -430,6 +431,10 @@ pub(crate) unsafe extern "system" fn record_proc(
                 {
                     show_frame(area);
                 }
+                // Keep the Stop button reachable over windows that are always on top;
+                // see `ui::raise`. The frame goes first so the indicator stays above it.
+                ui::raise(state().record_frame);
+                ui::raise(hwnd);
                 InvalidateRect(hwnd, null(), 0);
             }
             0

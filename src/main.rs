@@ -52,6 +52,7 @@ const NEW: usize = 100;
 const DELAY_TIMER: usize = 1;
 const RECORD_TIMER: usize = 2;
 const COUNT_TIMER: usize = 3;
+const RAISE_TIMER: usize = 4;
 const HOTKEY: i32 = 1;
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const TRAY_RELOAD: u32 = WM_APP + 2;

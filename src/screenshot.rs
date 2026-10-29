@@ -430,6 +430,6 @@ pub(crate) unsafe fn restore_windows() {
         && s.recording.is_none()
         && s.count_window.is_null()
     {
-        ShowWindow(s.toolbar, SW_SHOWNOACTIVATE);
+        show_kept_toolbar();
     }
 }

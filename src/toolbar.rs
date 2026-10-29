@@ -119,6 +119,25 @@ pub(crate) unsafe fn place_toolbar(cursor: POINT) {
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
 }
+/// Shows a kept toolbar between snips where it was left. A countdown or a
+/// recording on another monitor changes the scale, so the toolbar is sized and
+/// painted again for the monitor it is on.
+pub(crate) unsafe fn show_kept_toolbar() {
+    let toolbar = state().toolbar;
+    let mut bounds: RECT = std::mem::zeroed();
+    GetWindowRect(toolbar, &mut bounds);
+    let corner = POINT {
+        x: bounds.left,
+        y: bounds.top,
+    };
+    state().scale = ui::scale_at(corner);
+    place_toolbar(corner);
+    InvalidateRect(toolbar, null(), 0);
+    ShowWindow(toolbar, SW_SHOWNOACTIVATE);
+    ui::raise(toolbar);
+    // A window that is always on top may rise over it a moment later; see `ui::raise`.
+    SetTimer(toolbar, RAISE_TIMER, 200, None);
+}
 /// The button under `p` in client coordinates, or -1 for the space that moves the toolbar.
 fn button_at(p: POINT, scale: f32) -> i32 {
     (0..GLYPHS.len() as i32)
@@ -235,6 +254,14 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             }
         }
         WM_NCLBUTTONDBLCLK => 0,
+        WM_TIMER if wp == RAISE_TIMER => {
+            KillTimer(hwnd, RAISE_TIMER);
+            // Only a kept toolbar between snips; a closed one stays hidden.
+            if !state().active && IsWindowVisible(hwnd) != 0 {
+                ui::raise(hwnd);
+            }
+            0
+        }
         WM_EXITSIZEMOVE => {
             // Moving may take the keyboard away from the overlay, which handles Escape.
             if state().active {
