@@ -74,6 +74,10 @@ struct State {
     toolbar_dark: Option<bool>,
     /// The toolbar stays on the screen between snips until it is closed.
     keep_toolbar: bool,
+    /// Screenshots get a border; the color and width are indexes of the settings.
+    outline: bool,
+    outline_color: usize,
+    outline_width: usize,
     /// The kept toolbar is open; it returns after each snip or recording.
     toolbar_open: bool,
     active: bool,
@@ -261,6 +265,9 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().freeze = settings.freeze;
             state().notify = settings.notify;
             state().keep_toolbar = settings.keep_toolbar;
+            state().outline = settings.outline;
+            state().outline_color = settings.outline_color;
+            state().outline_width = settings.outline_width;
             if !settings.keep_toolbar && state().toolbar_open {
                 state().toolbar_open = false;
                 if !state().active {
@@ -393,6 +400,9 @@ fn main() {
             toolbar: null_mut(),
             toolbar_dark: None,
             keep_toolbar: settings.keep_toolbar,
+            outline: settings.outline,
+            outline_color: settings.outline_color,
+            outline_width: settings.outline_width,
             toolbar_open: false,
             active: false,
             hover_button: -1,

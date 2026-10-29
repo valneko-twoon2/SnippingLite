@@ -22,6 +22,28 @@ pub const COLORS: [[u8; 3]; 5] = [
 pub const PEN_RADII: [f32; 3] = [1.5, 2.5, 4.5];
 pub const HIGHLIGHTER_RADII: [f32; 3] = [6.0, 10.0, 16.0];
 
+/// Border widths in image pixels for screenshots, thin to thick.
+pub const OUTLINE_WIDTHS: [i32; 3] = [1, 2, 4];
+
+/// Paints an opaque border of `border` pixels just inside the edges of top-down
+/// BGRA pixels. A border wider than half the image covers all of it.
+pub fn outline(pixels: &mut [u8], width: i32, height: i32, border: i32, color: [u8; 3]) {
+    if width <= 0
+        || height <= 0
+        || border <= 0
+        || pixels.len() != width as usize * height as usize * 4
+    {
+        return;
+    }
+    let value = [color[2], color[1], color[0], 255];
+    for (index, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = (index as i32 % width, index as i32 / width);
+        if x < border || y < border || x >= width - border || y >= height - border {
+            *pixel = value;
+        }
+    }
+}
+
 /// The highlighter is translucent, the pen is opaque.
 pub fn opacity(highlight: bool) -> f32 {
     if highlight {
@@ -158,5 +180,68 @@ mod tests {
         let (w, h, out) = crop(&pixels, 20, 20, (-5, 0, 4, 3)).unwrap();
         assert_eq!((w, h, out.len()), (4, 3, 48));
         assert!(crop(&pixels, 20, 20, (5, 5, 5, 9)).is_none());
+    }
+
+    fn painted(width: i32, height: i32, border: i32) -> Vec<bool> {
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        outline(&mut pixels, width, height, border, [1, 2, 3]);
+        pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| {
+                if *p != [0, 0, 0, 0] {
+                    assert_eq!(*p, [3, 2, 1, 255], "BGRA order, opaque");
+                    true
+                } else {
+                    false
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn outline_paints_exactly_the_edge_pixels() {
+        // Equivalence: a 6x5 image with a 1 pixel border leaves a 4x3 inside.
+        let marked = painted(6, 5, 1);
+        for y in 0..5 {
+            for x in 0..6 {
+                let edge = x == 0 || y == 0 || x == 5 || y == 4;
+                assert_eq!(marked[y * 6 + x], edge, "{x},{y}");
+            }
+        }
+        // Every width of the settings keeps the corners and the center apart.
+        for border in OUTLINE_WIDTHS {
+            let marked = painted(40, 30, border);
+            let b = border as usize;
+            assert!(marked[0] && marked[40 * 30 - 1]);
+            assert!(marked[b - 1 + 40 * 15] && !marked[b + 40 * 15]);
+            assert!(!marked[20 + 15 * 40]);
+            assert_eq!(
+                marked.iter().filter(|m| **m).count(),
+                40 * 30 - (40 - 2 * b) * (30 - 2 * b)
+            );
+        }
+    }
+
+    #[test]
+    fn outline_handles_tiny_and_invalid_input() {
+        // Boundary: the border meets in the middle, then exceeds the image.
+        assert!(painted(4, 4, 2).iter().all(|m| *m));
+        assert!(painted(4, 4, 3).iter().all(|m| *m));
+        assert!(painted(1, 1, 1)[0]);
+        assert_eq!(painted(5, 1, 1), vec![true; 5]);
+        // Errors: nothing changes for a zero, negative or mismatched request.
+        for (w, h, border, len) in [
+            (4, 4, 0, 64),
+            (4, 4, -1, 64),
+            (0, 4, 1, 0),
+            (4, 0, 1, 0),
+            (4, 4, 1, 60),
+        ] {
+            let mut pixels = vec![9u8; len];
+            outline(&mut pixels, w, h, border, [1, 2, 3]);
+            assert!(pixels.iter().all(|p| *p == 9), "{w}x{h} border {border}");
+        }
     }
 }

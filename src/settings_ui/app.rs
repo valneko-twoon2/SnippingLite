@@ -16,6 +16,9 @@ pub(super) struct SettingsApp {
     freeze: bool,
     notify: bool,
     keep_toolbar: bool,
+    outline: bool,
+    outline_color: usize,
+    outline_width: usize,
     mic: bool,
     system_audio: bool,
     app_audio: bool,
@@ -46,6 +49,9 @@ impl SettingsApp {
             freeze: settings.freeze,
             notify: settings.notify,
             keep_toolbar: settings.keep_toolbar,
+            outline: settings.outline,
+            outline_color: settings.outline_color,
+            outline_width: settings.outline_width,
             mic: settings.mic,
             system_audio: settings.system_audio,
             app_audio: settings.app_audio,
@@ -75,6 +81,9 @@ impl SettingsApp {
             freeze: self.freeze,
             notify: self.notify,
             keep_toolbar: self.keep_toolbar,
+            outline: self.outline,
+            outline_color: self.outline_color,
+            outline_width: self.outline_width,
             mic: self.mic,
             system_audio: self.system_audio,
             app_audio: self.app_audio,
@@ -240,6 +249,43 @@ impl eframe::App for SettingsApp {
                     row(ui, &p, title, Some(note), |ui| {
                         switch(ui, &mut self.keep_toolbar, title, &p);
                     });
+                    divider(ui, &p);
+                    let title = tr("Add a border to screenshots");
+                    row(ui, &p, title, None, |ui| {
+                        switch(ui, &mut self.outline, title, &p);
+                    });
+                    if self.outline {
+                        divider(ui, &p);
+                        row(ui, &p, tr("Border color"), None, |ui| {
+                            let names = [
+                                tr("Red"),
+                                tr("Yellow"),
+                                tr("Green"),
+                                tr("Blue"),
+                                tr("Black"),
+                            ];
+                            egui::ComboBox::from_id_salt("outline_color")
+                                .selected_text(names[self.outline_color])
+                                .width(124.0)
+                                .show_ui(ui, |ui| {
+                                    for (index, name) in names.into_iter().enumerate() {
+                                        ui.selectable_value(&mut self.outline_color, index, name);
+                                    }
+                                });
+                        });
+                        divider(ui, &p);
+                        row(ui, &p, tr("Border thickness"), None, |ui| {
+                            let names = [tr("Thin"), tr("Medium"), tr("Thick")];
+                            egui::ComboBox::from_id_salt("outline_width")
+                                .selected_text(names[self.outline_width])
+                                .width(124.0)
+                                .show_ui(ui, |ui| {
+                                    for (index, name) in names.into_iter().enumerate() {
+                                        ui.selectable_value(&mut self.outline_width, index, name);
+                                    }
+                                });
+                        });
+                    }
                 });
                 section(ui, &p, tr("Screen recording"), true);
                 card(ui, &p, width, |ui| {

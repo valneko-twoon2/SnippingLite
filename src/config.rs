@@ -75,6 +75,12 @@ pub struct Settings {
     pub notify: bool,
     /// Keep the toolbar on the screen after a snip until it is closed.
     pub keep_toolbar: bool,
+    /// Draw a border around screenshots.
+    pub outline: bool,
+    /// Index into nnotate::COLORS.
+    pub outline_color: usize,
+    /// Index into nnotate::OUTLINE_WIDTHS.
+    pub outline_width: usize,
     /// Include the microphone in recordings.
     pub mic: bool,
     /// Include the sound that plays on the PC in recordings.
@@ -159,6 +165,14 @@ pub fn parse_settings(text: &str) -> Settings {
         freeze: text.lines().any(|s| s == "freeze=1"),
         notify: !text.lines().any(|s| s == "notify=0"),
         keep_toolbar: text.lines().any(|s| s == "keep_toolbar=1"),
+        outline: text.lines().any(|s| s == "outline=1"),
+        outline_color: index(text, "outline_color=", crate::annotate::COLORS.len(), 3),
+        outline_width: index(
+            text,
+            "outline_width=",
+            crate::annotate::OUTLINE_WIDTHS.len(),
+            1,
+        ),
         mic: text.lines().any(|s| s == "mic=1"),
         system_audio: !text.lines().any(|s| s == "system_audio=0"),
         app_audio: !text.lines().any(|s| s == "app_audio=0"),
@@ -167,6 +181,15 @@ pub fn parse_settings(text: &str) -> Settings {
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
     }
+}
+
+/// A list index stored as a number; anything out of range gives `default`.
+fn index(text: &str, key: &str, len: usize, default: usize) -> usize {
+    text.lines()
+        .find_map(|s| s.strip_prefix(key))
+        .and_then(|v| v.parse().ok())
+        .filter(|&i| i < len)
+        .unwrap_or(default)
 }
 
 fn value(text: &str, key: &str) -> String {
@@ -251,7 +274,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
 /// The settings file contents that `parse_settings` reads back.
 fn settings_text(settings: &Settings) -> String {
     format!(
-        "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+        "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\noutline={}\r\noutline_color={}\r\noutline_width={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
         settings.copy as u8,
         settings.save as u8,
         settings.ask as u8,
@@ -265,6 +288,9 @@ fn settings_text(settings: &Settings) -> String {
         settings.freeze as u8,
         settings.notify as u8,
         settings.keep_toolbar as u8,
+        settings.outline as u8,
+        settings.outline_color,
+        settings.outline_width,
         settings.mic as u8,
         settings.system_audio as u8,
         settings.app_audio as u8,
@@ -297,6 +323,9 @@ mod tests {
                 freeze: false,
                 notify: true,
                 keep_toolbar: false,
+                outline: false,
+                outline_color: 3,
+                outline_width: 1,
                 mic: false,
                 system_audio: true,
                 app_audio: true,
@@ -307,7 +336,7 @@ mod tests {
             }
         );
         let parsed = parse_settings(
-            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nkeep_toolbar=1\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
+            "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nkeep_toolbar=1\r\noutline=1\r\noutline_color=4\r\noutline_width=2\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
         );
         assert_eq!(
             parsed,
@@ -325,6 +354,9 @@ mod tests {
                 freeze: true,
                 notify: false,
                 keep_toolbar: true,
+                outline: true,
+                outline_color: 4,
+                outline_width: 2,
                 mic: true,
                 system_audio: false,
                 app_audio: false,
@@ -348,7 +380,7 @@ mod tests {
     fn keep_toolbar_is_on_only_for_the_exact_line() {
         for (text, expected) in [
             ("keep_toolbar=1", true),
-            ("notify=0\r\nkeep_toolbar=1\r\nmic=1\r\n", true),
+            ("notify=0\r\nkeep_toolbar=1\r\noutline=1\r\noutline_color=4\r\noutline_width=2\r\nmic=1\r\n", true),
             ("keep_toolbar=0", false),
             ("", false),
             ("keep_toolbar=", false),
@@ -362,6 +394,40 @@ mod tests {
         ] {
             assert_eq!(parse_settings(text).keep_toolbar, expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn outline_choices_fall_back_when_out_of_range() {
+        let colors = crate::annotate::COLORS.len();
+        let widths = crate::annotate::OUTLINE_WIDTHS.len();
+        // Boundary: the last valid index is kept, the next one is not.
+        assert_eq!(
+            parse_settings(&format!("outline_color={}", colors - 1)).outline_color,
+            colors - 1
+        );
+        assert_eq!(
+            parse_settings(&format!("outline_width={}", widths - 1)).outline_width,
+            widths - 1
+        );
+        for text in [
+            format!("outline_color={colors}"),
+            "outline_color=-1".to_owned(),
+            "outline_color=".to_owned(),
+            "outline_color=red".to_owned(),
+            "outline_color=99999999999999999999".to_owned(),
+        ] {
+            assert_eq!(parse_settings(&text).outline_color, 3, "{text}");
+        }
+        for text in [
+            format!("outline_width={widths}"),
+            "outline_width=-1".to_owned(),
+            "outline_width=x".to_owned(),
+        ] {
+            assert_eq!(parse_settings(&text).outline_width, 1, "{text}");
+        }
+        assert!(!parse_settings("outline=0").outline);
+        assert!(!parse_settings("outline=true").outline);
+        assert!(parse_settings("outline=1").outline);
     }
 
     #[test]
@@ -380,6 +446,7 @@ mod tests {
             |s: &mut Settings| s.freeze ^= true,
             |s: &mut Settings| s.notify ^= true,
             |s: &mut Settings| s.keep_toolbar ^= true,
+            |s: &mut Settings| s.outline ^= true,
             |s: &mut Settings| s.mic ^= true,
             |s: &mut Settings| s.system_audio ^= true,
             |s: &mut Settings| s.app_audio ^= true,
@@ -405,6 +472,18 @@ mod tests {
         for record_fps in FRAME_RATES {
             variants.push(Settings {
                 record_fps,
+                ..base.clone()
+            });
+        }
+        for outline_color in 0..crate::annotate::COLORS.len() {
+            variants.push(Settings {
+                outline_color,
+                ..base.clone()
+            });
+        }
+        for outline_width in 0..crate::annotate::OUTLINE_WIDTHS.len() {
+            variants.push(Settings {
+                outline_width,
                 ..base.clone()
             });
         }

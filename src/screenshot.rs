@@ -271,7 +271,10 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
             window_capture::snapshot(window_capture::Target::new(state().hover_hwnd, false));
         cancel();
         match image {
-            Ok(image) => deliver_capture(image.pixels, image.width, image.height),
+            Ok(image) => {
+                let pixels = with_outline(image.pixels, image.width, image.height);
+                deliver_capture(pixels, image.width, image.height);
+            }
             Err(_) => message(state().owner, tr("Could not capture the selected window.")),
         }
         return;
@@ -350,7 +353,27 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
         message(state().owner, tr("Could not copy the selected pixels."));
         return;
     };
+    // A freeform shape has no straight edge to draw the border on.
+    let pixels = if freeform && state().points.len() >= 3 {
+        pixels
+    } else {
+        with_outline(pixels, width, height)
+    };
     deliver_capture(pixels, width, height);
+}
+
+/// Draws the border chosen in the settings.
+unsafe fn with_outline(mut pixels: Vec<u8>, width: i32, height: i32) -> Vec<u8> {
+    if state().outline {
+        annotate::outline(
+            &mut pixels,
+            width,
+            height,
+            annotate::OUTLINE_WIDTHS[state().outline_width],
+            annotate::COLORS[state().outline_color],
+        );
+    }
+    pixels
 }
 
 unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
