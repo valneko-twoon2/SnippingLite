@@ -1,7 +1,6 @@
 use super::*;
 
-/// Windows are looked up by caption, so the tests that create captioned windows take turns.
-static CAPTIONS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use crate::test_support::{CAPTIONS, THEME};
 
 #[test]
 fn document_roles_distinguish_windows_with_the_same_caption() {
@@ -148,8 +147,7 @@ fn a_window_process_tags_only_its_own_window() {
 
 #[test]
 fn the_theme_follows_the_choice() {
-    static CHOICE: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = CHOICE.lock().unwrap_or_else(|e| e.into_inner());
+    let _guard = THEME.lock().unwrap_or_else(|e| e.into_inner());
     set_theme_choice(AppTheme::Light);
     let light = theme();
     set_theme_choice(AppTheme::Dark);

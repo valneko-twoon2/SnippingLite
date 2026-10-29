@@ -9,7 +9,7 @@ the clipboard or an audio device) and fails below the threshold. The end-to-end 
 |---|---|---|
 | 0 | `scripts/coverage.ps1`, shared test sandbox (`src/test_support.rs`) | done |
 | 1 | Pure logic and file I/O: config, history, imaging, ui, ui/canvas, window_capture, record | done |
-| 2 | egui screens run without a window: settings_ui, history_ui | open |
+| 2 | egui screens run without a window: settings_ui, history_ui | done |
 | 3 | Win32 window procedures driven in-process: toast, overlay, toolbar, screenshot, video, main | open |
 | 4 | Close the remaining gaps, document the workflow | open |
 

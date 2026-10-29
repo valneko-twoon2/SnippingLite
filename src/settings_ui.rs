@@ -263,3 +263,6 @@ pub(crate) fn install_visuals(ctx: &egui::Context, mica: bool) {
 pub(crate) fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name(SEMIBOLD.into()))
 }
+
+#[cfg(test)]
+mod tests;

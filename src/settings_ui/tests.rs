@@ -1,0 +1,526 @@
+use super::*;
+use crate::test_support::{
+    answer_dialog,
+    screen::{Screen, Show},
+    Sandbox, CAPTIONS, THEME,
+};
+use eframe::App;
+
+/// The settings window running on a tall screen, so the whole page is visible at once.
+struct Window {
+    app: SettingsApp,
+    screen: Screen,
+    frame: eframe::Frame,
+}
+
+impl Window {
+    fn open(hotkey_ok: bool, mica: bool) -> Window {
+        let mut window = Window {
+            app: SettingsApp::new(hotkey_ok, mica),
+            screen: Screen::new(WIDTH, 2600.0),
+            frame: eframe::Frame::_new_kittest(),
+        };
+        window.act(|screen, show| screen.settle(show));
+        window
+    }
+
+    fn act<R>(&mut self, action: impl FnOnce(&mut Screen, Show) -> R) -> R {
+        let app = &mut self.app;
+        let frame = &mut self.frame;
+        let mut show = |ui: &mut egui::Ui| app.ui(ui, frame);
+        action(&mut self.screen, &mut show)
+    }
+
+    fn click_text(&mut self, text: &str) {
+        self.act(|screen, show| screen.click_text(text, show));
+    }
+
+    /// Flips the switch of the row with this title.
+    fn toggle(&mut self, title: &str) {
+        let row = self
+            .screen
+            .find(title)
+            .unwrap_or_else(|| panic!("no row {title:?}: {:?}", self.screen.texts()));
+        let (on, off) = (tr("On"), tr("Off"));
+        let (_, label) = self
+            .screen
+            .texts()
+            .into_iter()
+            .find(|(text, rect)| {
+                (text == on || text == off) && (rect.center().y - row.center().y).abs() <= 12.0
+            })
+            .unwrap_or_else(|| panic!("no switch in the row {title:?}"));
+        // The word comes first from the right, then the switch itself.
+        let at = pos2(label.left() - 30.0, label.center().y);
+        self.act(|screen, show| screen.click(at, show));
+    }
+
+    /// Opens the drop-down that currently shows `current` and picks `item`.
+    fn choose(&mut self, current: &str, item: &str) {
+        self.click_text(current);
+        assert!(self.screen.has(item), "no choice {item:?}");
+        // The list is a popup: the choice sits in it next to the current one.
+        let (_, rect) = self
+            .screen
+            .texts()
+            .into_iter()
+            .rev()
+            .find(|(text, _)| text == item)
+            .unwrap();
+        self.act(|screen, show| screen.click(rect.center(), show));
+    }
+}
+
+fn saved() -> config::Settings {
+    config::load_settings()
+}
+
+/// An existing folder for the settings to point at.
+fn folder_in(sandbox: &Sandbox, name: &str) -> String {
+    let folder = sandbox.path().join(name);
+    fs::create_dir_all(&folder).unwrap();
+    folder.to_string_lossy().into_owned()
+}
+
+#[test]
+fn the_palette_has_a_fixed_look_per_theme_and_backdrop() {
+    // Decision table: dark or light, with or without the translucent Mica backdrop.
+    let light = Palette::new(false, false);
+    assert!(!light.mica);
+    assert_eq!(light.bg, Color32::from_rgb(0xf3, 0xf3, 0xf3));
+    assert_eq!(light.accent, Color32::from_rgb(0x00, 0x67, 0xc0));
+    let dark = Palette::new(true, false);
+    assert_eq!(dark.bg, Color32::from_rgb(0x20, 0x20, 0x20));
+    assert_eq!(dark.on_accent, Color32::BLACK);
+    let light_mica = Palette::new(false, true);
+    assert!(light_mica.mica);
+    assert_eq!(light_mica.bg, Color32::TRANSPARENT);
+    assert_eq!(
+        light_mica.card,
+        Color32::from_rgba_unmultiplied(255, 255, 255, 179)
+    );
+    assert_eq!(
+        light_mica.stroke,
+        Color32::from_rgba_unmultiplied(0, 0, 0, 15)
+    );
+    let dark_mica = Palette::new(true, true);
+    assert_eq!(
+        dark_mica.card,
+        Color32::from_rgba_unmultiplied(255, 255, 255, 13)
+    );
+    assert_eq!(
+        dark_mica.stroke,
+        Color32::from_rgba_unmultiplied(0, 0, 0, 56)
+    );
+    // The text colors do not depend on the backdrop.
+    assert_eq!(dark_mica.text, dark.text);
+    assert_eq!(light_mica.warning, light.warning);
+}
+
+#[test]
+fn fonts_are_found_in_the_windows_folder_or_the_install_fails() {
+    let mut sandbox = Sandbox::new();
+    let ctx = egui::Context::default();
+    assert!(install_fonts(&ctx));
+    // A Windows folder without fonts leaves the window with nothing to draw text with.
+    let empty = sandbox.path().join("windows");
+    sandbox.set("WINDIR", &empty);
+    assert!(!install_fonts(&ctx));
+}
+
+#[test]
+fn the_app_theme_reaches_both_egui_and_the_native_surfaces() {
+    let _guard = THEME.lock().unwrap_or_else(|e| e.into_inner());
+    let ctx = egui::Context::default();
+    for (choice, preference, dark) in [
+        (
+            config::AppTheme::Light,
+            egui::ThemePreference::Light,
+            Some(false),
+        ),
+        (
+            config::AppTheme::Dark,
+            egui::ThemePreference::Dark,
+            Some(true),
+        ),
+        (
+            config::AppTheme::System,
+            egui::ThemePreference::System,
+            None,
+        ),
+    ] {
+        apply_theme(&ctx, choice);
+        assert_eq!(ctx.options(|o| o.theme_preference), preference);
+        if let Some(dark) = dark {
+            assert_eq!(ui::theme().dark, dark);
+        }
+    }
+}
+
+#[test]
+fn visuals_follow_the_palette_in_both_themes() {
+    let ctx = egui::Context::default();
+    for mica in [false, true] {
+        install_visuals(&ctx, mica);
+        let dark = ctx.style_of(Theme::Dark).visuals.clone();
+        let light = ctx.style_of(Theme::Light).visuals.clone();
+        assert_eq!(dark.panel_fill, Palette::new(true, mica).bg);
+        assert_eq!(light.window_fill, Palette::new(false, mica).card);
+        assert_eq!(dark.override_text_color, Some(Color32::WHITE));
+        assert_eq!(light.selection.bg_fill, Palette::new(false, mica).accent);
+        assert_eq!(light.window_corner_radius, CornerRadius::same(8));
+        assert_eq!(dark.widgets.hovered.corner_radius, CornerRadius::same(4));
+    }
+    assert_eq!(semibold(20.0).size, 20.0);
+    assert_eq!(semibold(12.0).family, FontFamily::Name(SEMIBOLD.into()));
+}
+
+#[test]
+fn the_page_lists_every_setting_under_its_section() {
+    let _sandbox = Sandbox::new();
+    let window = Window::open(true, false);
+    for text in [
+        "Settings",
+        "Snipping",
+        "Automatically copy screenshots",
+        "Automatically save screenshots",
+        "Choose a file name when saving",
+        "Capture delay",
+        "Dim and freeze the screen while snipping",
+        "Show notifications",
+        "Keep the toolbar open after a snip",
+        "Add a border to screenshots",
+        "Screen recording",
+        "Countdown before recording",
+        "Include the mouse cursor in recordings",
+        "Include microphone input in recordings",
+        "Include system audio in recordings",
+        "Record only the sound of the window's app",
+        "Recording frame rate",
+        "Leave out the title bar when recording a window",
+        "Ask for a file name when saving a recording",
+        "Recording folder",
+        "History",
+        "Keep a history of screenshots",
+        "History size",
+        "Open history",
+        "Shortcuts",
+        "Start a snip with Alt + Shift + S",
+        "Appearance",
+        "App theme",
+    ] {
+        assert!(window.screen.has(tr(text)), "missing {text:?}");
+    }
+    // Rows that only matter after another switch is on stay out of the way.
+    for text in ["Screenshot folder", "Border color", "Border thickness"] {
+        assert!(!window.screen.has(tr(text)), "{text:?} is shown too early");
+    }
+    assert!(!window
+        .screen
+        .has(tr("Shortcut unavailable: another application is using it.")));
+}
+
+#[test]
+fn a_shortcut_that_another_program_holds_is_reported() {
+    let _sandbox = Sandbox::new();
+    let window = Window::open(false, false);
+    assert!(window
+        .screen
+        .has(tr("Shortcut unavailable: another application is using it.")));
+}
+
+#[test]
+fn every_switch_stores_its_own_setting() {
+    let _sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    type Read = fn(&config::Settings) -> bool;
+    // Each row flips exactly one stored value and leaves all the others as they were.
+    let rows: [(&str, Read); 13] = [
+        ("Automatically save screenshots", |s| s.save),
+        ("Choose a file name when saving", |s| s.ask),
+        ("Dim and freeze the screen while snipping", |s| s.freeze),
+        ("Show notifications", |s| s.notify),
+        ("Keep the toolbar open after a snip", |s| s.keep_toolbar),
+        ("Add a border to screenshots", |s| s.outline),
+        ("Countdown before recording", |s| s.countdown),
+        ("Include the mouse cursor in recordings", |s| {
+            s.record_cursor
+        }),
+        ("Include microphone input in recordings", |s| s.mic),
+        ("Include system audio in recordings", |s| s.system_audio),
+        ("Leave out the title bar when recording a window", |s| {
+            s.skip_title
+        }),
+        ("Ask for a file name when saving a recording", |s| {
+            s.ask_video
+        }),
+        ("Keep a history of screenshots", |s| s.history),
+    ];
+    for (title, read) in rows {
+        let title = tr(title);
+        let before = saved();
+        window.toggle(title);
+        let after = saved();
+        assert_ne!(read(&before), read(&after), "{title}");
+        // Every other switch is unchanged.
+        let mut expected = before.clone();
+        for (_, other) in rows {
+            if std::ptr::fn_addr_eq(other, read) {
+                continue;
+            }
+            assert_eq!(other(&before), other(&after), "{title}");
+        }
+        expected.save = after.save;
+        window.toggle(title);
+        assert_eq!(read(&saved()), read(&before), "{title} flips back");
+    }
+}
+
+#[test]
+fn the_last_destination_for_screenshots_cannot_be_switched_off() {
+    let _sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    let copy = tr("Automatically copy screenshots");
+    let save = tr("Automatically save screenshots");
+    let warning = tr("Choose at least one destination for screenshots.");
+    // Decision table over (copy, save): switching off the only one that is on is refused.
+    assert!(saved().copy && !saved().save);
+    window.toggle(copy);
+    assert!(
+        saved().copy,
+        "copy stays on while it is the only destination"
+    );
+    assert!(window.screen.has(warning));
+    window.toggle(save);
+    assert!(saved().copy && saved().save);
+    window.toggle(copy);
+    assert!(!saved().copy && saved().save);
+    window.toggle(save);
+    assert!(!saved().copy && saved().save, "save stays on now");
+    window.toggle(copy);
+    assert!(saved().copy && saved().save);
+}
+
+#[test]
+fn a_settings_file_with_no_destination_is_repaired() {
+    let _sandbox = Sandbox::new();
+    config::save_settings(&config::Settings {
+        copy: false,
+        save: false,
+        ..config::parse_settings("")
+    })
+    .unwrap();
+    let mut window = Window::open(true, false);
+    // Any change brings the file back to a usable state: copy is turned on.
+    window.toggle(tr("Show notifications"));
+    let settings = saved();
+    assert!(settings.copy && !settings.save);
+    assert!(!settings.notify);
+}
+
+#[test]
+fn rows_that_depend_on_a_switch_appear_with_it() {
+    let sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    let folder = tr("Screenshot folder");
+    window.toggle(tr("Automatically save screenshots"));
+    assert!(window.screen.has(folder));
+    window.toggle(tr("Automatically save screenshots"));
+    assert!(!window.screen.has(folder));
+
+    window.toggle(tr("Add a border to screenshots"));
+    assert!(window.screen.has(tr("Border color")));
+    assert!(window.screen.has(tr("Border thickness")));
+    window.toggle(tr("Add a border to screenshots"));
+    assert!(!window.screen.has(tr("Border color")));
+
+    let app_audio = tr("Record only the sound of the window's app");
+    assert!(window.screen.has(app_audio));
+    window.toggle(tr("Include system audio in recordings"));
+    assert!(!window.screen.has(app_audio));
+    drop(sandbox);
+}
+
+#[test]
+fn drop_downs_store_the_chosen_value() {
+    let _guard = THEME.lock().unwrap_or_else(|e| e.into_inner());
+    let _sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    window.choose(tr("None"), &tr("{n} seconds").replace("{n}", "5"));
+    assert_eq!(saved().delay, 5);
+    window.choose(
+        &tr("{n} seconds").replace("{n}", "5"),
+        &tr("{n} seconds").replace("{n}", "10"),
+    );
+    assert_eq!(saved().delay, 10);
+    window.choose(&tr("{n} seconds").replace("{n}", "10"), tr("None"));
+    assert_eq!(saved().delay, 0);
+
+    window.choose(
+        &tr("{n} fps").replace("{n}", "60"),
+        &tr("{n} fps").replace("{n}", "30"),
+    );
+    assert_eq!(saved().record_fps, 30);
+
+    window.choose(
+        &tr("{n} screenshots").replace("{n}", "200"),
+        &tr("{n} screenshots").replace("{n}", "50"),
+    );
+    assert_eq!(saved().history_limit, 50);
+
+    window.toggle(tr("Add a border to screenshots"));
+    window.choose(tr("Blue"), tr("Red"));
+    assert_eq!(saved().outline_color, 0);
+    window.choose(tr("Medium"), tr("Thick"));
+    assert_eq!(saved().outline_width, 2);
+
+    window.choose(
+        config::AppTheme::System.label(),
+        config::AppTheme::Dark.label(),
+    );
+    assert_eq!(saved().theme, config::AppTheme::Dark);
+    window.choose(
+        config::AppTheme::Dark.label(),
+        config::AppTheme::Light.label(),
+    );
+    assert_eq!(saved().theme, config::AppTheme::Light);
+    ui::set_theme_choice(config::AppTheme::System);
+}
+
+#[test]
+fn the_history_button_asks_the_tray_to_open_it() {
+    let _sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    // Without a tray process there is nobody to tell; the click must still be harmless.
+    window.click_text(tr("Open"));
+    assert!(window.screen.has(tr("Open history")));
+}
+
+#[test]
+fn changing_a_setting_writes_the_file_once_and_idle_frames_write_nothing() {
+    let sandbox = Sandbox::new();
+    let mut window = Window::open(true, false);
+    let file = sandbox.path().join("roaming/Snipping Lite/settings.ini");
+    assert!(!file.exists(), "opening the window changes nothing");
+    window.act(|screen, show| screen.settle(show));
+    assert!(!file.exists());
+    window.toggle(tr("Show notifications"));
+    let first = fs::read_to_string(&file).unwrap();
+    assert!(first.contains("notify=0\r\n"));
+    window.act(|screen, show| screen.settle(show));
+    assert_eq!(fs::read_to_string(&file).unwrap(), first);
+}
+
+#[test]
+fn the_window_frame_follows_the_theme_and_the_backdrop() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, DestroyWindow, GetPropW, WS_POPUP,
+    };
+    let _captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let _sandbox = Sandbox::new();
+    for mica in [false, true] {
+        // SAFETY: a private, hidden window that stands in for the settings window.
+        unsafe {
+            let hwnd = CreateWindowExW(
+                0,
+                w("STATIC").as_ptr(),
+                w(SETTINGS_TITLE).as_ptr(),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                null(),
+            );
+            let mut window = Window::open(true, mica);
+            // The window process tags its document so the tray can find it again.
+            assert!(!GetPropW(hwnd, w(SETTINGS_WINDOW).as_ptr()).is_null());
+            let clear = window.app.clear_color(&egui::Visuals::dark());
+            assert_eq!(clear == [0.0; 4], mica);
+            window.act(|screen, show| screen.settle(show));
+            DestroyWindow(hwnd);
+        }
+    }
+}
+
+#[test]
+#[ignore = "Opens an Explorer window"]
+fn the_folder_row_opens_the_folder() {
+    let sandbox = Sandbox::new();
+    let folder = folder_in(&sandbox, "opened-from-settings");
+    config::save_settings(&config::Settings {
+        save: true,
+        screenshot_folder: folder,
+        ..config::parse_settings("")
+    })
+    .unwrap();
+    let mut window = Window::open(true, false);
+    window.click_text(tr("Open folder"));
+    // Close the Explorer window that just opened.
+    for _ in 0..40 {
+        // SAFETY: the strings are valid and nul-terminated.
+        let found = unsafe {
+            windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
+                w("CabinetWClass").as_ptr(),
+                w("opened-from-settings").as_ptr(),
+            )
+        };
+        if !found.is_null() {
+            // SAFETY: posting WM_CLOSE to a window handle is always sound.
+            unsafe {
+                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                    found,
+                    windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                    0,
+                    0,
+                )
+            };
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[test]
+#[ignore = "Shows a dialog"]
+fn the_change_link_picks_a_folder_or_leaves_it_alone() {
+    let sandbox = Sandbox::new();
+    let screenshots = folder_in(&sandbox, "shots");
+    let videos = folder_in(&sandbox, "videos");
+    config::save_settings(&config::Settings {
+        save: true,
+        screenshot_folder: screenshots.clone(),
+        video_folder: videos.clone(),
+        ..config::parse_settings("")
+    })
+    .unwrap();
+    let mut window = Window::open(true, false);
+    let changes: Vec<_> = window
+        .screen
+        .texts()
+        .into_iter()
+        .filter(|(text, _)| text == tr("Change"))
+        .map(|(_, rect)| rect.center())
+        .collect();
+    assert_eq!(changes.len(), 2, "one link per folder row");
+    // Cancelling keeps the folder.
+    let answer = answer_dialog(2);
+    window.act(|screen, show| screen.click(changes[0], show));
+    assert!(answer.join().unwrap());
+    assert_eq!(saved().screenshot_folder, screenshots);
+    // Accepting stores the folder the dialog shows, for either row.
+    let answer = answer_dialog(1);
+    window.act(|screen, show| screen.click(changes[0], show));
+    assert!(answer.join().unwrap());
+    assert_eq!(
+        PathBuf::from(saved().screenshot_folder),
+        PathBuf::from(&screenshots)
+    );
+    let answer = answer_dialog(1);
+    window.act(|screen, show| screen.click(changes[1], show));
+    assert!(answer.join().unwrap());
+    assert_eq!(PathBuf::from(saved().video_folder), PathBuf::from(&videos));
+}

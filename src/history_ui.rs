@@ -351,3 +351,6 @@ impl eframe::App for HistoryApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

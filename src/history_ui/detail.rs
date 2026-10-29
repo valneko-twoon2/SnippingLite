@@ -102,7 +102,7 @@ impl HistoryApp {
     }
 
     /// Copies the text of a finished recognition, or reports why there is none.
-    fn finish_recognition(&mut self, ctx: &egui::Context) {
+    pub(super) fn finish_recognition(&mut self, ctx: &egui::Context) {
         let Some(receiver) = &self.ocr else {
             return;
         };

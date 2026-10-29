@@ -380,31 +380,10 @@ pub fn timestamp() -> std::io::Result<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::clipboard_text;
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, GetClipboardData, OpenClipboard,
     };
-
-    fn clipboard_text() -> Option<String> {
-        // SAFETY: the clipboard is opened and closed here, and the text is copied out while locked.
-        unsafe {
-            if OpenClipboard(null_mut()) == 0 {
-                return None;
-            }
-            let global = GetClipboardData(13);
-            let text = (!global.is_null()).then(|| {
-                let data = GlobalLock(global).cast::<u16>();
-                let mut length = 0;
-                while *data.add(length) != 0 {
-                    length += 1;
-                }
-                let text = String::from_utf16_lossy(std::slice::from_raw_parts(data, length));
-                GlobalUnlock(global);
-                text
-            });
-            CloseClipboard();
-            text
-        }
-    }
 
     fn scratch(name: &str) -> PathBuf {
         let folder =
@@ -560,46 +539,7 @@ mod tests {
         assert_eq!(pixels[12..], expected[..12]);
     }
 
-    /// Presses a button of the next dialog this process shows, from another thread.
-    fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
-        use windows_sys::Win32::{
-            Foundation::{BOOL, LPARAM},
-            UI::WindowsAndMessaging::{
-                EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
-                PostMessageW, WM_COMMAND,
-            },
-        };
-        unsafe extern "system" fn find(hwnd: HWND, found: LPARAM) -> BOOL {
-            let mut class = [0u16; 16];
-            let length = GetClassNameW(hwnd, class.as_mut_ptr(), 16) as usize;
-            let mut process = 0;
-            GetWindowThreadProcessId(hwnd, &mut process);
-            if IsWindowVisible(hwnd) != 0
-                && process == std::process::id()
-                && String::from_utf16_lossy(&class[..length]) == "#32770"
-            {
-                *(found as *mut usize) = hwnd as usize;
-                return 0;
-            }
-            1
-        }
-        std::thread::spawn(move || {
-            for _ in 0..300 {
-                let mut found = 0usize;
-                // SAFETY: `found` outlives the synchronous enumeration.
-                unsafe { EnumWindows(Some(find), &mut found as *mut usize as LPARAM) };
-                if found != 0 {
-                    // Give the dialog a moment to finish opening.
-                    std::thread::sleep(std::time::Duration::from_millis(300));
-                    // SAFETY: posting a command to a window handle is always sound.
-                    unsafe { PostMessageW(found as HWND, WM_COMMAND, command, 0) };
-                    return true;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            false
-        })
-    }
+    use crate::test_support::answer_dialog;
 
     #[test]
     #[ignore = "Shows dialogs"]
