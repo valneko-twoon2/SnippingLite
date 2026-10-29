@@ -77,9 +77,9 @@ pub struct Settings {
     pub keep_toolbar: bool,
     /// Draw a border around screenshots.
     pub outline: bool,
-    /// Index into nnotate::COLORS.
+    /// Index into `annotate::COLORS`.
     pub outline_color: usize,
-    /// Index into nnotate::OUTLINE_WIDTHS.
+    /// Index into `annotate::OUTLINE_WIDTHS`.
     pub outline_width: usize,
     /// Include the microphone in recordings.
     pub mic: bool,
