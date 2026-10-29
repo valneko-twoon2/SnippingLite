@@ -146,6 +146,8 @@ struct HistoryApp {
     /// Open the newest screenshot on the first frame.
     open_latest: bool,
     notice: Option<(Instant, &'static str)>,
+    /// Text recognition in progress for the opened image.
+    ocr: Option<std::sync::mpsc::Receiver<Result<String, crate::ocr::Error>>>,
 }
 
 impl HistoryApp {
@@ -168,6 +170,7 @@ impl HistoryApp {
             color,
             thickness,
             notice: None,
+            ocr: None,
         }
     }
 
@@ -214,6 +217,7 @@ impl HistoryApp {
             return;
         };
         let texture = texture_from(ctx, &entry.image.to_string_lossy(), width, height, &pixels);
+        self.ocr = None;
         self.opened = Some(Opened {
             entry,
             texture: Some(texture),

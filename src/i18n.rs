@@ -201,6 +201,26 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Pick color", "色の取得"),
     ("Copied the color.", "色をコピーしました。"),
     ("Could not copy the color.", "色をコピーできませんでした。"),
+    ("Copy text", "文字をコピー"),
+    ("Recognizing text...", "文字を認識しています..."),
+    ("Copied the text.", "文字をコピーしました。"),
+    ("Could not copy the text.", "文字をコピーできませんでした。"),
+    (
+        "No text was found in the image.",
+        "画像に文字が見つかりませんでした。",
+    ),
+    (
+        "Add a text recognition language in the Windows settings.",
+        "Windows の設定で、文字認識の言語を追加してください。",
+    ),
+    (
+        "The image is too large to recognize text.",
+        "画像が大きすぎて文字を認識できません。",
+    ),
+    (
+        "Could not recognize text in the image.",
+        "画像の文字を認識できませんでした。",
+    ),
     ("Thin", "細"),
     ("Medium", "中"),
     ("Thick", "太"),
@@ -346,6 +366,7 @@ mod tests {
             include_str!("toast.rs"),
             include_str!("record.rs"),
             include_str!("imaging.rs"),
+            include_str!("ocr.rs"),
         ];
         let mut found = 0;
         for source in sources {

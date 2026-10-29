@@ -101,6 +101,31 @@ impl HistoryApp {
         }
     }
 
+    /// Copies the text of a finished recognition, or reports why there is none.
+    fn finish_recognition(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = &self.ocr else {
+            return;
+        };
+        let message = match receiver.try_recv() {
+            Ok(Ok(text)) if text.trim().is_empty() => tr("No text was found in the image."),
+            Ok(Ok(text)) => {
+                if imaging::copy_text(window(), &text) {
+                    tr("Copied the text.")
+                } else {
+                    tr("Could not copy the text.")
+                }
+            }
+            Ok(Err(error)) => error.message(),
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(100));
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => crate::ocr::Error::Failed.message(),
+        };
+        self.ocr = None;
+        self.notice = Some((Instant::now(), message));
+    }
+
     /// Shows the color under the pointer; a click copies it as `#RRGGBB`.
     fn pick_color(&mut self, ui: &mut egui::Ui, shown: Rect, scale: f32, p: &Palette) {
         let response = ui.interact(shown, ui.make_persistent_id("picker"), Sense::click());
@@ -243,6 +268,7 @@ impl HistoryApp {
         };
         let (id, image, (width, height)) =
             (opened.entry.id, opened.entry.image.clone(), opened.size);
+        self.finish_recognition(ctx);
         let mut action = None;
         ui.add_space(20.0);
         ui.horizontal(|ui| {
@@ -271,6 +297,9 @@ impl HistoryApp {
                 }
                 if text_button(ui, tr("Copy"), p, false).clicked() {
                     action = Some(Action::Copy);
+                }
+                if text_button(ui, tr("Copy text"), p, false).clicked() {
+                    action = Some(Action::CopyText);
                 }
             });
         });
@@ -408,6 +437,18 @@ impl HistoryApp {
                     ));
                 }
             }
+            Some(Action::CopyText) => {
+                if self.ocr.is_none() {
+                    if let Some(opened) = &self.opened {
+                        self.ocr = Some(crate::ocr::spawn(
+                            opened.flattened(),
+                            opened.size.0,
+                            opened.size.1,
+                        ));
+                        self.notice = Some((Instant::now(), tr("Recognizing text...")));
+                    }
+                }
+            }
             Some(Action::SaveAs) => {
                 if let (Some(opened), Ok(folder)) = (&self.opened, imaging::screenshot_folder()) {
                     let name = format!("Snipping Lite {id}.png");
@@ -439,5 +480,6 @@ enum Action {
     Delete,
     Folder,
     Copy,
+    CopyText,
     SaveAs,
 }

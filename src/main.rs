@@ -6,6 +6,7 @@ mod history;
 mod history_ui;
 mod i18n;
 mod imaging;
+mod ocr;
 mod overlay;
 mod record;
 mod screenshot;
