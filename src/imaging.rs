@@ -242,17 +242,25 @@ pub fn screenshot_folder() -> std::io::Result<PathBuf> {
 
 /// Opens a folder in Explorer, creating it first when it does not exist yet.
 pub fn open_folder(folder: &Path) {
-    use windows_sys::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
     let _ = fs::create_dir_all(folder);
+    shell_open(&wide(folder), None);
+}
+
+/// Asks the shell to open `target` (a file, a folder or a program), with the given
+/// parameters. The tests only note what would be opened, so no window appears on the desktop.
+pub fn shell_open(target: &[u16], parameters: Option<&[u16]>) {
+    #[cfg(test)]
+    crate::test_support::shell_opened(target, parameters);
+    #[cfg(not(test))]
     // SAFETY: all strings are valid, nul-terminated UTF-16.
     unsafe {
-        ShellExecuteW(
+        windows_sys::Win32::UI::Shell::ShellExecuteW(
             null_mut(),
             w("open").as_ptr(),
-            wide(folder).as_ptr(),
+            target.as_ptr(),
+            parameters.map_or(null(), |p| p.as_ptr()),
             null(),
-            null(),
-            SW_SHOWNORMAL,
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
         );
     }
 }
@@ -592,36 +600,16 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Opens an Explorer window"]
-    fn opening_a_folder_creates_it() {
+    fn opening_a_folder_creates_it_and_asks_the_shell_to_open_it() {
         let folder = scratch("opened");
         let _ = fs::remove_dir_all(&folder);
+        crate::test_support::take_shell_opened();
         open_folder(&folder);
         assert!(folder.is_dir());
-        // Close the Explorer window that just opened.
-        for _ in 0..40 {
-            let title = w("opened");
-            // SAFETY: the strings are valid and nul-terminated.
-            let window = unsafe {
-                windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
-                    w("CabinetWClass").as_ptr(),
-                    title.as_ptr(),
-                )
-            };
-            if !window.is_null() {
-                // SAFETY: posting WM_CLOSE to a window handle is always sound.
-                unsafe {
-                    windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                        window,
-                        windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
-                        0,
-                        0,
-                    )
-                };
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+        assert_eq!(
+            crate::test_support::take_shell_opened(),
+            vec![(folder.to_string_lossy().into_owned(), None)]
+        );
     }
 
     #[test]

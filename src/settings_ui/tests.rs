@@ -447,41 +447,22 @@ fn the_window_frame_follows_the_theme_and_the_backdrop() {
 }
 
 #[test]
-#[ignore = "Opens an Explorer window"]
 fn the_folder_row_opens_the_folder() {
     let sandbox = Sandbox::new();
     let folder = folder_in(&sandbox, "opened-from-settings");
     config::save_settings(&config::Settings {
         save: true,
-        screenshot_folder: folder,
+        screenshot_folder: folder.clone(),
         ..config::parse_settings("")
     })
     .unwrap();
     let mut window = Window::open(true, false);
+    crate::test_support::take_shell_opened();
     window.click_text(tr("Open folder"));
-    // Close the Explorer window that just opened.
-    for _ in 0..40 {
-        // SAFETY: the strings are valid and nul-terminated.
-        let found = unsafe {
-            windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
-                w("CabinetWClass").as_ptr(),
-                w("opened-from-settings").as_ptr(),
-            )
-        };
-        if !found.is_null() {
-            // SAFETY: posting WM_CLOSE to a window handle is always sound.
-            unsafe {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    found,
-                    windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
-                    0,
-                    0,
-                )
-            };
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    assert_eq!(
+        crate::test_support::take_shell_opened(),
+        vec![(folder, None)]
+    );
 }
 
 #[test]

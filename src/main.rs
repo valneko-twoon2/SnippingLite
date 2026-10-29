@@ -757,8 +757,11 @@ mod tests {
     #[test]
     #[ignore = "Creates a process"]
     fn opening_a_window_that_is_not_running_starts_another_copy_of_the_program() {
-        let desk = Desk::start();
+        let mut desk = Desk::start();
         // The test program stands in for the program: it exits on the unknown option.
+        // Its coverage data must not replace that of the tests, so it gets a file of its own.
+        let profile = desk.sandbox.path().join("child.profraw");
+        desk.sandbox.set("LLVM_PROFILE_FILE", profile);
         // SAFETY: the state belongs to this test.
         unsafe {
             launch_settings();

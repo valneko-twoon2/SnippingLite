@@ -8,13 +8,9 @@ use eframe::egui::{
 use std::{
     collections::HashMap,
     path::Path,
-    ptr::null,
     time::{Duration, Instant},
 };
-use windows_sys::Win32::{
-    Foundation::HWND,
-    UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
-};
+use windows_sys::Win32::Foundation::HWND;
 
 use crate::i18n::tr;
 use crate::{
@@ -278,17 +274,7 @@ fn window() -> HWND {
 
 fn show_in_folder(path: &Path) {
     let parameters = w(&format!("/select,\"{}\"", path.display()));
-    // SAFETY: all strings are valid, nul-terminated UTF-16.
-    unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            w("open").as_ptr(),
-            w("explorer.exe").as_ptr(),
-            parameters.as_ptr(),
-            null(),
-            SW_SHOWNORMAL,
-        );
-    }
+    imaging::shell_open(&w("explorer.exe"), Some(&parameters));
 }
 
 fn date_label(id: u128) -> String {

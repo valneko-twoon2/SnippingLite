@@ -226,7 +226,7 @@ pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(std::time::Duration::from_millis(500));
             let keys: Vec<u16> = if downs == usize::MAX {
                 vec![VK_ESCAPE]
             } else {
@@ -237,7 +237,7 @@ pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
             for key in keys {
                 // SAFETY: posting a key to a thread's queue is always sound.
                 unsafe { PostThreadMessageW(target, WM_KEYDOWN, key as usize, 0) };
-                std::thread::sleep(std::time::Duration::from_millis(80));
+                std::thread::sleep(std::time::Duration::from_millis(150));
             }
             return true;
         }
@@ -298,6 +298,22 @@ pub fn hold_clipboard(duration: std::time::Duration) -> std::thread::JoinHandle<
     assert!(wait.recv().unwrap(), "the clipboard could not be held");
     holder
 }
+static SHELL_OPENED: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
+
+/// Notes what the program asked the shell to open; nothing is opened while testing.
+pub fn shell_opened(target: &[u16], parameters: Option<&[u16]>) {
+    let text = |wide: &[u16]| String::from_utf16_lossy(&wide[..wide.len().saturating_sub(1)]);
+    SHELL_OPENED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((text(target), parameters.map(text)));
+}
+
+/// What was asked of the shell since the last call, oldest first.
+pub fn take_shell_opened() -> Vec<(String, Option<String>)> {
+    std::mem::take(&mut *SHELL_OPENED.lock().unwrap_or_else(|e| e.into_inner()))
+}
+
 /// The Unicode text on the clipboard, if there is any.
 pub fn clipboard_text() -> Option<String> {
     use windows_sys::Win32::System::{

@@ -784,36 +784,21 @@ fn save_as_writes_the_picture_where_the_dialog_says() {
 }
 
 #[test]
-#[ignore = "Opens an Explorer window"]
 fn show_in_folder_selects_the_file_in_explorer() {
     let _sandbox = Sandbox::new();
-    seed(now(), 120, 80);
+    let entry = seed(now(), 120, 80);
     let mut viewer = Viewer::open();
     let cell = viewer.screen.images()[0].center();
     viewer.click(cell);
+    crate::test_support::take_shell_opened();
     viewer.click_text(tr("Show in folder"));
-    for _ in 0..40 {
-        // SAFETY: the strings are valid and nul-terminated.
-        let found = unsafe {
-            windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW(
-                w("CabinetWClass").as_ptr(),
-                w("history").as_ptr(),
-            )
-        };
-        if !found.is_null() {
-            // SAFETY: posting WM_CLOSE to a window handle is always sound.
-            unsafe {
-                windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
-                    found,
-                    windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
-                    0,
-                    0,
-                )
-            };
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+    assert_eq!(
+        crate::test_support::take_shell_opened(),
+        vec![(
+            "explorer.exe".to_owned(),
+            Some(format!("/select,\"{}\"", entry.image.display()))
+        )]
+    );
 }
 
 #[test]
@@ -864,7 +849,7 @@ fn the_window_frame_follows_the_theme_and_the_backdrop() {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                null(),
+                std::ptr::null(),
             );
             let viewer = Viewer::with(HistoryApp::new(mica, false));
             assert!(!GetPropW(hwnd, w(HISTORY_WINDOW).as_ptr()).is_null());

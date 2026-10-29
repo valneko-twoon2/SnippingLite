@@ -456,10 +456,21 @@ fn decode_audio(path: &Path) -> (i16, f64) {
     }
 }
 
+/// Ends a helper process when the test ends, also when an assertion fails: a process left
+/// running would keep inherited handles open, such as the coverage data file.
+struct Helper(std::process::Child);
+
+impl Drop for Helper {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 #[ignore = "Requires a desktop session with an audio output; plays a tone for a few seconds"]
 fn records_system_audio_and_only_the_chosen_app() {
-    let mut tone = play_tone(16);
+    let tone = Helper(play_tone(16));
     std::thread::sleep(Duration::from_millis(2000));
     let loud = 3000;
     let system = record_audio(
@@ -475,7 +486,7 @@ fn records_system_audio_and_only_the_chosen_app() {
     assert!((seconds - 3.0).abs() < 0.6, "Audio length: {seconds}");
     let app = record_audio(
         Audio {
-            loopback: Some(audio::Loopback::Process(tone.id())),
+            loopback: Some(audio::Loopback::Process(tone.0.id())),
             mic: false,
         },
         3,
@@ -485,14 +496,16 @@ fn records_system_audio_and_only_the_chosen_app() {
     assert!(peak > loud, "The app's own audio is silent: {peak}");
     assert!((seconds - 3.0).abs() < 0.6, "Audio length: {seconds}");
     // A silent process that does not belong to the tone's process tree.
-    let mut silent = std::process::Command::new("ping")
-        .args(["-n", "30", "127.0.0.1"])
-        .stdout(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
+    let silent = Helper(
+        std::process::Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
     let other = record_audio(
         Audio {
-            loopback: Some(audio::Loopback::Process(silent.id())),
+            loopback: Some(audio::Loopback::Process(silent.0.id())),
             mic: false,
         },
         2,
@@ -500,10 +513,6 @@ fn records_system_audio_and_only_the_chosen_app() {
     );
     let (peak, _) = decode_audio(&other);
     assert!(peak < 200, "Another process was recorded: {peak}");
-    let _ = tone.kill();
-    let _ = tone.wait();
-    let _ = silent.kill();
-    let _ = silent.wait();
     for path in [system, app, other] {
         let _ = std::fs::remove_file(path);
     }

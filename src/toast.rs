@@ -11,7 +11,6 @@ use windows_sys::Win32::{
     UI::{
         Controls::WM_MOUSELEAVE,
         Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
-        Shell::ShellExecuteW,
         WindowsAndMessaging::*,
     },
 };
@@ -435,14 +434,7 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
                         std::os::windows::ffi::OsStrExt::encode_wide(path.as_os_str())
                             .chain(Some(0))
                             .collect();
-                    ShellExecuteW(
-                        null_mut(),
-                        w("open").as_ptr(),
-                        file.as_ptr(),
-                        null(),
-                        null(),
-                        SW_SHOWNORMAL,
-                    );
+                    crate::imaging::shell_open(&file, None);
                 }
             }
             begin_closing(toast);
@@ -457,7 +449,7 @@ mod tests {
     use super::*;
     use crate::{
         config::AppTheme,
-        test_support::{answer_dialog, answer_menu, desk::Desk, stub_window},
+        test_support::{answer_menu, desk::Desk, stub_window},
     };
     use std::time::Duration;
 
@@ -784,12 +776,15 @@ mod tests {
         unsafe { close() };
         // A recording notification opens the file itself.
         let video = desk.sandbox.path().join("missing.mp4");
-        unsafe { show_recording(&[0; 4], 1, 1, video) };
+        unsafe { show_recording(&[0; 4], 1, 1, video.clone()) };
         let hwnd = current().hwnd;
         desk.mouse(hwnd, WM_MOUSEMOVE, in_text.0, in_text.1);
-        let answer = answer_dialog(2);
+        crate::test_support::take_shell_opened();
         desk.mouse(hwnd, WM_LBUTTONUP, in_text.0, in_text.1);
-        let _ = answer.join();
+        assert_eq!(
+            crate::test_support::take_shell_opened(),
+            vec![(video.to_string_lossy().into_owned(), None)]
+        );
         assert!(current().closing);
         unsafe {
             close();
