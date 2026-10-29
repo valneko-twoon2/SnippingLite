@@ -24,6 +24,8 @@ use windows::{
 pub const RATE: u32 = 48_000;
 /// Audio is held back this long so a device that delivers in bursts never leaves gaps.
 const LATENCY: usize = (RATE / 20) as usize;
+/// `LATENCY` as a duration.
+const LATENCY_TIME: Duration = Duration::from_millis(50);
 
 /// Where the sound of a recording comes from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -107,22 +109,40 @@ impl Mixer {
     }
 }
 
+/// Where a source takes its sound from, so it can be opened again.
+#[derive(Clone, Copy)]
+enum Kind {
+    Loopback(Loopback),
+    Mic,
+}
+
+/// How long a lost device is left alone before it is opened again.
+const REOPEN_AFTER: Duration = Duration::from_secs(1);
+
 struct Source {
     client: IAudioClient,
     capture: IAudioCaptureClient,
+    kind: Kind,
+    /// When the device stopped delivering (unplugged, or the default output changed).
+    lost: Option<Instant>,
 }
 
 impl Source {
-    /// Moves everything captured so far into `out`.
-    unsafe fn read(&self, out: &mut Vec<f32>) {
-        while self.capture.GetNextPacketSize().is_ok_and(|size| size > 0) {
+    /// Moves everything captured so far into `out`; `false` means the device is gone.
+    unsafe fn read(&self, out: &mut Vec<f32>) -> bool {
+        loop {
+            match self.capture.GetNextPacketSize() {
+                Ok(0) => return true,
+                Ok(_) => {}
+                Err(_) => return false,
+            }
             let (mut data, mut frames, mut flags) = (std::ptr::null_mut(), 0u32, 0u32);
             if self
                 .capture
                 .GetBuffer(&mut data, &mut frames, &mut flags, None, None)
                 .is_err()
             {
-                return;
+                return false;
             }
             let samples = frames as usize * 2;
             if flags & AUDCLNT_BUFFERFLAGS_SILENT.0 as u32 != 0 || data.is_null() {
@@ -131,7 +151,7 @@ impl Source {
                 out.extend_from_slice(std::slice::from_raw_parts(data.cast::<f32>(), samples));
             }
             if self.capture.ReleaseBuffer(frames).is_err() {
-                return;
+                return false;
             }
         }
     }
@@ -159,7 +179,11 @@ fn format() -> WAVEFORMATEX {
     }
 }
 
-unsafe fn initialize(client: IAudioClient, loopback: bool) -> windows::core::Result<Source> {
+unsafe fn initialize(
+    client: IAudioClient,
+    loopback: bool,
+    kind: Kind,
+) -> windows::core::Result<Source> {
     let format = format();
     let flags = AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM
         | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY
@@ -171,13 +195,30 @@ unsafe fn initialize(client: IAudioClient, loopback: bool) -> windows::core::Res
     // One second of buffer covers a recorder thread that is busy encoding.
     client.Initialize(AUDCLNT_SHAREMODE_SHARED, flags, TICKS, 0, &format, None)?;
     let capture = client.GetService::<IAudioCaptureClient>()?;
-    Ok(Source { client, capture })
+    Ok(Source {
+        client,
+        capture,
+        kind,
+        lost: None,
+    })
 }
 
-unsafe fn device(flow: EDataFlow, loopback: bool) -> windows::core::Result<Source> {
+unsafe fn device(flow: EDataFlow, loopback: bool, kind: Kind) -> windows::core::Result<Source> {
     let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
     let device = enumerator.GetDefaultAudioEndpoint(flow, eConsole)?;
-    initialize(device.Activate::<IAudioClient>(CLSCTX_ALL, None)?, loopback)
+    initialize(
+        device.Activate::<IAudioClient>(CLSCTX_ALL, None)?,
+        loopback,
+        kind,
+    )
+}
+
+unsafe fn open_source(kind: Kind) -> windows::core::Result<Source> {
+    match kind {
+        Kind::Loopback(Loopback::System) => device(eRender, true, kind),
+        Kind::Loopback(Loopback::Process(id)) => process(id, kind),
+        Kind::Mic => device(eCapture, false, kind),
+    }
 }
 
 /// Signals that `ActivateAudioInterfaceAsync` finished. The handler has to be
@@ -201,7 +242,7 @@ impl IActivateAudioInterfaceCompletionHandler_Impl for Completion_Impl {
 
 impl IAgileObject_Impl for Completion_Impl {}
 
-unsafe fn process(id: u32) -> windows::core::Result<Source> {
+unsafe fn process(id: u32, kind: Kind) -> windows::core::Result<Source> {
     let mut parameters = AUDIOCLIENT_ACTIVATION_PARAMS {
         ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
         Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
@@ -247,7 +288,7 @@ unsafe fn process(id: u32) -> windows::core::Result<Source> {
     operation.GetActivateResult(&mut result, &mut client)?;
     result.ok()?;
     let client: IAudioClient = client.ok_or_else(windows::core::Error::empty)?.cast()?;
-    initialize(client, true)
+    initialize(client, true, kind)
 }
 
 pub struct AudioCapture {
@@ -263,13 +304,11 @@ impl AudioCapture {
     /// a message; `None` means nothing is left to record.
     pub unsafe fn open(audio: Audio) -> Option<AudioCapture> {
         let mut sources = Vec::new();
-        match audio.loopback {
-            Some(Loopback::System) => sources.extend(device(eRender, true).ok()),
-            Some(Loopback::Process(id)) => sources.extend(process(id).ok()),
-            None => {}
+        if let Some(loopback) = audio.loopback {
+            sources.extend(open_source(Kind::Loopback(loopback)).ok());
         }
         if audio.mic {
-            sources.extend(device(eCapture, false).ok());
+            sources.extend(open_source(Kind::Mic).ok());
         }
         (!sources.is_empty()).then(|| AudioCapture {
             mixer: Mixer::new(sources.len()),
@@ -289,13 +328,41 @@ impl AudioCapture {
 
     /// The audio captured up to `now`, if enough time has passed to be worth writing.
     pub unsafe fn read(&mut self, now: Instant) -> Option<Chunk> {
-        let origin = self.origin?;
-        for (index, source) in self.sources.iter().enumerate() {
+        self.collect(now);
+        self.mixer.take(now.saturating_duration_since(self.origin?))
+    }
+
+    /// The audio still held back at the end, so the recording does not lose its last moments.
+    pub unsafe fn finish(&mut self, now: Instant) -> Option<Chunk> {
+        self.collect(now);
+        self.mixer
+            .take(now.saturating_duration_since(self.origin?) + LATENCY_TIME)
+    }
+
+    /// Queues what every source captured. A device that disappeared (headphones
+    /// unplugged, another default output) is opened again after a short wait and
+    /// is silent until then.
+    unsafe fn collect(&mut self, now: Instant) {
+        for (index, source) in self.sources.iter_mut().enumerate() {
             self.scratch.clear();
-            source.read(&mut self.scratch);
+            if source.read(&mut self.scratch) {
+                self.mixer.push(index, &self.scratch);
+                continue;
+            }
             self.mixer.push(index, &self.scratch);
+            match source.lost {
+                None => source.lost = Some(now),
+                Some(since) if now.saturating_duration_since(since) >= REOPEN_AFTER => {
+                    source.lost = Some(now);
+                    if let Ok(fresh) = open_source(source.kind) {
+                        if fresh.client.Start().is_ok() {
+                            *source = fresh;
+                        }
+                    }
+                }
+                Some(_) => {}
+            }
         }
-        self.mixer.take(now.saturating_duration_since(origin))
     }
 }
 
@@ -350,6 +417,19 @@ mod tests {
         assert_eq!(chunk.time, 0);
         // Nothing new is due at the same moment.
         assert!(mixer.take(at(LATENCY + 1)).is_none());
+    }
+
+    #[test]
+    fn finishing_flushes_the_held_back_tail() {
+        let mut mixer = Mixer::new(1);
+        let stop = Duration::from_millis(1000);
+        mixer.push(0, &vec![0.25; 2 * RATE as usize]);
+        let early = mixer.take(stop).unwrap();
+        let tail = mixer.take(stop + Duration::from_millis(50)).unwrap();
+        // Everything up to the stop is written once the latency is released.
+        let frames = (early.pcm.len() + tail.pcm.len()) / 4;
+        assert_eq!(frames, RATE as usize);
+        assert_eq!(tail.time, early.duration);
     }
 
     #[test]

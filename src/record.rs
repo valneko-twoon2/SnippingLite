@@ -357,11 +357,17 @@ unsafe fn write_audio(
     writer: &Writer,
     now: Instant,
     offset: i64,
+    last: bool,
 ) {
     let (Some(capture), Some(stream)) = (audio.as_mut(), writer.audio) else {
         return;
     };
-    if let Some(chunk) = capture.read(now) {
+    let chunk = if last {
+        capture.finish(now)
+    } else {
+        capture.read(now)
+    };
+    if let Some(chunk) = chunk {
         if write_to(
             writer,
             stream,
@@ -460,7 +466,7 @@ unsafe fn record(
             encode_time += encode_begin.elapsed();
         }
         // Video frames are stamped one frame late, so the sound is too.
-        write_audio(&mut audio, &writer, Instant::now(), duration);
+        write_audio(&mut audio, &writer, Instant::now(), duration, false);
         next += frame;
         let now = Instant::now();
         if next > now {
@@ -471,7 +477,7 @@ unsafe fn record(
         }
     }
     drop(grabber);
-    write_audio(&mut audio, &writer, Instant::now(), duration);
+    write_audio(&mut audio, &writer, Instant::now(), duration, true);
     drop(audio);
     let finalized = writer
         .sink
