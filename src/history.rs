@@ -183,4 +183,171 @@ mod tests {
         assert!(!entry(&folder, 10).thumbnail.exists());
         fs::remove_dir_all(&folder).unwrap();
     }
+
+    fn picture(width: i32, height: i32) -> Vec<u8> {
+        [30, 60, 90, 255].repeat((width * height) as usize)
+    }
+
+    fn pause() {
+        // Entries are named by the millisecond, so two captures need distinct milliseconds.
+        std::thread::sleep(std::time::Duration::from_millis(3));
+    }
+
+    #[test]
+    fn the_history_lives_in_the_local_app_data_folder() {
+        let sandbox = crate::test_support::Sandbox::new();
+        assert_eq!(
+            folder().unwrap(),
+            sandbox.path().join("local/Snipping Lite/history")
+        );
+        assert!(list().is_empty(), "no folder yet");
+        std::env::remove_var("LOCALAPPDATA");
+        assert_eq!(folder(), None);
+        assert!(list().is_empty());
+        assert!(add(&picture(2, 2), 2, 2, None).is_err());
+    }
+
+    #[test]
+    fn captures_are_listed_newest_first_and_can_be_removed() {
+        let _sandbox = crate::test_support::Sandbox::new();
+        for _ in 0..3 {
+            add(&picture(4, 3), 4, 3, None).unwrap();
+            pause();
+        }
+        let entries = list();
+        assert_eq!(entries.len(), 3);
+        assert!(entries[0].id > entries[1].id && entries[1].id > entries[2].id);
+        for e in &entries {
+            assert!(e.image.is_file() && e.thumbnail.is_file());
+        }
+        remove_entry(&entries[1]);
+        assert_eq!(
+            list().iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![entries[0].id, entries[2].id]
+        );
+        assert!(!entries[1].image.exists() && !entries[1].thumbnail.exists());
+        // Removing an entry that is already gone is harmless.
+        remove_entry(&entries[1]);
+        clear();
+        assert!(list().is_empty());
+    }
+
+    #[test]
+    fn adding_trims_the_history_to_the_configured_size() {
+        let _sandbox = crate::test_support::Sandbox::new();
+        let first = {
+            add(&picture(2, 2), 2, 2, None).unwrap();
+            list()[0].id
+        };
+        // Boundary: the smallest offered limit keeps exactly that many entries.
+        let limit = config::HISTORY_LIMITS[0];
+        let folder = folder().unwrap();
+        for id in 1..=limit as u128 {
+            let e = entry(&folder, id);
+            fs::write(&e.image, b"x").unwrap();
+            fs::write(&e.thumbnail, b"x").unwrap();
+        }
+        config::save_settings(&config::Settings {
+            history_limit: limit,
+            ..config::parse_settings("")
+        })
+        .unwrap();
+        pause();
+        add(&picture(2, 2), 2, 2, None).unwrap();
+        let ids: Vec<u128> = list().iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), limit);
+        assert!(ids[0] > first && ids.contains(&first));
+        assert!(!ids.contains(&1), "the oldest entries are deleted first");
+    }
+
+    #[test]
+    fn thumbnails_keep_the_aspect_ratio_and_never_grow() {
+        let _sandbox = crate::test_support::Sandbox::new();
+        // Equivalence classes: small, wider than the box, taller than the box, extreme strip.
+        for ((width, height), expected) in [
+            ((100, 50), (100, 50)),
+            ((320, 200), (320, 200)),
+            ((640, 400), (320, 200)),
+            ((640, 100), (320, 50)),
+            ((100, 800), (25, 200)),
+            ((4000, 1), (320, 1)),
+        ] {
+            clear();
+            add(&picture(width, height), width, height, None).unwrap();
+            let entry = list().remove(0);
+            let (w, h, _) = imaging::decode(&entry.thumbnail).unwrap();
+            assert_eq!((w, h), expected, "{width}x{height}");
+            let (w, h, _) = imaging::decode(&entry.image).unwrap();
+            assert_eq!((w, h), (width, height));
+            pause();
+        }
+    }
+
+    #[test]
+    fn a_saved_file_is_reused_when_it_exists() {
+        let sandbox = crate::test_support::Sandbox::new();
+        let saved = sandbox.path().join("saved.png");
+        imaging::encode(&saved, &picture(5, 5), 5, 5).unwrap();
+        add(&picture(5, 5), 5, 5, Some(&saved)).unwrap();
+        let first = list().remove(0);
+        assert_eq!(fs::read(&first.image).unwrap(), fs::read(&saved).unwrap());
+        // A file that cannot be copied falls back to encoding the pixels.
+        pause();
+        add(&picture(5, 5), 5, 5, Some(&sandbox.path().join("gone.png"))).unwrap();
+        let second = list().remove(0);
+        assert_ne!(second.id, first.id);
+        assert_eq!(imaging::decode(&second.image).unwrap().0, 5);
+    }
+
+    #[test]
+    fn replacing_an_entry_rewrites_both_pictures() {
+        let _sandbox = crate::test_support::Sandbox::new();
+        add(&picture(10, 10), 10, 10, None).unwrap();
+        let entry = list().remove(0);
+        replace(&entry, &picture(20, 8), 20, 8).unwrap();
+        assert_eq!(imaging::decode(&entry.image).unwrap().0, 20);
+        assert_eq!(imaging::decode(&entry.thumbnail).unwrap().1, 8);
+        assert_eq!(list().len(), 1);
+        // The folder is gone: nothing can be written.
+        let broken = Entry {
+            id: 1,
+            image: entry.image.with_file_name("missing/1.png"),
+            thumbnail: entry.image.with_file_name("missing/1.thumb.png"),
+        };
+        assert!(replace(&broken, &picture(2, 2), 2, 2).is_err());
+    }
+
+    #[test]
+    fn straight_alpha_is_restored_from_premultiplied_pixels() {
+        // Decision table over alpha: clear and opaque pixels are left alone.
+        let mut pixels = [
+            50, 60, 70, 0, //
+            50, 60, 70, 255, //
+            64, 32, 16, 128, //
+            200, 10, 0, 100, // channel above alpha: clamped
+            1, 1, 1, 1, //
+        ];
+        unpremultiply(&mut pixels);
+        assert_eq!(&pixels[..4], &[50, 60, 70, 0]);
+        assert_eq!(&pixels[4..8], &[50, 60, 70, 255]);
+        assert_eq!(&pixels[8..12], &[128, 64, 32, 128]);
+        assert_eq!(&pixels[12..16], &[255, 26, 0, 100]);
+        assert_eq!(&pixels[16..20], &[255, 255, 255, 1]);
+    }
+
+    #[test]
+    fn local_time_follows_the_calendar() {
+        // 2024-06-15 12:00 UTC is the same calendar day in every time zone but UTC+12 and later.
+        let noon = 1_718_452_800_000u128;
+        let (year, month, day, hour, minute) = local_time(noon);
+        assert_eq!((year, month), (2024, 6));
+        assert!((14..=16).contains(&day) && hour < 24 && minute < 60);
+        // One minute later moves the clock by one minute, and a day later moves the date.
+        let (_, _, _, h2, m2) = local_time(noon + 60_000);
+        assert_eq!((h2 * 60 + m2 + 1440 - (hour * 60 + minute)) % 1440, 1);
+        assert_ne!(local_time(noon + 86_400_000).2, day);
+        // The Unix epoch is on the last day of 1969 or the first of 1970.
+        let (year, month, ..) = local_time(0);
+        assert!((year == 1969 && month == 12) || (year == 1970 && month == 1));
+    }
 }

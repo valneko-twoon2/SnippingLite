@@ -11,6 +11,8 @@ mod overlay;
 mod record;
 mod screenshot;
 mod settings_ui;
+#[cfg(test)]
+mod test_support;
 mod toast;
 mod toolbar;
 mod ui;
