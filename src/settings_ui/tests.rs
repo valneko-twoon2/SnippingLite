@@ -42,6 +42,12 @@ impl Window {
 
     /// 同じ見出しの行が複数あるとき（コピーの行は 2 つある）、上から `index` 番目のスイッチを切り替える。
     fn toggle_nth(&mut self, title: &str, index: usize) {
+        let at = self.switch_point(title, index);
+        self.act(|screen, show| screen.click(at, show));
+    }
+
+    /// 見出しが `title` の行のうち上から `index` 番目の、スイッチの中ほどの点。
+    fn switch_point(&self, title: &str, index: usize) -> egui::Pos2 {
         let row = self
             .screen
             .texts()
@@ -60,8 +66,7 @@ impl Window {
             })
             .unwrap_or_else(|| panic!("no switch in the row {title:?}"));
         // The word comes first from the right, then the switch itself.
-        let at = pos2(label.left() - 30.0, label.center().y);
-        self.act(|screen, show| screen.click(at, show));
+        pos2(label.left() - 30.0, label.center().y)
     }
 
     /// Opens the drop-down that currently shows `current` and picks `item`.
@@ -482,6 +487,7 @@ fn the_change_link_picks_a_folder_or_leaves_it_alone() {
     assert_eq!(PathBuf::from(saved().video_folder), PathBuf::from(&videos));
 }
 
+mod controls;
 mod fonts;
 mod look;
 mod tray;

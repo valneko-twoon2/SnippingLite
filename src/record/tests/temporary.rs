@@ -11,6 +11,7 @@
 //! | 環境 | 失敗 | 中のフォルダー → 掃除を止めない |
 //! | 名前 | 同値分割 | 録画専用のフォルダーなので、録画以外の名前（.txt、.part、拡張子なし、大文字、ドットで始まる）も古ければ消える |
 //! | 中のフォルダー | 同値分割 | 古いフォルダー、空のフォルダー → 中身ごと残る |
+//! | 環境 | 失敗 | フォルダーを作れない（同じ名前のファイルがある）→ Err（録画を始める側がそれを知らせ、録画しない）、そのファイルはそのまま |
 
 use super::*;
 use crate::test_support::Sandbox;
@@ -157,6 +158,16 @@ fn an_old_file_is_removed_whatever_its_name() {
         assert!(!path.exists(), "{name} is removed");
     }
     assert!(fresh.exists(), "a file newer than a day stays");
+}
+
+#[test]
+fn a_recordings_folder_that_cannot_be_made_is_an_error_and_touches_nothing() {
+    // 一時フォルダーの中の「Snipping Lite」がファイルだと、録画のフォルダーを作れない。
+    let sandbox = Sandbox::new();
+    let blocker = sandbox.path().join("Snipping Lite");
+    std::fs::write(&blocker, b"not a folder").unwrap();
+    assert!(temporary_folder_in(sandbox.path(), now()).is_err());
+    assert_eq!(std::fs::read(&blocker).unwrap(), b"not a folder");
 }
 
 #[test]

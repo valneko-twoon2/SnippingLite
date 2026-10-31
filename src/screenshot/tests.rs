@@ -434,3 +434,5 @@ fn the_dim_layer_is_half_as_bright_as_the_screen() {
 
 mod crash;
 mod differential;
+mod saving;
+mod window_mode;

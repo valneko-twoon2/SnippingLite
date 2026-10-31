@@ -107,6 +107,22 @@ impl Screen {
         }
         out
     }
+    /// 前のフレームで描いた四角形（塗りと線の色、線の幅と向き）。ボタンの塗りやフォーカスの枠を確かめる。
+    pub fn rects(&self) -> Vec<egui::epaint::RectShape> {
+        fn collect(shape: &Shape, out: &mut Vec<egui::epaint::RectShape>) {
+            match shape {
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                Shape::Rect(rect) => out.push(rect.clone()),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        for clipped in &self.shapes {
+            collect(&clipped.shape, &mut out);
+        }
+        out
+    }
+
     pub fn find(&self, text: &str) -> Option<Rect> {
         self.texts()
             .into_iter()
@@ -173,6 +189,13 @@ impl Screen {
         });
         self.frame(show);
         self.settle(show);
+    }
+
+    /// `events` を 1 フレームで渡す。ボタンを押したままのフレームのように、ほかの操作が 1 回で
+    /// 済ませてしまう途中の様子を確かめるときに使う。
+    pub fn send(&mut self, events: impl IntoIterator<Item = Event>, show: Show) {
+        self.events.extend(events);
+        self.frame(show);
     }
 
     pub fn hover(&mut self, at: Pos2, show: Show) {

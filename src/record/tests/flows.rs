@@ -185,6 +185,63 @@ fn a_recording_whose_name_is_held_open_is_kept_under_another_name() {
     assert!(kept.exists());
 }
 
+/// 最後の名前は共有なしで開かれたまま、連番の名前（`staging::keep` が試す (2) から (20) まで）も
+/// すべて埋まっていて、録画をどこにも置けない。書き終えた録画は作り直せないので、一時名のまま残し、
+/// エラーはその場所を知らせる。ほかのファイルには触れない。
+#[test]
+#[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
+fn a_recording_that_no_name_is_left_for_stays_under_its_temporary_name_and_says_where() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = crate::test_support::Sandbox::new();
+    let path = sandbox.path().join("Snipping Lite 1.mp4");
+    std::fs::write(&path, b"held").unwrap();
+    let taken: Vec<PathBuf> = (2..=20)
+        .map(|n| {
+            let other = sandbox.path().join(format!("Snipping Lite 1 ({n}).mp4"));
+            std::fs::write(&other, format!("taken {n}")).unwrap();
+            other
+        })
+        .collect();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&path)
+        .unwrap();
+    let stop = AtomicBool::new(true);
+    let result = run(
+        area(64, 64),
+        &path,
+        &stop,
+        &OnceLock::new(),
+        &[],
+        options(60),
+    );
+    drop(held);
+    let error = result.err().expect("there is nowhere to put the recording");
+    let partial = crate::staging::partial(&path);
+    assert!(
+        error.starts_with(tr("Could not finish the video file")),
+        "{error}"
+    );
+    assert!(
+        error.ends_with(&partial.display().to_string()),
+        "the error says where the recording is: {error}"
+    );
+    assert_eq!(
+        &std::fs::read(&partial).unwrap()[4..8],
+        b"ftyp",
+        "the finished recording"
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"held");
+    for (n, other) in (2..=20).zip(&taken) {
+        assert_eq!(
+            std::fs::read(other).unwrap(),
+            format!("taken {n}").as_bytes()
+        );
+    }
+    assert!(!sandbox.path().join("Snipping Lite 1 (21).mp4").exists());
+}
+
 #[test]
 #[ignore = "Requires an unlocked Windows desktop and Windows Graphics Capture"]
 fn closing_the_recorded_window_keeps_what_was_recorded() {
