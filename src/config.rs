@@ -118,6 +118,7 @@ pub fn load_pen() -> (usize, usize) {
 fn write_atomic(path: &Path, contents: String) -> std::io::Result<()> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, contents)?;
+    crate::staging::step("temporary written", path);
     fs::rename(&temporary, path)
 }
 

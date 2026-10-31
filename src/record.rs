@@ -95,6 +95,7 @@ fn temporary_folder_in(base: &Path, now: std::time::SystemTime) -> std::io::Resu
             .is_some_and(|age| age > day);
         if stale {
             let _ = std::fs::remove_file(entry.path());
+            crate::staging::step("old recording removed", &entry.path());
         }
     }
     Ok(folder)

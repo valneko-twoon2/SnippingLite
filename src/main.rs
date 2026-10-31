@@ -17,6 +17,7 @@ mod player;
 mod record;
 mod screenshot;
 mod settings_ui;
+mod staging;
 #[cfg(test)]
 mod test_support;
 mod toast;
