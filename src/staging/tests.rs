@@ -7,6 +7,8 @@
 //! | 持ち主 | 状態 | このプロセス → 動いている; 終わったプロセス（ハンドルを持ち、ID が使い回されない）→ 動いていない |
 //! | 掃除 | 決定表（持ち主 × 種類） | 終わったプロセスの書きかけ → 消す; 動いているプロセスの書きかけ、利用者のファイル → 残す |
 //! | 付け替え | 状態 | 前のファイルがある → 置き換える; 名前を変えられない → 一時名を消して失敗を返す |
+//! | 残す（録画） | 状態 | 名前を変えられる → 最後の名前; 最後の名前が開かれている → 空いた `(n)`（埋まった番号は置き換えない）; 一時名が開かれ読める → `(n)` へ写す; 読めもしない → 一時名を残して失敗 |
+//! | 別名 | 例 | `a.mp4` → `a (2).mp4`; 点を含む名前、拡張子なし |
 
 use super::*;
 use crate::test_support::Sandbox;
@@ -131,4 +133,99 @@ fn committing_replaces_the_file_or_removes_the_partial_one() {
     fs::write(&written, b"new").unwrap();
     assert!(commit(&written, &blocked).is_err());
     assert!(!written.exists() && blocked.is_dir());
+}
+
+/// `path` を共有なしで開いたままにする。開いている間は、その名前への名前の変更も削除もできない。
+fn hold(path: &Path) -> fs::File {
+    use std::os::windows::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(path)
+        .unwrap()
+}
+
+#[test]
+fn keeping_uses_the_final_name_when_it_can() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.path().join("a.mp4");
+    let written = partial(&path);
+    fs::write(&written, b"video").unwrap();
+    assert_eq!(keep(&written, &path).unwrap(), path);
+    assert_eq!(fs::read(&path).unwrap(), b"video");
+    assert!(!written.exists());
+}
+
+#[test]
+fn a_held_final_name_keeps_the_file_under_the_next_free_number() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.path().join("Snipping Lite 1.mp4");
+    fs::write(&path, b"held").unwrap();
+    // (2) は利用者のファイルで埋まっている。置き換えずに (3) へ。
+    let taken = sandbox.path().join("Snipping Lite 1 (2).mp4");
+    fs::write(&taken, b"mine").unwrap();
+    let written = partial(&path);
+    fs::write(&written, b"video").unwrap();
+    let held = hold(&path);
+    let kept = keep(&written, &path).unwrap();
+    drop(held);
+    assert_eq!(kept, sandbox.path().join("Snipping Lite 1 (3).mp4"));
+    assert_eq!(fs::read(&kept).unwrap(), b"video");
+    assert_eq!(fs::read(&path).unwrap(), b"held");
+    assert_eq!(fs::read(&taken).unwrap(), b"mine");
+    assert!(!written.exists());
+    // 残した録画は、終わったプロセスの書きかけを消す掃除の対象にならない。
+    assert_eq!(writer_of("Snipping Lite 1 (3).mp4"), None);
+    remove_leftovers(sandbox.path());
+    assert!(kept.exists());
+}
+
+#[test]
+fn a_partial_file_that_cannot_be_renamed_is_copied_and_never_removed_on_failure() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.path().join("b.mp4");
+    let written = partial(&path);
+    fs::write(&written, b"video").unwrap();
+    // 一時名のファイル自体を、読むのだけ許して開いておく。名前は変えられないが写せる。
+    let reader = {
+        use std::os::windows::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1) // FILE_SHARE_READ
+            .open(&written)
+            .unwrap()
+    };
+    let kept = keep(&written, &path).unwrap();
+    drop(reader);
+    assert_eq!(kept, sandbox.path().join("b (2).mp4"));
+    assert_eq!(fs::read(&kept).unwrap(), b"video");
+    // 写すのもできないときは、一時名のファイルを消さずに失敗を返す。
+    let path = sandbox.path().join("c.mp4");
+    let written = partial(&path);
+    fs::write(&written, b"video").unwrap();
+    let held = hold(&written);
+    assert!(keep(&written, &path).is_err());
+    drop(held);
+    assert_eq!(fs::read(&written).unwrap(), b"video");
+    assert!(!path.exists() && !sandbox.path().join("c (2).mp4").exists());
+}
+
+#[test]
+fn the_other_names_follow_the_numbering_of_explorer() {
+    let cases = [
+        (
+            "D:\\v\\Snipping Lite 1.mp4",
+            2,
+            "D:\\v\\Snipping Lite 1 (2).mp4",
+        ),
+        ("D:\\v\\a.b.mp4", 20, "D:\\v\\a.b (20).mp4"),
+        ("D:\\v\\plain", 3, "D:\\v\\plain (3)"),
+    ];
+    for (path, n, other) in cases {
+        assert_eq!(
+            alternate(Path::new(path), n),
+            PathBuf::from(other),
+            "{path}"
+        );
+    }
 }

@@ -49,6 +49,8 @@ pub struct Frame {
     pub pixels: Vec<u8>,
     /// Set when the recording ended early but the file up to that point was kept.
     pub warning: Option<String>,
+    /// 最後の名前に置けず、録画を失わないよう別の名前で残したときの、その名前。
+    pub saved: Option<PathBuf>,
     #[cfg(test)]
     captured_frames: u32,
     #[cfg(test)]
@@ -183,7 +185,7 @@ impl Recording {
             .thread
             .join()
             .map_err(|_| tr("The recorder crashed.").to_string())??;
-        Ok((self.path, frame))
+        Ok((frame.saved.clone().unwrap_or(self.path), frame))
     }
 }
 
@@ -235,25 +237,32 @@ fn run(
         // 一時名で書き、仕上げてから最後の名前に変える。録画の途中でプロセスが止まっても、
         // 保存先に再生できないファイルが最後の名前で残らない。
         let partial = crate::staging::partial(path);
-        let mut result = record(area, &partial, stop, clock, points, options);
+        let result = record(area, &partial, stop, clock, points, options);
         if started {
             let _ = MFShutdown();
         }
         if com {
             CoUninitialize();
         }
-        if result.is_ok() {
-            if let Err(error) = crate::staging::commit(&partial, path) {
-                result = Err(format!(
-                    "{}: {error}",
-                    tr("Could not finish the video file")
-                ));
+        let mut frame = match result {
+            Ok(frame) => frame,
+            Err(error) => {
+                let _ = std::fs::remove_file(&partial);
+                return Err(error);
             }
+        };
+        // 書き終えた録画は作り直せないので、名前を変えられなくても消さない（`staging::keep`）。
+        match crate::staging::keep(&partial, path) {
+            Ok(saved) => {
+                frame.saved = (saved != path).then_some(saved);
+                Ok(frame)
+            }
+            Err(error) => Err(format!(
+                "{}: {error}\n{}",
+                tr("Could not finish the video file"),
+                partial.display()
+            )),
         }
-        if result.is_err() {
-            let _ = std::fs::remove_file(&partial);
-        }
-        result
     }
 }
 
@@ -400,6 +409,7 @@ unsafe fn record(
         height,
         pixels: first,
         warning,
+        saved: None,
         #[cfg(test)]
         captured_frames,
         #[cfg(test)]

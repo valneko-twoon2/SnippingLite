@@ -76,6 +76,13 @@ pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathB
     present(pixels, width, height, title, body, Some(path));
 }
 
+/// 決めた名前（同じ名前のファイルが開かれているなど）に置けず、別の名前で残した録画を知らせる。
+pub unsafe fn show_moved_recording(pixels: &[u8], width: i32, height: i32, path: PathBuf) {
+    let body = display_name(&path);
+    let title = tr("Recording saved under another name");
+    present(pixels, width, height, title, body, Some(path));
+}
+
 unsafe fn present(
     _pixels: &[u8],
     _width: i32,

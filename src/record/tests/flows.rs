@@ -18,6 +18,7 @@ fn empty_frame() -> Frame {
         height: 80,
         pixels: Vec::new(),
         warning: None,
+        saved: None,
         captured_frames: 0,
         capture_time: Duration::ZERO,
         encode_time: Duration::ZERO,
@@ -111,6 +112,13 @@ fn stopping_returns_the_path_and_the_first_frame_or_reports_a_crash() {
     let (path, frame) = finished(Ok(empty_frame())).stop().unwrap();
     assert_eq!(path, PathBuf::from("finished.mp4"));
     assert_eq!((frame.width, frame.height), (100, 80));
+    // 最後の名前に置けず別の名前で残したときは、その名前を返す。
+    let moved = Frame {
+        saved: Some(PathBuf::from("finished (2).mp4")),
+        ..empty_frame()
+    };
+    let (path, _) = finished(Ok(moved)).stop().unwrap();
+    assert_eq!(path, PathBuf::from("finished (2).mp4"));
     let crashed = Recording {
         thread: std::thread::spawn(|| -> Result<Frame, String> { panic!("recorder bug") }),
         ..finished(Ok(empty_frame()))
@@ -139,6 +147,42 @@ fn a_failed_encoder_leaves_no_file_behind() {
         "{error}"
     );
     assert!(!path.exists());
+}
+
+/// 最後の名前を共有なしで開いたままにして、録画の名前の変更を失敗させる。
+/// 録画は捨てずに、同じフォルダーの空いた連番の名前で残り、次の掃除でも消えない。
+#[test]
+#[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
+fn a_recording_whose_name_is_held_open_is_kept_under_another_name() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let sandbox = crate::test_support::Sandbox::new();
+    let path = sandbox.path().join("Snipping Lite 1.mp4");
+    std::fs::write(&path, b"held").unwrap();
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&path)
+        .unwrap();
+    let stop = AtomicBool::new(true);
+    let result = run(
+        area(64, 64),
+        &path,
+        &stop,
+        &OnceLock::new(),
+        &[],
+        options(60),
+    );
+    drop(held);
+    let frame = result.expect("the recording is kept");
+    let kept = sandbox.path().join("Snipping Lite 1 (2).mp4");
+    assert_eq!(frame.saved.as_deref(), Some(kept.as_path()));
+    assert_eq!(&std::fs::read(&kept).unwrap()[4..8], b"ftyp");
+    // 開いていたファイルには触れず、一時名も残らない。
+    assert_eq!(std::fs::read(&path).unwrap(), b"held");
+    assert!(!crate::staging::partial(&path).exists());
+    // 次の起動の掃除は、残した録画を消さない。
+    crate::staging::remove_leftovers(sandbox.path());
+    assert!(kept.exists());
 }
 
 #[test]
