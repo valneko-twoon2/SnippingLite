@@ -42,9 +42,14 @@
 //!   （`markup::tests::tray::settings_changed_while_marking_up_apply_when_it_is_captured`）
 //!
 //! 遅延の待ち（`pending`）
-//! - 遅延の設定を外したので、利用者の操作では到達しない。開始で何もしないことと、タイマーで撮ることは
-//!   既存 `the_delay_waits_before_taking_the_picture` と `the_delay_timer_takes_the_picture_and_closing_only_hides`
-//!   が状態を手で作って確かめる。ほかのセルは書かない
+//! - 遅延の設定を外したので、利用者の操作では到達しない（`state().delay` を書くのは `initial_state` の 0 と
+//!   テストだけで、`apply_settings` は設定の delay を写さない）。状態は残してあるので、テストが手で作る。
+//!   開始で何もしないことと、タイマーで撮ることは既存 `the_delay_waits_before_taking_the_picture` と
+//!   `the_delay_timer_takes_the_picture_and_closing_only_hides` が確かめる
+//! - TRAY_SETTINGS、TRAY_HISTORY → 切り取り中、カウントダウン中と同じく画面を開かず、待ちは続く。待つ前に
+//!   自分の画面を隠し終えていて、待ちが明けても隠し直さないので、開くと撮る画像に写る
+//!   （`settings_or_history_asked_for_during_the_delay_open_nothing`）
+//! - ほかのセルは書かない
 //!
 //! カウントダウン
 //! - 開始 → 取り消し、撮影も録画も始めない（`recording::starting_events_cancel_a_countdown_and_start_nothing`）
@@ -262,4 +267,24 @@ fn settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead() 
     desk.key(s().overlay, VK_RETURN);
     assert!(!s().active);
     assert_eq!(crate::history::list().len(), 1, "Enter still captures");
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn settings_or_history_asked_for_during_the_delay_open_nothing() {
+    let desk = Desk::start();
+    let windows = closed_windows();
+    // 遅延の設定は外したので、待ちの状態は手で作る（`the_delay_waits_before_taking_the_picture` と同じ）。
+    s().delay = 1;
+    // SAFETY: the windows belong to this test.
+    unsafe { begin_capture() };
+    assert!(s().pending && !s().active, "waiting for the delay");
+    // 待ちにはまだ前面に戻す画面がなく、キーボードを受け取る画面もない。
+    assert_nothing_opens(&desk, &windows, null_mut(), || s().pending && !s().active);
+    // 待ちが明けると、これまでどおり切り取りが始まる。終えた後は待機中なので開く。
+    assert!(desk.pump_until(std::time::Duration::from_secs(5), || s().active));
+    desk.key(s().overlay, VK_ESCAPE);
+    assert!(!s().active && !s().pending);
+    desk.send(desk.main, WM_COMMAND, TRAY_SETTINGS, 0);
+    assert!(shown(windows.0[0]), "idle again, the settings open");
 }
