@@ -482,4 +482,5 @@ fn the_change_link_picks_a_folder_or_leaves_it_alone() {
     assert_eq!(PathBuf::from(saved().video_folder), PathBuf::from(&videos));
 }
 
+mod fonts;
 mod look;
