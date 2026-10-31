@@ -202,26 +202,6 @@ fn saved_settings_read_back_unchanged() {
 }
 
 #[test]
-fn atomic_write_replaces_the_file_and_leaves_no_temporary() {
-    let folder = std::env::temp_dir().join(format!("snipping-lite-config-{}", std::process::id()));
-    fs::create_dir_all(&folder).unwrap();
-    let path = folder.join("settings.ini");
-    write_atomic(&path, "a".to_owned()).unwrap();
-    write_atomic(&path, "b".to_owned()).unwrap();
-    assert_eq!(fs::read_to_string(&path).unwrap(), "b");
-    assert!(!path.with_extension("tmp").exists());
-    fs::remove_dir_all(&folder).unwrap();
-}
-
-#[test]
-fn atomic_write_fails_when_the_folder_is_missing() {
-    let folder = std::env::temp_dir()
-        .join("snipping-lite-no-such-folder")
-        .join("a");
-    assert!(write_atomic(&folder.join("settings.ini"), "a".to_owned()).is_err());
-}
-
-#[test]
 fn themes_have_a_label_and_survive_a_round_trip() {
     for theme in AppTheme::ALL {
         assert!(!theme.label().is_empty());
@@ -492,3 +472,4 @@ mod compat;
 mod crash;
 mod damaged;
 mod properties;
+mod temporary;

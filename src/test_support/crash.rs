@@ -5,7 +5,8 @@
 //! 子は `SNIPPING_LITE_CRASH_AT` が k のとき、k 回目の段階でその名前を印のファイルに書いて待ち、
 //! 親が `TerminateProcess` する。電源が落ちたときと同じく、子の後片付けは何も走らない。
 //! 親は同じフォルダーで次の起動の処理を走らせ、確かめる。k は 1 から増やし、子が k 回目より前に
-//! 最後まで終えたら止める（`sweep`）。
+//! 最後まで終えたら止める（`sweep`）。`pause` は止まった子を殺さずに待たせ、同時に動いていて
+//! 書いている途中の、もう 1 つのプロセスの役にする。
 //!
 //! 子の環境は親のサンドボックス（`APPDATA`、`LOCALAPPDATA`、`USERPROFILE`）を受け継ぎ、一時フォルダー
 //! （`TEMP`、`TMP`）もサンドボックスの中にする。子が失敗しても親が先に失敗しても、子は殺して待ち、
@@ -73,6 +74,19 @@ pub struct Crash {
     pub stopped: Option<String>,
 }
 
+impl Crash {
+    /// 子のプロセス ID。一時名に入る ID と比べる。
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// 止まっている子を殺し、終わるまで待つ（`pause` の後で使う）。
+    pub fn kill(&mut self) {
+        self.child.kill().expect("the child is killed");
+        self.child.wait().unwrap();
+    }
+}
+
 impl Drop for Crash {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -82,6 +96,17 @@ impl Drop for Crash {
 
 /// `test` を子プロセスで走らせ、k 回目の段階で殺す。
 pub fn run(sandbox: &Sandbox, test: &str, k: usize) -> Crash {
+    let mut crash = pause(sandbox, test, k);
+    if crash.stopped.is_some() {
+        crash.kill();
+    }
+    crash
+}
+
+/// `test` を子プロセスで走らせ、k 回目の段階で止まるまで待つ。止まった子は殺さず、動いたまま
+/// 待たせておく（書いている途中の、もう 1 つの Snipping Lite のプロセスの役）。`Crash::kill` か、
+/// `Crash` を落とすときに殺す。止まる前に最後まで終えたら、`stopped` は `None`。
+pub fn pause(sandbox: &Sandbox, test: &str, k: usize) -> Crash {
     let marker = sandbox.path().join(format!("crash-{k}.marker"));
     let log = sandbox.path().join(format!("crash-{k}.log"));
     let temp = sandbox.path().join("temp");
@@ -112,8 +137,6 @@ pub fn run(sandbox: &Sandbox, test: &str, k: usize) -> Crash {
     let said = || std::fs::read_to_string(&log).unwrap_or_default();
     for _ in 0..POLLS {
         if let Ok(label) = std::fs::read_to_string(&marker) {
-            crash.child.kill().expect("the child is killed");
-            crash.child.wait().unwrap();
             crash.stopped = Some(label);
             return crash;
         }

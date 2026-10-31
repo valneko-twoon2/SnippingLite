@@ -79,7 +79,16 @@ pub fn bad_size() -> std::io::Error {
 
 /// Encodes straight-alpha top-down BGRA pixels; the extension picks PNG or BMP.
 /// 一時名で書き終えてから `path` に名前を変えるので、途中で止まっても `path` に書きかけは残らない。
+///
+/// 書く前に、同じフォルダーに、もう動いていないプロセスが残した書きかけがあれば消す
+/// （`staging::remove_leftovers`）。名前を付けて保存で選んだフォルダーは、既定の保存先と違って
+/// ほかに片付ける機会がないので、そこへ保存するここで片付ける。消すのは `staging` の一時名の規則に
+/// 合い、書いたプロセスが動いていないものだけで、利用者のファイル、書き終えた録画（`(2).mp4` など）、
+/// 動いているプロセス（もう一方の Snipping Lite のプロセス）が書いている途中のものには触れない。
 pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+    if let Some(folder) = path.parent() {
+        staging::remove_leftovers(folder);
+    }
     let partial = encode_partial(path, pixels, width, height)?;
     staging::step("picture written", path);
     staging::commit(&partial, path)

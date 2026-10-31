@@ -198,7 +198,12 @@ fn damaged_pen_and_markup_files_read_as_written_or_as_the_defaults() {
             save_markup(!on);
             assert_eq!(load_markup(), !on);
             assert_eq!(load_pen(), (color, thickness), "and the toggle the pen");
-            assert!(!folder.join("pen.tmp").exists() && !folder.join("markup.tmp").exists());
+            let mut names: Vec<String> = fs::read_dir(&folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            assert_eq!(names, ["markup.ini", "pen.ini", "settings.ini"]);
         },
     );
     reach.finish("damaged_pen_and_markup_files_read_as_written", cases);

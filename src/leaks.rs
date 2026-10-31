@@ -44,8 +44,10 @@ fn drawing_surfaces_give_back_their_gdi_objects() {
 #[test]
 #[ignore = "Counts the objects of the whole process; run it alone"]
 fn saving_reading_and_copying_pictures_gives_back_their_objects() {
-    let _sandbox = Sandbox::new();
-    let path = std::env::temp_dir().join(format!("snipping-lite-leak-{}.png", std::process::id()));
+    // 画像は書く前に同じフォルダーの書きかけを片付ける（`imaging::encode`）ので、本物の一時フォルダー
+    // でなく、サンドボックスに書く。
+    let sandbox = Sandbox::new();
+    let path = sandbox.path().join("leak.png");
     let pixels = vec![200u8; 64 * 48 * 4];
     let round = || {
         imaging::encode(&path, &pixels, 64, 48).unwrap();

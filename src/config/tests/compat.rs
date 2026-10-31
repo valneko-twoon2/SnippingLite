@@ -119,8 +119,8 @@ fn what_the_current_version_writes_still_starts_with_the_first_release_keys() {
     assert!(text.starts_with("copy=1\r\nsave=0\r\nask=0\r\ndelay=0\r\n"));
 }
 
-/// pen.ini の書式は最初の版（68c4ed5、2026-10-28）から 1 つだけ（c0d9cd3 からは pen.tmp を経て
-/// 書くが、中身は同じ）。その版のコードの `save_pen(3, 2)` が書いたバイト列。
+/// pen.ini の書式は最初の版（68c4ed5、2026-10-28）から 1 つだけ（c0d9cd3 からは一時ファイル
+/// （pen.tmp、今は pen.ini.<プロセス ID>.tmp）を経て書くが、中身は同じ）。その版のコードの `save_pen(3, 2)` が書いたバイト列。
 const OLD_PEN: &[u8] = b"color=3\r\nthickness=2\r\n";
 /// markup.ini の書式も最初の版（8249a83、2026-11-01）から 1 つだけ。その版の `save_markup(true)` が
 /// 書いたバイト列。
