@@ -144,6 +144,14 @@ struct HistoryApp {
     notice: Option<(Instant, &'static str)>,
     /// Text recognition in progress for the opened image.
     ocr: Option<std::sync::mpsc::Receiver<Result<String, crate::ocr::Error>>>,
+    /// 今の時刻（Unix 紀元からのミリ秒）を返す時計。期間での絞り込みの基準になる。テストは決まった
+    /// 時刻を返す時計に差し替え、実行した時刻によらず同じ結果にする。
+    clock: fn() -> u128,
+}
+
+/// 実際の時計。
+fn now() -> u128 {
+    imaging::timestamp().unwrap_or(0)
 }
 
 impl HistoryApp {
@@ -167,12 +175,13 @@ impl HistoryApp {
             thickness,
             notice: None,
             ocr: None,
+            clock: now,
         }
     }
 
     /// The entries that match the range and the search text.
     fn visible(&self) -> Vec<Entry> {
-        let now = imaging::timestamp().unwrap_or(0);
+        let now = (self.clock)();
         let query = self.query.trim().replace(['-', '.'], "/");
         self.entries
             .iter()
