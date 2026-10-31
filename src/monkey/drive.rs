@@ -18,7 +18,7 @@ fn middle([left, top, right, bottom]: [f32; 4]) -> P {
 /// キューに来た本物の機器の入力か。テストの入力は SendMessage で直接届けるのでキューには来ない。
 /// 本物のマウスの位置（マウスをつかんだ窓に、システムが作る WM_MOUSEMOVE など）は、テストが
 /// 演じるマウスと食い違うので届けない。メニューに積んだキー（窓のないスレッドへのメッセージ）は通す。
-fn device_input(message: &MSG) -> bool {
+pub(super) fn device_input(message: &MSG) -> bool {
     // WM_NCMOUSEMOVE から WM_NCXBUTTONDBLCLK まで、WM_NCMOUSEHOVER から WM_MOUSELEAVE まで。
     const NONCLIENT_MOUSE: u32 = 0x00A0;
     const NONCLIENT_MOUSE_LAST: u32 = 0x00AD;

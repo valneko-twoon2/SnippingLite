@@ -67,6 +67,15 @@ pub(super) fn contract(
             .iter()
             .any(|(target, _)| target.ends_with("about.html"))
     };
+    // README: 残したツールバーは、× で閉じるまで移動した位置に出る（撮影を挟んでも）。
+    if before.toolbar_open && st.toolbar_open && !matches!(action, Action::MoveToolbar(_)) {
+        let was = (before.toolbar_rect.left, before.toolbar_rect.top);
+        assert_eq!(
+            top_left(st.toolbar),
+            was,
+            "a kept toolbar stays where it was moved"
+        );
+    }
     match action {
         Action::Start(_) if before.count.is_some() => {
             assert!(

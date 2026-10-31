@@ -186,43 +186,41 @@ impl Snapshot {
         format!("[{state}{extra}]")
     }
 
-    /// 手を選ぶ前の状態を数える。
-    fn reach(&self, reach: &mut Reach) {
+    /// 手を選ぶ前の状態の名前（`actions::STATES`）。
+    fn states(&self) -> Vec<&'static str> {
         let st = s();
+        let mut states = Vec::new();
         if !self.active && self.count.is_none() {
-            reach.hit(if self.toolbar.is_some() {
+            states.push(if self.toolbar.is_some() {
                 "idle with the kept toolbar"
             } else {
                 "idle"
             });
         }
         if self.active && self.session.is_none() {
-            reach.hit(match self.mode {
+            states.push(match self.mode {
                 MODE_FREE => "snipping freeform",
                 MODE_WINDOW => "snipping a window",
                 MODE_SCREEN => "snipping the full screen",
                 _ => "snipping a rectangle",
             });
             if st.video {
-                reach.hit("snipping a recording");
+                states.push("snipping a recording");
             }
-            reach.hit(if st.screen_dc.is_null() {
+            states.push(if st.screen_dc.is_null() {
                 "live"
             } else {
                 "frozen"
             });
         }
-        let hits = [
+        let flags = [
             (self.dragging, "selecting"),
             (self.session.is_some(), "marking up"),
             (self.count.is_some(), "countdown"),
             (self.toast.is_some(), "notification"),
         ];
-        for (on, label) in hits {
-            if on {
-                reach.hit(label);
-            }
-        }
+        states.extend(flags.iter().filter(|(on, _)| *on).map(|&(_, label)| label));
+        states
     }
 }
 
@@ -231,7 +229,10 @@ impl Snapshot {
 fn random_input_keeps_the_tray_and_its_windows_consistent() {
     let mut tally = Tally::new();
     let (mut case, mut steps, mut images) = (0u64, 0, 0);
-    let mut user_objects: Option<u32> = None;
+    // どの状態と操作にも届いた後に始めたケースが残した GDI のオブジェクトの合計と、そのケースの数。
+    let (mut gdi, mut counted) = (0i64, 0);
+    // 最初のケースを片付けた後の USER のオブジェクトの数。
+    let mut user_after: Option<u32> = None;
     let started = Instant::now();
     let cases = rng::check(NAME, CASES, |rng| {
         let seed = rng::seed().wrapping_add(case);
@@ -241,28 +242,43 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
             "{NAME}: case {case}: SNIPPING_LITE_SEED={seed:#x} SNIPPING_LITE_CASES=1"
         );
         case += 1;
-        let (count, delivered) = run_case(rng, &mut tally);
+        let warmed = tally.warmed();
+        let (count, delivered, left) = run_case(rng, &mut tally);
         steps += count;
         images += delivered;
-        // ケースを重ねても USER のオブジェクトは増え続けない。GDI は数えない: テストの `Desk` は
-        // 起動のたびに窓のクラスを登録し直し、使われない枠のブラシを 1 つ作る（本物は 1 回だけ）。
+        // ケースを重ねても、オブジェクトは増え続けない。1 ケースの撮影は数回なので、1 回に 1 つの
+        // 漏れは 1 ケースでは見えにくい。ケースが残した GDI のオブジェクトを足して、全体で上限を
+        // 見る。プロセスで 1 度だけ作るものがそろうまで（どの状態と操作にも届くまで）は数えない。
+        if warmed {
+            gdi += left;
+            counted += 1;
+        }
+        assert!(
+            gdi <= SLACK as i64,
+            "the {counted} cases since every state and kind was reached left {gdi} GDI objects"
+        );
+        // USER のオブジェクト（ケースの間に作るスレッドの窓など）は片付けで消えるので、片付けた
+        // 後の数で比べる。
         let user = gui_objects().1;
-        let first = *user_objects.get_or_insert(user);
+        let first = *user_after.get_or_insert(user);
         assert!(
             user <= first + SLACK,
-            "USER objects went from {first} to {user} over the cases"
+            "USER objects after a case went from {first} to {user}"
         );
     });
     eprintln!(
-        "{NAME}: {cases} cases, {steps} steps, {images} images delivered in {:?}",
+        "{NAME}: {cases} cases, {steps} steps, {images} images delivered in {:?}; \
+         the last {counted} cases left {gdi} GDI objects",
         started.elapsed()
     );
     tally.finish(steps);
 }
 
 /// 1 ケース: 新しいトレイを無作為な設定で始め、手を送り、最後に待機へ戻す。
-/// (手数, 届いた画像の数) を返す。
-fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize) {
+/// (手数, 届いた画像の数, 始めから終わりまでに増えた GDI のオブジェクト) を返す。
+/// 始めはトレイと舞台を作った後、終わりは片付ける前に数える。テストの `Desk` は起動のたびに
+/// 窓のクラスを登録し直し、使われない枠のブラシを 1 つ作る（本物は 1 回だけ）ので、それは含めない。
+fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
     let mut desk = Desk::start_with(|settings| {
         scene::randomize(rng, settings);
         config::save_markup(rng.chance(0.6));
@@ -287,6 +303,7 @@ fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize) {
         shots,
     };
     crate::test_support::take_shell_opened();
+    let first = gui_objects();
     let count = rng.range(STEPS);
     for step in 0..count {
         let before = Snapshot::take(&world);
@@ -311,9 +328,10 @@ fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize) {
     let before = Snapshot::take(&world);
     oracle::after_step(&mut world, &scene, &before, &Action::Wait(0));
     assert!(!s().active, "the case ends idle");
+    let left = gui_objects().0 as i64 - first.0 as i64;
     let delivered = world.delivered;
     crate::ui::set_theme_choice(config::AppTheme::System);
     drop(scene);
     drop(desk);
-    (count, delivered)
+    (count, delivered, left)
 }

@@ -9,8 +9,8 @@
 //! | オーバーレイ: 移動、押したまま、ドラッグ、クリック、ダブルクリック、右クリックとホイール | オーバーレイが出ているとき | 3、5、11、4、2.5、2.5（書き込み中は押したまま 5、ドラッグ 5、クリック 2.5。全画面のモードでは 2.5、5.5、2） |
 //! | オーバーレイ: 離す | 押したままのとき | 40 |
 //! | キー: Escape、Enter、Ctrl+Z/Y/C、そのほか | オーバーレイが出ているとき | 2.5（書き込み中は 1.5）、2.5（同 1.5）、2.5、3 |
-//! | ツールバー: カメラとビデオ（ビデオを 6 割）、範囲のメニュー、ペン、履歴と歯車、×、移動・ホバー・ずらし | ツールバーが出ているとき | 3.5、4.5、2.5、2、2、2.5 |
-//! | 書き込みのバー: 道具、元に戻す・やり直す・すべて消去、キャプチャ、×、ホバー・ずらし・離れる | バーが出ているとき | 12、14、7、7.5、9 |
+//! | ツールバー: カメラとビデオ（ビデオを 6 割）、範囲のメニュー、ペン、履歴と歯車、×、移動・ホバー・ずらし（半分は移動） | ツールバーが出ているとき | 3.5、4.5、2.5、2、2、3 |
+//! | 書き込みのバー: 道具、元に戻す・やり直す・すべて消去、キャプチャ、×、ホバー・ずらし・離れる | バーが出ているとき | 12、12、7、9、9 |
 //! | 通知: ホバー・クリック・離れる、メニュー、タイマー | 通知が出ているとき | 12、7、8 |
 //! | カウントダウン: 刻みと再描画、クリック | カウントダウンのとき（刻みは残りが 2 以上のとき） | 12、8 |
 //! | システムのメッセージ（WM_DISPLAYCHANGE、WM_DPICHANGED、WM_SETTINGCHANGE、WM_CANCELMODE） | いつでも | 2 |
@@ -296,15 +296,15 @@ fn choices(now: &Snapshot) -> Vec<(Kind, u32)> {
             (Kind::Pen, 25),
             (Kind::Leave, 20),
             (Kind::Close, 20),
-            (Kind::Handle, 25),
+            (Kind::Handle, 30),
         ]);
     }
     if free && now.bar {
         list.extend([
             (Kind::BarTool, 120),
-            (Kind::BarEdit, 140),
+            (Kind::BarEdit, 120),
             (Kind::BarCapture, 70),
-            (Kind::BarClose, 75),
+            (Kind::BarClose, 90),
             (Kind::BarPointer, 90),
         ]);
     }
@@ -385,7 +385,8 @@ fn build(rng: &mut Rng, kind: Kind, now: &Snapshot, scene: &Scene) -> Action {
         Kind::Pen => Action::Toolbar(EDIT_BUTTON),
         Kind::Leave => Action::Toolbar(*rng.pick(&[HISTORY_BUTTON, SETTINGS_BUTTON])),
         Kind::Close => Action::Toolbar(CLOSE_BUTTON),
-        Kind::Handle => match rng.below(4) {
+        // 動かす手を半分にする: 残したツールバーが動かした所に戻るかは、動かしてからでないと見えない。
+        Kind::Handle => match rng.below(6) {
             0 => {
                 let (from, to) = two_buttons(rng, 7);
                 Action::ToolbarSlip(from, to)

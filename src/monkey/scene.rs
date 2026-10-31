@@ -27,26 +27,51 @@ pub(super) struct Scene {
     pub settings: HWND,
     pub history: HWND,
     pub sentry: Sentry,
+    /// メニューの中のループから、本物の機器の入力を除くフック。
+    menu_filter: HHOOK,
+}
+
+/// メニューの中のループが読むメッセージのうち、本物のマウスとキーボードの入力を捨てる。
+/// トレイのメニューは本物のマウスの位置に開くので、マウスが動くと、テストが積んだキーより先に
+/// その下の項目が選ばれてしまう。テストが積んだキーは窓のないメッセージなので通る。
+unsafe extern "system" fn filter_menu_input(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    const MSGF_MENU: i32 = 2;
+    if code == MSGF_MENU && lp != 0 && drive::device_input(&*(lp as *const MSG)) {
+        return 1;
+    }
+    CallNextHookEx(null_mut(), code, wp, lp)
 }
 
 impl Scene {
     pub fn new() -> Scene {
+        // SAFETY: a hook for this thread only, removed when the scene is dropped.
+        let menu_filter = unsafe {
+            SetWindowsHookExW(
+                WH_MSGFILTER,
+                Some(filter_menu_input),
+                null_mut(),
+                GetCurrentThreadId(),
+            )
+        };
+        assert!(!menu_filter.is_null(), "the menu input filter");
         Scene {
             targets: Targets::new(),
             // 設定と履歴のウィンドウを開く操作は、別のプロセスを起動せずにこれを前に出す。
             settings: stub_window(crate::SETTINGS_WINDOW),
             history: stub_window(crate::HISTORY_WINDOW),
             sentry: Sentry::start(),
+            menu_filter,
         }
     }
 }
 
 impl Drop for Scene {
     fn drop(&mut self) {
-        // SAFETY: the stand-ins were made on this thread by `Scene::new`.
+        // SAFETY: the stand-ins and the hook were made on this thread by `Scene::new`.
         unsafe {
             DestroyWindow(self.settings);
             DestroyWindow(self.history);
+            UnhookWindowsHookEx(self.menu_filter);
         }
     }
 }
@@ -290,10 +315,11 @@ impl Drop for Sentry {
 /// ことを確かめる。
 pub(super) fn randomize(rng: &mut Rng, settings: &mut Settings) {
     settings.copy = rng.chance(0.7);
-    settings.save = rng.chance(0.4);
+    // 保存がオンで履歴がオフのときだけ、通知のクリックが保存したファイルを開く。
+    settings.save = rng.chance(0.6);
     settings.ask = false;
     settings.delay = *rng.pick(&config::DELAYS);
-    settings.history = rng.chance(0.7);
+    settings.history = rng.chance(0.5);
     settings.history_limit = *rng.pick(&config::HISTORY_LIMITS);
     settings.countdown = true;
     settings.skip_title = rng.chance(0.5);
@@ -301,7 +327,7 @@ pub(super) fn randomize(rng: &mut Rng, settings: &mut Settings) {
     settings.record_fps = *rng.pick(&config::FRAME_RATES);
     settings.freeze = rng.chance(0.5);
     settings.notify = rng.chance(0.8);
-    settings.keep_toolbar = rng.chance(0.4);
+    settings.keep_toolbar = rng.chance(0.5);
     settings.outline = rng.chance(0.3);
     settings.outline_color = rng.below(annotate::COLORS.len());
     settings.outline_width = rng.below(annotate::OUTLINE_WIDTHS.len());

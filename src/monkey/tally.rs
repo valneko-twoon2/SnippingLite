@@ -19,6 +19,8 @@ pub(super) struct Tally {
     states: Reach,
     /// 面ごとの集計と、その面が出ていた手数。
     surfaces: Vec<(&'static str, Reach, usize)>,
+    /// 一度でも届いた状態と操作の名前。
+    seen: std::collections::HashSet<&'static str>,
 }
 
 fn surface(label: &str) -> usize {
@@ -45,12 +47,22 @@ impl Tally {
         Tally {
             states: Reach::new(&actions::STATES),
             surfaces,
+            seen: std::collections::HashSet::new(),
         }
+    }
+
+    /// どの状態にも、どの種類の操作にも一度は届いた。プロセスで 1 度だけ作るもの（GDI+、
+    /// メニューや通知の初めての表示で作られるもの）は、それまでにそろう。
+    pub fn warmed(&self) -> bool {
+        self.seen.len() == actions::STATES.len() + actions::KINDS.len()
     }
 
     /// 手を選ぶ前の様子と、選んだ操作を数える。
     pub fn step(&mut self, now: &Snapshot, action: &Action) {
-        now.reach(&mut self.states);
+        for state in now.states() {
+            self.states.hit(state);
+            self.seen.insert(state);
+        }
         let free = !now.held;
         let shown = [
             true,
@@ -65,6 +77,7 @@ impl Tally {
         }
         let label = action.label();
         self.surfaces[surface(label)].1.hit(label);
+        self.seen.insert(label);
     }
 
     /// 状態はどれも手数の 2% 以上、操作はどれも、その面が出ていた手数の 2% 以上（少なくとも 1 回）。
