@@ -323,6 +323,43 @@ fn switches_follow_their_defaults_and_only_flip_on_the_exact_line() {
 }
 
 #[test]
+fn a_repeated_key_takes_its_first_line() {
+    // 同じキーの行が 2 つあれば、オン・オフも数も文字も、最初に現れた行で決まる。最初の行の値が
+    // 使えなければ、後ろの行は見ずに既定値になる。
+    assert!(parse_settings("copy=1\r\ncopy=0").copy, "copy=1 first");
+    assert!(!parse_settings("copy=0\r\ncopy=1").copy, "copy=0 first");
+    assert!(parse_settings("save=1\r\nsave=0").save, "save=1 first");
+    assert!(!parse_settings("save=0\r\nsave=1").save, "save=0 first");
+    assert!(
+        parse_settings("copy=yes\r\ncopy=0").copy,
+        "copy: the default"
+    );
+    assert!(
+        !parse_settings("save=yes\r\nsave=1").save,
+        "save: the default"
+    );
+    assert_eq!(parse_settings("delay=5\r\ndelay=3").delay, 5);
+    assert_eq!(parse_settings("delay=7\r\ndelay=5").delay, 0);
+    assert_eq!(
+        parse_settings("theme=dark\r\ntheme=light").theme,
+        AppTheme::Dark
+    );
+    let folders = parse_settings("screenshot_folder=D:\\a\r\nscreenshot_folder=D:\\b");
+    assert_eq!(folders.screenshot_folder, "D:\\a");
+    // 書き込みの切り替えのファイルも同じ。
+    let sandbox = crate::test_support::Sandbox::new();
+    let folder = sandbox.path().join("roaming").join("Snipping Lite");
+    fs::create_dir_all(&folder).unwrap();
+    for (text, on) in [
+        ("markup=1\r\nmarkup=0\r\n", true),
+        ("markup=0\r\nmarkup=1\r\n", false),
+    ] {
+        fs::write(folder.join("markup.ini"), text).unwrap();
+        assert_eq!(load_markup(), on, "{text:?}");
+    }
+}
+
+#[test]
 fn folders_are_trimmed_and_may_contain_spaces_and_japanese() {
     let parsed = parse_settings("screenshot_folder= D:\\My Shots \r\nvideo_folder=E:\\録画\r\n");
     assert_eq!(parsed.screenshot_folder, "D:\\My Shots");
