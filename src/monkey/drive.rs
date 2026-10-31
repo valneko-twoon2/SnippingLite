@@ -42,7 +42,10 @@ pub(super) fn pump(duration: Duration) {
         // SAFETY: plain message loop calls on this thread's queue.
         unsafe {
             let mut message: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) != 0 {
+            for _ in 0..crate::test_support::desk::MESSAGE_LIMIT {
+                if PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) == 0 {
+                    break;
+                }
                 if device_input(&message) {
                     continue;
                 }
