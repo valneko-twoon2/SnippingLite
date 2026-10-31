@@ -20,8 +20,9 @@
 //! - TRAY_RELOAD → 使っているツールバーは隠さず、終えた後は出さない（既存 `new_settings_reach_the_running_tray_process`
 //!   が `active` を手で立てて確かめる。終えた後は書き込み中と同じ経路で、下のテストが確かめる）
 //! - TRAY_STOP → 書かない: メニューに出ないので届かない
-//! - TRAY_SETTINGS → 書かない: 撮影を続けたまま設定を出すか、取り消すかを仕様が決めていない（質問）
-//! - TRAY_HISTORY → 書かない: 送り手の設定ウィンドウは撮影の間は隠れている
+//! - TRAY_SETTINGS、TRAY_HISTORY（2 回目の起動、メニューの「Snipping Lite」）→ 画面を開かず、
+//!   オーバーレイを前面に戻してキーボードを渡す。切り取りは続き、Escape が効く
+//!   （`settings_or_history_asked_for_while_snipping_bring_the_snip_back_instead`）
 //! - TRAY_EXIT → 書かない: プロセスごと終わる
 //!
 //! 書き込み中（切り取った範囲と書き込みのバー。ツールバーは隠れる）
@@ -32,7 +33,8 @@
 //!   （`markup::tests::tray::our_windows_stay_hidden_while_marking_up_and_return_after_it`）
 //! - Enter、Ctrl+C、キャプチャのボタン → 書き込みを重ねて確定する。Escape、× → 捨てる。
 //!   Ctrl+Z、Ctrl+Y → 元に戻す、やり直す（`markup::tests::keys`、既存の `markup::tests`）
-//! - TRAY_SETTINGS → 書かない: 切り取り中と同じ質問
+//! - TRAY_SETTINGS、TRAY_HISTORY → 切り取り中と同じ。書き込みは続き、Enter で確定できる
+//!   （`settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead`）
 //! - TRAY_EXIT → 書かない: 書き込み中の切り取りを捨てて終わるか、確定するかを仕様が決めていない（質問）
 //!
 //! 遅延の待ち（`pending`）
@@ -46,7 +48,8 @@
 //!   （`recording::a_kept_toolbar_returns_after_a_cancelled_countdown_unless_switched_off_meanwhile`）
 //! - 右クリック → 待機と同じ（録画はまだ始まっていない）
 //! - TRAY_STOP → 書かない: メニューに出ないので届かない
-//! - TRAY_SETTINGS、TRAY_HISTORY → 書かない: 録画中と同じ質問
+//! - TRAY_SETTINGS、TRAY_HISTORY → 画面を開かず、カウントダウンを前面に戻す。カウントダウンは続く
+//!   （`recording::settings_or_history_asked_for_during_the_countdown_open_nothing`）
 //! - TRAY_EXIT → 書かない: カウントダウンのウィンドウはプロセスとともに消える
 //!
 //! 録画中
@@ -59,7 +62,7 @@
 //! - TRAY_SETTINGS、TRAY_HISTORY → 書かない: 開いたウィンドウが録画に映ってよいか、仕様にない（質問）
 
 use super::*;
-use crate::test_support::desk::Desk;
+use crate::test_support::{desk::Desk, stub_window};
 
 mod recording;
 
@@ -164,4 +167,94 @@ fn starting_again_while_snipping_leaves_the_selection_going() {
     let entry = crate::history::list().remove(0);
     let (width, height, _) = imaging::decode(&entry.image).unwrap();
     assert_eq!((width, height), (100, 60));
+}
+
+/// 設定と履歴を開くトレイのコマンド。2 回目の起動とメニューの「Snipping Lite」は TRAY_SETTINGS。
+const OPENS: [(&str, WPARAM); 2] = [("settings", TRAY_SETTINGS), ("history", TRAY_HISTORY)];
+
+/// 設定と履歴の画面の代わりの、隠したウィンドウ（設定, 履歴）。見つかるので、本物のプログラムは
+/// 起動しない。机（`Desk`）より後に作ると先に消えるので、テストが途中で失敗しても、表示したまま
+/// 残った窓が机の後片付けを止めない。
+struct Closed([HWND; 2]);
+
+impl Drop for Closed {
+    fn drop(&mut self) {
+        for window in self.0 {
+            // SAFETY: the windows belong to this test.
+            unsafe { DestroyWindow(window) };
+        }
+    }
+}
+
+fn closed_windows() -> Closed {
+    let windows = [stub_window(SETTINGS_WINDOW), stub_window(HISTORY_WINDOW)];
+    for window in windows {
+        // SAFETY: the windows belong to this test.
+        unsafe { ShowWindow(window, SW_HIDE) };
+    }
+    Closed(windows)
+}
+
+/// 撮影の途中に設定や履歴を開こうとしても、どちらの画面も開かず、`going` が続く。`keyboard` が
+/// null でなければ、キーボードはそこへ戻る（別の所へ移しておいてから送る）。
+fn assert_nothing_opens(desk: &Desk, windows: &Closed, keyboard: HWND, going: impl Fn() -> bool) {
+    for (name, command) in OPENS {
+        // SAFETY: plain focus calls on this thread.
+        unsafe { SetFocus(null_mut()) };
+        desk.send(desk.main, WM_COMMAND, command, 0);
+        assert!(
+            !shown(windows.0[0]) && !shown(windows.0[1]),
+            "{name} opens no window"
+        );
+        assert!(going(), "{name} leaves it going");
+        if !keyboard.is_null() {
+            // SAFETY: plain focus query on this thread.
+            assert_eq!(
+                unsafe { GetFocus() },
+                keyboard,
+                "{name} gives the keyboard back"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn settings_or_history_asked_for_while_snipping_bring_the_snip_back_instead() {
+    let desk = Desk::start();
+    let windows = closed_windows();
+    // SAFETY: the windows belong to this test.
+    unsafe { begin_capture() };
+    assert!(s().active);
+    assert_nothing_opens(&desk, &windows, s().overlay, || {
+        s().active && shown(s().overlay) && shown(s().toolbar)
+    });
+    // Escape は、これまでどおり切り取りを終える。終えた後は、待機中なので開く。
+    desk.key(s().overlay, VK_ESCAPE);
+    assert!(!s().active);
+    desk.send(desk.main, WM_COMMAND, TRAY_SETTINGS, 0);
+    assert!(shown(windows.0[0]), "idle again, the settings open");
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead() {
+    let desk = Desk::start_with(|settings| {
+        settings.copy = false;
+        settings.history = true;
+        settings.notify = false;
+    });
+    let windows = closed_windows();
+    s().markup = true;
+    // SAFETY: the windows belong to this test.
+    unsafe { begin_capture() };
+    desk.drag(s().overlay, (200, 200), &[], (360, 280));
+    assert!(s().markup_session.is_some(), "marking up");
+    assert_nothing_opens(&desk, &windows, s().overlay, || {
+        s().markup_session.is_some() && shown(s().overlay) && shown(s().markup_bar)
+    });
+    // Enter は、これまでどおり確定する。
+    desk.key(s().overlay, VK_RETURN);
+    assert!(!s().active);
+    assert_eq!(crate::history::list().len(), 1, "Enter still captures");
 }

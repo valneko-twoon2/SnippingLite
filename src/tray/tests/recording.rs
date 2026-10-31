@@ -103,6 +103,27 @@ fn a_kept_toolbar_returns_after_a_cancelled_countdown_unless_switched_off_meanwh
 }
 
 #[test]
+#[ignore = "Covers the screen"]
+fn settings_or_history_asked_for_during_the_countdown_open_nothing() {
+    let desk = Desk::start_with(|settings| {
+        settings.countdown = true;
+        settings.system_audio = false;
+        settings.notify = false;
+    });
+    let windows = closed_windows();
+    select_video(&desk);
+    let countdown = s().count_window;
+    assert!(!countdown.is_null(), "the countdown runs");
+    // カウントダウンはキーボードを受け取らないので、キーボードは確かめない。
+    assert_nothing_opens(&desk, &windows, null_mut(), || {
+        s().count_window == countdown && shown(countdown) && s().recording.is_none()
+    });
+    // これまでどおり、クリックで取り消せる。
+    desk.mouse(countdown, WM_LBUTTONUP, 10, 10);
+    assert!(s().count_window.is_null() && s().recording.is_none());
+}
+
+#[test]
 #[ignore = "Records the screen"]
 fn starting_events_stop_a_recording_and_start_nothing() {
     let desk = Desk::start_with(|settings| {

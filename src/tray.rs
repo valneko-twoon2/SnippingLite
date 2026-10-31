@@ -78,8 +78,16 @@ pub(crate) unsafe extern "system" fn main_proc(
         WM_COMMAND => {
             match wp & 0xffff {
                 NEW => begin_capture(),
-                TRAY_SETTINGS => launch_settings(),
-                TRAY_HISTORY => launch_history(false),
+                TRAY_SETTINGS => {
+                    if !bring_capture_forward() {
+                        launch_settings();
+                    }
+                }
+                TRAY_HISTORY => {
+                    if !bring_capture_forward() {
+                        launch_history(false);
+                    }
+                }
                 TRAY_STOP => stop_recording(),
                 TRAY_ABOUT => {
                     if about::show().is_err() {
@@ -133,6 +141,25 @@ pub(crate) unsafe extern "system" fn main_proc(
             0
         }
         _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+/// 切り取り中、書き込み中、録画前のカウントダウン中なら、その画面を前面に戻して true を返す。
+/// 設定や履歴の画面（2 回目の起動や、メニューの「Snipping Lite」）は、このときは開かない。
+/// 最前面のオーバーレイの裏に開くと、キーボードを取られて Escape や Enter が効かなくなり、
+/// ライブ表示では撮る画像にも写りうる。オーバーレイにはキーボードも渡す（カウントダウンの
+/// 表示はキーボードを受け取らない）。待機中と録画中は false で、画面を開く（録画中に開いた
+/// 画面は録画に写ってよい）。
+unsafe fn bring_capture_forward() -> bool {
+    let s = state();
+    if s.active {
+        SetForegroundWindow(s.overlay);
+        SetFocus(s.overlay);
+        true
+    } else if !s.count_window.is_null() {
+        ui::raise(s.count_window);
+        true
+    } else {
+        false
     }
 }
 /// アイコンを右クリックしたときのメニュー。録画中だけ「録画を停止」を先頭に加える。
