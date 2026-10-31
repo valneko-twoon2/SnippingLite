@@ -281,6 +281,10 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Snip saved", "切り取りを保存しました"),
     ("Recording saved", "録画を保存しました"),
     (
+        "Recording saved under another name",
+        "録画を別の名前で保存しました",
+    ),
+    (
         "Recording copied to clipboard",
         "録画をクリップボードにコピーしました",
     ),

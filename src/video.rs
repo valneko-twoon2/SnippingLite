@@ -338,12 +338,16 @@ pub(crate) unsafe fn stop_recording() {
     match result {
         Ok((path, frame)) => {
             let copied = state().copy_video && imaging::copy_file(state().owner, &path);
+            if frame.saved.is_some() {
+                // 決めた名前に置けず別の名前で残した録画は、通知の設定にかかわらず場所を知らせる。
+                toast::show_moved_recording(&frame.pixels, frame.width, frame.height, path.clone());
+            }
             if state().copy_video && !copied {
                 message(
                     state().owner,
                     tr("Could not copy the recording to the clipboard."),
                 );
-            } else if state().notify {
+            } else if state().notify && frame.saved.is_none() {
                 // 保存先に残さない録画は、クリップボードにコピーしたことを知らせる。
                 let saved = state().save_video || !copied;
                 toast::show_recording(&frame.pixels, frame.width, frame.height, path, saved);
