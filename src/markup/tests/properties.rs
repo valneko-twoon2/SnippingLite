@@ -285,7 +285,8 @@ fn monitor(rng: &mut Rng, scale: f32) -> RECT {
     rect(left, top, left + w, top + h)
 }
 
-/// 切り取った範囲。下端（バーを置く基準の点）はモニターの上下の中にある。下にも上にも
+/// 切り取った範囲。たいていは下端（バーを置く基準の点）がモニターの上下の中にあり、ときどき
+/// 範囲全体が作業領域の上か下の外（タスクバーの上）にある。下にも上にも
 /// 入らない範囲が十分に出るよう、上端と下端をモニターの端に寄せることがある。ときどき、
 /// バーがちょうど下や上に入るかどうかの境目と、中央に置いたバーがちょうど端の間隔に
 /// 届くかどうかの境目に置く。
@@ -309,6 +310,20 @@ fn area_on(rng: &mut Rng, monitor: RECT, scale: f32) -> RECT {
         _ => rng.range(monitor.left - 300..=monitor.right + 300),
     };
     let half = rng.range(0..=1200);
+    // ときどき、範囲を作業領域の外（上か下のタスクバーの上）だけに置く。下端がちょうど作業領域の
+    // 上端にある範囲（RECT の下端は含まない）と、上端がちょうど作業領域の下端にある範囲も出す。
+    let thick = rng.range(0..=80);
+    let (top, bottom) = match rng.below(10) {
+        0 => {
+            let bottom = rng.range(monitor.top - 80..=monitor.top);
+            (bottom - thick, bottom)
+        }
+        1 => {
+            let top = rng.range(monitor.bottom..=monitor.bottom + 80);
+            (top, top + thick)
+        }
+        _ => (top, bottom),
+    };
     rect(center - half, top, center + half + rng.range(0..=1), bottom)
 }
 
@@ -349,7 +364,15 @@ fn the_bar_stays_on_its_monitor_whenever_it_fits() {
 
 #[test]
 fn the_bar_goes_under_the_area_then_above_then_over_it_and_stays_centered() {
-    let mut reach = Reach::new(&["below", "above", "over", "centered", "pushed in"]);
+    let mut reach = Reach::new(&[
+        "below",
+        "below, pushed in",
+        "above",
+        "above, pushed in",
+        "over",
+        "centered",
+        "pushed in",
+    ]);
     let cases = rng::check(
         "the_bar_goes_under_the_area_then_above_then_over_it_and_stays_centered",
         2000,
@@ -372,12 +395,23 @@ fn the_bar_goes_under_the_area_then_above_then_over_it_and_stays_centered() {
                 edges(area),
                 edges(monitor)
             );
+            // 範囲が作業領域の外（タスクバーの上）にあるときは、作業領域の端の間隔の内側まで寄せる。
             if area.bottom + gap + height <= monitor.bottom - gap {
-                assert_eq!(at.y, area.bottom + gap, "below: {what}");
-                reach.hit("below");
+                let y = (area.bottom + gap).max(monitor.top + gap);
+                assert_eq!(at.y, y, "below: {what}");
+                reach.hit(if y == area.bottom + gap {
+                    "below"
+                } else {
+                    "below, pushed in"
+                });
             } else if area.top - gap - height >= monitor.top + gap {
-                assert_eq!(at.y + height, area.top - gap, "above: {what}");
-                reach.hit("above");
+                let bottom = (area.top - gap).min(monitor.bottom - gap);
+                assert_eq!(at.y + height, bottom, "above: {what}");
+                reach.hit(if bottom == area.top - gap {
+                    "above"
+                } else {
+                    "above, pushed in"
+                });
             } else {
                 // 下にも上にも入らなければ、範囲の中の下端に重ねる。範囲がバーより低くても重なる。
                 assert!(
