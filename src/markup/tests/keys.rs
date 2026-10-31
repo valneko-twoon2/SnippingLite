@@ -8,6 +8,7 @@
 //! | C | 押す | 同上 | 同上 |
 //! | Z | 押す | 最後の線を取り消す。取り消すものがなければ何もしない | `ctrl_z_takes_back_the_last_stroke_and_ctrl_y_puts_it_back` |
 //! | Y | 押す | 取り消した線を戻す。戻すものがなければ何もしない | 同上 |
+//! | Z、Y（描いている・なぞっている途中） | 押す | 途中の線やなぞって消した分を先に確定してから、元に戻す・やり直す。その後は離すまで何もしない | `ctrl_z_and_ctrl_y_in_the_middle_of_a_drag_settle_it_first`、モデルベーステスト |
 //! | Z、Y、C | 押さない | 何もしない | `letters_without_ctrl_and_other_ctrl_letters_leave_the_snip_alone` |
 //! | X | 押す | 何もしない | 同上 |
 //! | Escape | - | 捨てる。何も届かない | `escape_throws_away_the_strokes_and_delivers_nothing`、既存 `escape_and_the_close_button_discard_a_marked_up_snip` |
@@ -71,6 +72,44 @@ fn ctrl_z_takes_back_the_last_stroke_and_ctrl_y_puts_it_back() {
     assert!(drawn(), "the stroke is back on the picture");
     press(&desk, b'Y' as u16, true);
     assert_eq!(stacks(), (1, 1, 0), "nothing more to put back");
+    assert!(s().active && shown(s().markup_bar), "marking up goes on");
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn ctrl_z_and_ctrl_y_in_the_middle_of_a_drag_settle_it_first() {
+    let desk = Desk::start_with(|settings| {
+        settings.copy = false;
+        settings.notify = false;
+    });
+    mark_up(&desk);
+    stroke(&desk);
+    let overlay = s().overlay;
+    // 2 本目を描いている途中の Ctrl+Z: 描きかけの線を 1 回分として確定してから元に戻す。
+    desk.mouse(overlay, WM_MOUSEMOVE, 220, 260);
+    desk.mouse(overlay, WM_LBUTTONDOWN, 220, 260);
+    desk.mouse(overlay, WM_MOUSEMOVE, 300, 260);
+    press(&desk, b'Z' as u16, true);
+    assert_eq!(stacks(), (1, 1, 1), "the line being drawn is taken back");
+    // 押したまま動かしても、離しても、もう描かない。
+    desk.mouse(overlay, WM_MOUSEMOVE, 320, 270);
+    desk.mouse(overlay, WM_LBUTTONUP, 320, 270);
+    assert_eq!(stacks(), (1, 1, 1), "nothing more is drawn");
+    press(&desk, b'Y' as u16, true);
+    assert_eq!(stacks(), (2, 2, 0), "Ctrl+Y puts it back");
+    // 消しゴムで 2 本ともなぞって消した途中の Ctrl+Z: 消した分を 1 回分として確定してから戻す。
+    // SAFETY: the windows belong to this test.
+    unsafe { set_tool(Tool::Eraser) };
+    desk.mouse(overlay, WM_MOUSEMOVE, 260, 230);
+    desk.mouse(overlay, WM_LBUTTONDOWN, 260, 230);
+    desk.mouse(overlay, WM_MOUSEMOVE, 260, 270);
+    assert_eq!(stacks().0, 0, "both lines are erased");
+    press(&desk, b'Z' as u16, true);
+    assert_eq!(stacks(), (2, 2, 1), "the erasing is taken back");
+    desk.mouse(overlay, WM_LBUTTONUP, 260, 270);
+    assert_eq!(stacks(), (2, 2, 1), "letting go adds nothing to undo");
+    press(&desk, b'Y' as u16, true);
+    assert_eq!(stacks(), (0, 3, 0), "Ctrl+Y erases them again");
     assert!(s().active && shown(s().markup_bar), "marking up goes on");
 }
 

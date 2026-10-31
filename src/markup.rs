@@ -140,7 +140,30 @@ unsafe fn change(marks: Vec<Mark>) {
     render_all();
 }
 
+/// 描いている途中の線や、消しゴムでなぞっている途中の操作を確定する。離したときのほか、途中で
+/// 元に戻す・やり直すときにも先に呼ぶ。こうすると、元に戻す・やり直すの一覧は確定した書き込み
+/// だけを持ち、途中の操作も 1 回分として元に戻せ、やり直せる（確定せずに元に戻すと、離したときに
+/// なぞる前の一覧が積まれ、やり直しが消えたり、見た目の変わらない「元に戻す」が残ったりする）。
+unsafe fn settle() {
+    let Some(session) = state().markup_session.as_mut() else {
+        return;
+    };
+    if let Some(stroke) = session.stroke.take() {
+        let mut marks = session.marks.clone();
+        marks.push(stroke);
+        change(marks);
+    } else if let Some(Erasing { before, .. }) = session.erasing.take() {
+        // なぞった間に消した線は、まとめて 1 回で元に戻せる。
+        if before.len() != session.marks.len() {
+            session.undo.push(before);
+            session.redo.clear();
+            InvalidateRect(state().markup_bar, null(), 0);
+        }
+    }
+}
+
 pub(crate) unsafe fn undo() {
+    settle();
     let Some(session) = state().markup_session.as_mut() else {
         return;
     };
@@ -152,6 +175,7 @@ pub(crate) unsafe fn undo() {
 }
 
 pub(crate) unsafe fn redo() {
+    settle();
     let Some(session) = state().markup_session.as_mut() else {
         return;
     };
@@ -397,18 +421,7 @@ pub(crate) unsafe fn overlay_message(
         }
         WM_LBUTTONUP => {
             ReleaseCapture();
-            if let Some(stroke) = session.stroke.take() {
-                let mut marks = session.marks.clone();
-                marks.push(stroke);
-                change(marks);
-            } else if let Some(Erasing { before, .. }) = session.erasing.take() {
-                // なぞった間に消した線は、まとめて 1 回で元に戻せる。
-                if before.len() != session.marks.len() {
-                    session.undo.push(before);
-                    session.redo.clear();
-                    InvalidateRect(state().markup_bar, null(), 0);
-                }
-            }
+            settle();
             Some(0)
         }
         WM_KEYDOWN => {
