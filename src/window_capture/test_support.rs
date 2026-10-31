@@ -121,6 +121,29 @@ impl Drop for CoveredWindow {
     }
 }
 
+/// 枠も題名もない窓（WS_POPUP）。隠したまま作るので、画面には出ない。壊すのは呼んだ側。
+pub fn popup(x: i32, y: i32, width: i32, height: i32) -> HWND {
+    // SAFETY: a private window of the system STATIC class, owned by the calling test.
+    unsafe {
+        let hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            crate::w("STATIC").as_ptr(),
+            null(),
+            WS_POPUP,
+            x,
+            y,
+            width,
+            height,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            GetModuleHandleW(null()),
+            null(),
+        );
+        assert!(!hwnd.is_null());
+        hwnd
+    }
+}
+
 pub fn center(pixels: &[u8], width: i32, height: i32) -> [u8; 4] {
     let offset = ((height / 2 * width + width / 2) * 4) as usize;
     [
