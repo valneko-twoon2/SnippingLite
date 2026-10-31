@@ -310,6 +310,38 @@ pub mod screen;
 /// real ones, and the test plays the part of the message loop and of the mouse.
 pub mod desk;
 
+/// ランダムテストのためのシード固定の乱数と、ケースを回して失敗を再現できるようにする仕組み。
+pub mod rng;
+
+/// 点 `p` から折れ線 `points` までの距離（f64）。点のない線は `None`。線分ごとに、端点までの
+/// 距離と、垂線の足が線分の上にあれば外積から求めた垂線の長さの、小さいほうを取る。線の描画と
+/// 消しゴムの判定を、別の方法で確かめるためのもの。
+pub fn distance_to_line(points: &[(f32, f32)], (x, y): (f32, f32)) -> Option<f64> {
+    let p = (x as f64, y as f64);
+    let to = |q: (f64, f64)| ((p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)).sqrt();
+    let segment = |a: (f32, f32), b: (f32, f32)| {
+        let (a, b) = ((a.0 as f64, a.1 as f64), (b.0 as f64, b.1 as f64));
+        let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+        let length = (dx * dx + dy * dy).sqrt();
+        let ends = to(a).min(to(b));
+        let past_a = (p.0 - a.0) * dx + (p.1 - a.1) * dy > 0.0;
+        let before_b = (b.0 - p.0) * dx + (b.1 - p.1) * dy > 0.0;
+        if length > 0.0 && past_a && before_b {
+            ends.min((dx * (p.1 - a.1) - dy * (p.0 - a.0)).abs() / length)
+        } else {
+            ends
+        }
+    };
+    match points {
+        [] => None,
+        [only] => Some(segment(*only, *only)),
+        _ => points
+            .windows(2)
+            .map(|pair| segment(pair[0], pair[1]))
+            .reduce(f64::min),
+    }
+}
+
 /// The GDI and USER objects this process owns, to see whether a flow gives them all back.
 pub fn gui_objects() -> (u32, u32) {
     use windows_sys::Win32::Foundation::HANDLE;

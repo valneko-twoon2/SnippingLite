@@ -330,6 +330,28 @@ fn folders_are_trimmed_and_may_contain_spaces_and_japanese() {
 }
 
 #[test]
+fn a_chosen_folder_ending_in_a_wide_space_survives_a_restart() {
+    // Windows は名前の末尾の全角空白（U+3000）と NBSP を残すので、そう終わるフォルダーを選べる。
+    // 読み込みで落とすと、再起動の後は選んだのとは別のフォルダーに保存してしまう。
+    for folder in ["D:\\録画\u{3000}", "D:\\Shots\u{a0}"] {
+        let chosen = Settings {
+            screenshot_folder: folder.to_owned(),
+            video_folder: folder.to_owned(),
+            ..parse_settings("")
+        };
+        assert_eq!(
+            parse_settings(&settings_text(&chosen)),
+            chosen,
+            "{folder:?}"
+        );
+    }
+    // 手で書き足した半角の空白とタブは、これまでどおり落とす。
+    let typed = parse_settings("screenshot_folder=\t D:\\Shots \t\r\ntheme= dark \r\n");
+    assert_eq!(typed.screenshot_folder, "D:\\Shots");
+    assert_eq!(typed.theme, AppTheme::Dark);
+}
+
+#[test]
 fn pen_choices_round_trip_and_fall_back() {
     let _sandbox = crate::test_support::Sandbox::new();
     assert_eq!(load_pen(), (0, 1), "no file yet");
@@ -413,3 +435,4 @@ fn a_chosen_folder_wins_and_the_defaults_are_per_user() {
 }
 
 mod compat;
+mod properties;
