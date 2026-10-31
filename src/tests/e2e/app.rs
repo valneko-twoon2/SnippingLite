@@ -1,5 +1,13 @@
 use super::*;
 
+/// アプリを起動し直す回数の上限。起動したアプリがショートカットを登録できなかったとき
+/// （ほかのテストのプロセスがその瞬間だけ持っていたとき）や、トレイを渡して終わったときに起動し直す。
+const START_ATTEMPTS: usize = 3;
+/// ショートカットとトレイの窓が空くのを待つ秒数。ほかのテストのプロセスが一時的に持つことがある。
+const FREE_SECONDS: u64 = 30;
+/// 止めたプロセスが終わるのを待つ秒数。
+const EXIT_SECONDS: u64 = 10;
+
 pub fn hotkey_taken() -> bool {
     // SAFETY: a thread hotkey that is released right away.
     unsafe {
@@ -11,6 +19,28 @@ pub fn hotkey_taken() -> bool {
     }
 }
 
+/// どこかのプロセスにトレイの窓（`SnippingLiteMain`）があるか。あれば、起動したアプリはそこへ
+/// 設定を開く知らせを送って終わる（動いている Snipping Lite に触れることになる）。
+fn tray_exists() -> bool {
+    let class = wide("SnippingLiteMain");
+    // SAFETY: a plain window query; the class name is nul-terminated.
+    !unsafe { FindWindowW(class.as_ptr(), null()) }.is_null()
+}
+
+/// プロセスを止め、終わるのを上限つきで待つ。
+fn stop(child: &mut Child) {
+    let _ = child.kill();
+    let end = Instant::now() + Duration::from_secs(EXIT_SECONDS);
+    while !matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
+        if Instant::now() >= end {
+            eprintln!("プロセス {} が {EXIT_SECONDS} 秒で終わらない", child.id());
+            break;
+        }
+        settle(50);
+    }
+    disown(child.id());
+}
+
 /// The app under test with its own settings, history and output folders.
 pub struct App {
     pub child: Child,
@@ -19,14 +49,10 @@ pub struct App {
 
 impl App {
     pub fn start(name: &str, settings: &str) -> App {
-        assert!(
-            !hotkey_taken(),
-            "Alt+Shift+S is in use: close Snipping Lite before running the end-to-end tests"
-        );
         let root =
             std::env::temp_dir().join(format!("snippinglite-e2e-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        for folder in ["roaming/Snipping Lite", "local", "shots", "videos"] {
+        for folder in ["roaming/Snipping Lite", "local", "temp", "shots", "videos"] {
             std::fs::create_dir_all(root.join(folder)).unwrap();
         }
         std::fs::write(
@@ -38,21 +64,49 @@ impl App {
             ),
         )
         .unwrap();
-        let child = App::command(&root).spawn().expect("Start the app");
-        let app = App { child, root };
-        settle(500);
-        assert!(
-            wait_for(15, || hotkey_taken().then_some(())).is_some(),
-            "The app did not register Alt+Shift+S"
-        );
-        app
+        for attempt in 1..=START_ATTEMPTS {
+            let free = wait_for(FREE_SECONDS, || {
+                (!hotkey_taken() && !tray_exists()).then_some(())
+            });
+            if free.is_none() {
+                let _ = std::fs::remove_dir_all(&root);
+                panic!("Alt+Shift+S is in use or another tray is running: close Snipping Lite before running the end-to-end tests");
+            }
+            let mut child = App::command(&root).spawn().expect("Start the app");
+            adopt(child.id());
+            settle(500);
+            // 起動したアプリが動き続け、ショートカットを登録したら始める。
+            let started = wait_for(15, || match child.try_wait() {
+                Ok(None) => hotkey_taken().then_some(true),
+                _ => Some(false),
+            });
+            if started == Some(true) {
+                return App { child, root };
+            }
+            eprintln!(
+                "{attempt} 回目に起動したアプリが Alt+Shift+S を登録しなかった（{}）",
+                if started.is_some() {
+                    "終わった"
+                } else {
+                    "15 秒待った"
+                }
+            );
+            stop(&mut child);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+        panic!("The app did not register Alt+Shift+S");
     }
 
+    /// テストするアプリのプロセスを、テストの設定・履歴・一時フォルダーで起動する命令。
+    /// 一時フォルダーも差し替えるので、保存しない録画（1 日より古いものを消す）や、バージョン情報の
+    /// ページが、利用者の本物の一時フォルダーに書かれない。
     pub fn command(root: &Path) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_snippinglite"));
         command
             .env("APPDATA", root.join("roaming"))
-            .env("LOCALAPPDATA", root.join("local"));
+            .env("LOCALAPPDATA", root.join("local"))
+            .env("TEMP", root.join("temp"))
+            .env("TMP", root.join("temp"));
         command
     }
 
@@ -81,12 +135,12 @@ impl App {
 
     /// Opens the history window on the newest screenshot.
     pub fn history(&self) -> Process {
-        Process(
-            App::command(&self.root)
-                .args(["--history", "--latest"])
-                .spawn()
-                .expect("Start the history window"),
-        )
+        let child = App::command(&self.root)
+            .args(["--history", "--latest"])
+            .spawn()
+            .expect("Start the history window");
+        adopt(child.id());
+        Process(child)
     }
 
     pub fn files(&self, folder: &str, extension: &str) -> Vec<PathBuf> {
@@ -108,8 +162,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        stop(&mut self.child);
         settle(300);
         let _ = std::fs::remove_dir_all(&self.root);
     }
@@ -120,7 +173,6 @@ pub struct Process(pub Child);
 
 impl Drop for Process {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        stop(&mut self.0);
     }
 }

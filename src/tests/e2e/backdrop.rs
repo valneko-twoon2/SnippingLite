@@ -1,5 +1,11 @@
 use super::*;
 
+/// 置いた後の背景の窓の重なり順を固定するか。背景の窓も最前面の窓なので、前面に出るたびに
+/// （ほかのプロセスの窓が閉じて Windows が前面に戻したときや、テストが前面を取り戻したとき）
+/// 最前面の中のいちばん上へ上がり、アプリの残したツールバーや録画の表示を覆ってしまう。覆われた
+/// ツールバーは見えず、クリックも背景の窓に当たる。重なり順は `topmost` でだけ変える。
+static KEEP_PLACE: AtomicBool = AtomicBool::new(false);
+
 pub unsafe fn fill(dc: HDC, r: RECT, rgb: u32) {
     let brush = CreateSolidBrush(colorref(rgb));
     FillRect(dc, &r, brush);
@@ -13,6 +19,11 @@ pub unsafe extern "system" fn backdrop_proc(
     lp: LPARAM,
 ) -> LRESULT {
     match msg {
+        // 前面に出ても重なり順を変えず、アプリの最前面の窓（ツールバーや録画の表示）の下に残る。
+        WM_WINDOWPOSCHANGING if KEEP_PLACE.load(Ordering::Relaxed) && lp != 0 => {
+            (*(lp as *mut WINDOWPOS)).flags |= SWP_NOZORDER;
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
         WM_ERASEBKGND => 1,
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -114,7 +125,10 @@ impl Backdrop {
             assert!(!hwnd.is_null(), "Create the backdrop");
             ShowWindow(hwnd, SW_SHOW);
             SetForegroundWindow(hwnd);
+            set_backdrop_window(hwnd);
             settle(500);
+            // 最前面のいちばん上に置いた後は、重なり順を `topmost` でだけ変える。
+            KEEP_PLACE.store(true, Ordering::Relaxed);
             Backdrop {
                 hwnd,
                 monitor: r,
@@ -154,7 +168,8 @@ impl Backdrop {
     }
 
     pub fn topmost(&self, on: bool) {
-        // SAFETY: the window belongs to this thread.
+        KEEP_PLACE.store(false, Ordering::Relaxed);
+        // SAFETY: the window belongs to this thread, so the position changes before the call returns.
         unsafe {
             SetWindowPos(
                 self.hwnd,
@@ -166,6 +181,7 @@ impl Backdrop {
                 SWP_NOMOVE | SWP_NOSIZE,
             );
         }
+        KEEP_PLACE.store(true, Ordering::Relaxed);
         settle(200);
     }
 
@@ -211,6 +227,8 @@ impl Backdrop {
 
 impl Drop for Backdrop {
     fn drop(&mut self) {
+        set_backdrop_window(null_mut());
+        KEEP_PLACE.store(false, Ordering::Relaxed);
         // SAFETY: the window belongs to this thread.
         unsafe { DestroyWindow(self.hwnd) };
         settle(100);
