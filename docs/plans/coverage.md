@@ -1,19 +1,24 @@
-# Test coverage plan
+# テストカバレッジ計画
 
-Goal: 95% line coverage of the application code, measured by `pwsh -File scripts/coverage.ps1`.
-The script runs the unit tests together with the ones marked `#[ignore]` (they need a desktop,
-the clipboard or an audio device) and fails below the threshold. The end-to-end tests
-(`src/tests/e2e/`) and the test helpers (`test_support`) are not measured.
+目標: アプリケーションコードの行カバレッジ 95%。`pwsh -File scripts/coverage.ps1` で測定する。
+このスクリプトはユニットテストと `#[ignore]` 付きのテスト（デスクトップ、クリップボード、
+音声デバイスが必要なもの）を一緒に実行し、しきい値を下回ると失敗する。エンドツーエンドテスト
+（`src/tests/e2e/`）とテスト用ヘルパー（`test_support`）は測定の対象外。
 
-| Stage | Scope | State |
+| 段階 | 範囲 | 状態 |
 |---|---|---|
-| 0 | `scripts/coverage.ps1`, shared test sandbox (`src/test_support.rs`) | done |
-| 1 | Pure logic and file I/O: config, history, imaging, ui, ui/canvas, window_capture, record | done |
-| 2 | egui screens run without a window: settings_ui, history_ui | done |
-| 3 | Win32 window procedures driven in-process: toast, overlay, toolbar, screenshot, video, main | done |
-| 4 | Close the remaining gaps, document the workflow | done |
+| 0 | `scripts/coverage.ps1`、共有テスト用サンドボックス（`src/test_support.rs`） | 完了 |
+| 1 | 純粋なロジックとファイル I/O: config、history、imaging、ui、ui/canvas、window_capture、record | 完了 |
+| 2 | ウィンドウなしで動かす egui 画面: settings_ui、history_ui | 完了 |
+| 3 | プロセス内で動かす Win32 ウィンドウプロシージャ: toast、overlay、toolbar、screenshot、video、main | 完了 |
+| 4 | 残りの隙間を埋め、手順を文書化する | 完了 |
 
-Baseline before stage 0: 18% (33% with the desktop tests). After stage 3: 96.3% of 8,370 lines (311 missed), which still counted the unit tests that lived inside the product files. After the files were split to at most 500 lines the test modules are excluded too, and the same run measures 95.4% of 6,520 lines (299 missed).
+段階 0 の前のベースラインは 18%（デスクトップのテストを含めて 33%）。段階 3 の後は 8,370 行中 96.3%（未到達 311 行）だったが、これは製品ファイルの中にあったユニットテストも数えていた。ファイルを 500 行以下に分割した後はテストモジュールも除外され、同じ実行で 6,520 行中 95.4%（未到達 299 行）になった。
 
-What is still not covered (about 311 lines): the entry points that open a real eframe window\n(main, settings_ui::run, history_ui::run), branches that need a failing Windows API (device\nand GDI+ errors, a missing AAC encoder), and the per-process audio loopback, which is checked by\n
-ecords_system_audio_and_only_the_chosen_app. That test needs a sound output that records\nper-process audio, so scripts/coverage.ps1 skips it; run it by hand on a machine that has one.\nA failing test makes the coverage data of the whole run unusable, which is why the script\nretries a failed run once.
+まだカバーされていないもの（約 311 行）: 実際の eframe ウィンドウを開くエントリポイント
+（main、settings_ui::run、history_ui::run）、失敗する Windows API が必要な分岐（デバイスと
+GDI+ のエラー、AAC エンコーダーの欠如）、プロセス単位の音声ループバック。最後のものは
+`records_system_audio_and_only_the_chosen_app` で確認する。このテストにはプロセス単位の音声を
+録音できるサウンド出力が必要なため、`scripts/coverage.ps1` はスキップする。そうしたマシンで
+手動で実行すること。テストが 1 つ失敗すると実行全体のカバレッジデータが使えなくなるので、
+スクリプトは失敗した実行を 1 回だけやり直す。

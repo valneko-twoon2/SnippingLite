@@ -1,13 +1,15 @@
-# SnippingLite agent instructions
+# SnippingLite エージェント指示
 
-SnippingLite is a native Windows screenshot utility. The Rust project lives in `src/`; run Cargo with `--manifest-path src/Cargo.toml` and, except for `fmt`, `--config src/.cargo/config.toml` from the repository root.
+SnippingLite はネイティブの Windows 向けスクリーンショットユーティリティです。Rust プロジェクトは `src/` にあります。Cargo はリポジトリのルートから `--manifest-path src/Cargo.toml` を付けて実行し、`fmt` 以外は `--config src/.cargo/config.toml` も付けます。
 
-Read `.agents/skills/snippinglite-validation/SKILL.md` before implementation. Keep `.claude/skills/` in sync with `.agents/skills/`. Use English for code comments, commits and technical documentation; reply to the user in their language. Keep the English and Japanese READMEs aligned.
+実装の前に `.agents/skills/snippinglite-validation/SKILL.md` を読むこと。`.claude/skills/` は `.agents/skills/` と同期を保つこと。コードのコメント、コミットメッセージ、技術文書は日本語で書き、ユーザーへの返答もユーザーの言語（日本語）で行う。英語版と日本語版の README は内容をそろえる（README は現行どおり英語版・日本語版の両方を維持し、日本語化の対象にしない）。
 
-Record `git status --short` before work and preserve user changes. Use UTF-8 and CRLF for text except the LF-only Git hook launchers. Do not bypass hooks. Before committing run `pwsh -File scripts/validate.ps1`, stage only task files, and create an English Conventional Commit without attribution trailers. Run `pwsh -File scripts/complete-task.ps1` before reporting completion. Report validation and any remaining user changes honestly.
+作業前に `git status --short` を記録し、ユーザーの変更を保全すること。テキストは UTF-8 と CRLF を使う（LF 専用の Git フックのランチャーは除く）。フックを回避しない。コミット前に `pwsh -File scripts/validate.ps1` を実行し、作業対象のファイルだけをステージして、Conventional Commit 形式（種別は `feat:` などの英語、件名と本文は日本語）でコミットする。帰属表記のトレーラー（`Co-Authored-By` など）は付けない。完了を報告する前に `pwsh -File scripts/complete-task.ps1` を実行する。検証結果と残っているユーザーの変更は正直に報告する。
 
-All UI text must be vertically centered in its row, button, or box: use `*_CENTER` anchors in egui and `DT_VCENTER` in Win32 text, and keep the Japanese font `y_offset_factor` tweak in `install_fonts`. `scripts/check-text-alignment.ps1` (run by `validate.ps1`) rejects top or bottom anchors; mark a justified exception with `// align-ok: <reason>`. After changing UI, look at a screenshot of the window and confirm the text is centered.
+ユーザーが箇条書きなどで複数の依頼をまとめて出したときは、途中で確認のために止まらず、すべてを最後まで進める。確認が必要なのは、取り消しにくい操作や外部に影響する操作（リモートへの push、削除など）で、あらかじめ許可されていない場合だけにする。迷う点は妥当な既定値を選び、最後にその内容を報告する。
 
-Do not panic in Win32 callbacks. Keep debug information and incremental compilation disabled. Preserve the static CRT and control-flow guard release configuration. Run `cargo audit` when dependencies change. Do not add dependencies or tests without a concrete need.
+すべての UI テキストは、行・ボタン・ボックスの中で上下中央に配置すること。egui では `*_CENTER` アンカー、Win32 のテキストでは `DT_VCENTER` を使い、`install_fonts` の日本語フォント `y_offset_factor` の調整は残す。`scripts/check-text-alignment.ps1`（`validate.ps1` が実行する）は上端・下端のアンカーを拒否する。正当な例外には `// align-ok: <理由>` を付ける。UI を変更したら、ウィンドウのスクリーンショットを見て、テキストが中央にあることを確認する。
 
-Keep every source file (.rs, .ps1, .cmd) at 500 lines or fewer. scripts/check-file-length.ps1 runs in alidate.ps1 and in the Stop hook, and a Claude Code hook runs it after each edit, so an over-long file blocks the commit and the end of the task. Split the file by responsibility instead of trimming it: move a cohesive group of items or the mod tests block into a child module (oo.rs plus oo/bar.rs), and split long test files by topic into 	ests/<topic>.rs. Do not delete tests or comments to fit. A file that cannot be split sensibly may carry a length-ok: <reason> marker in its first five lines.
+Win32 コールバックの中で panic しない。デバッグ情報とインクリメンタルコンパイルは無効のままにする。静的 CRT と control-flow guard のリリース設定を維持する。依存関係を変えたら `cargo audit` を実行する。具体的な必要がないまま依存関係やテストを増やさない。
+
+すべてのソースファイル（.rs、.ps1、.cmd）は 500 行以下に保つ。`scripts/check-file-length.ps1` は `validate.ps1` と Stop フックで実行され、Claude Code のフックも編集のたびに実行するため、長すぎるファイルはコミットとタスクの終了を妨げる。行数を削って収めるのではなく、責務ごとにファイルを分割する。まとまった項目群や `mod tests` ブロックは子モジュール（`foo.rs` と `foo/bar.rs`）へ移し、長いテストファイルは話題ごとに `tests/<topic>.rs` へ分ける。収めるためにテストやコメントを削らない。分割しようがないファイルには、先頭 5 行以内に `length-ok: <理由>` のマーカーを付けてよい。

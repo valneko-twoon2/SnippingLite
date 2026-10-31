@@ -1,86 +1,84 @@
-# Snipping Tool settings page
+# Snipping Tool 風の設定ページ
 
-Goal: the settings window looks and reads like the settings page of the Windows 11 Snipping Tool
-(Japanese, dark and light), including the settings that depend on its editor window.
+目標: 設定ウィンドウを、Windows 11 の Snipping Tool の設定ページ（日本語、ダークとライト）と
+同じ見た目・文言にする。エディターウィンドウに依存する設定も含む。
 
-Reference: the user's screenshots of Snipping Tool 11.2608.41.0 (dark theme, Japanese). The
-installed package has no readable Japanese resource, and this environment cannot operate the
-screen, so everything not visible in those screenshots is marked "unknown" below.
+参照元: ユーザーが提供した Snipping Tool 11.2608.41.0（ダークテーマ、日本語）のスクリーンショット。
+インストール済みパッケージには読める日本語リソースがなく、この環境では画面を操作できないため、
+スクリーンショットに写っていないものは下で「不明」としている。
 
-## What the reference page contains
+## 参照ページの内容
 
-| Section | Item | Control |
+| セクション | 項目 | コントロール |
 |---|---|---|
-| 領域の切り取り | 自動的に変更にコピー / スクリーンショットの編集内容はクリップボードに自動的にコピーされます | switch |
-| | 元のスクリーンショットを自動的に保存する | switch + expander: スクリーンショットの保存先 (path, 変更 link, フォルダーを開く button) |
-| | 編集した後でウィンドウを閉じる際に確認する | switch |
-| | 複数のウィンドウ / 別のウィンドウで新しいスクリーンショットを開く | switch |
-| | 各スクリーンショットに境界を追加 | switch + expander: preview, 色 (swatch), 太さ (slider) |
-| | HDR スクリーンショットのカラー コレクター / HDR モニターで撮影したスクリーンショットの色を調整します | switch |
-| 画面録画 | 自動的に変更にコピー / 画面録画の編集内容は自動的にクリップボードにコピーされます | switch |
-| | 元の画面録画を自動的に保存する | switch + expander: 画面録画の保存先 |
-| | 編集した画面録画の保存を依頼する | switch |
-| | 画面録画の開始時に既定でマイク入力を含める | switch with a microphone icon |
-| | 画面録画の開始時に既定でシステム オーディオを含める | switch with a speaker icon |
-| ショートカット | PrintScreen キーを使用して Snipping Tool を開く | link: Windows の設定の変更 |
-| 外観 | アプリ テーマ | expander (options unknown) |
-| このアプリについて (right column) | version, copyright, license, service terms, privacy, third-party software, フィードバックの送信 | links and a button |
+| 領域の切り取り | 自動的に変更にコピー / スクリーンショットの編集内容はクリップボードに自動的にコピーされます | スイッチ |
+| | 元のスクリーンショットを自動的に保存する | スイッチ + エクスパンダー: スクリーンショットの保存先（パス、変更リンク、フォルダーを開くボタン） |
+| | 編集した後でウィンドウを閉じる際に確認する | スイッチ |
+| | 複数のウィンドウ / 別のウィンドウで新しいスクリーンショットを開く | スイッチ |
+| | 各スクリーンショットに境界を追加 | スイッチ + エクスパンダー: プレビュー、色（スウォッチ）、太さ（スライダー） |
+| | HDR スクリーンショットのカラー コレクター / HDR モニターで撮影したスクリーンショットの色を調整します | スイッチ |
+| 画面録画 | 自動的に変更にコピー / 画面録画の編集内容は自動的にクリップボードにコピーされます | スイッチ |
+| | 元の画面録画を自動的に保存する | スイッチ + エクスパンダー: 画面録画の保存先 |
+| | 編集した画面録画の保存を依頼する | スイッチ |
+| | 画面録画の開始時に既定でマイク入力を含める | マイクのアイコン付きスイッチ |
+| | 画面録画の開始時に既定でシステム オーディオを含める | スピーカーのアイコン付きスイッチ |
+| ショートカット | PrintScreen キーを使用して Snipping Tool を開く | リンク: Windows の設定の変更 |
+| 外観 | アプリ テーマ | エクスパンダー（選択肢は不明） |
+| このアプリについて（右の列） | バージョン、著作権、ライセンス、サービス使用条件、プライバシー、サードパーティ製ソフトウェア、フィードバックの送信 | リンクとボタン |
 
-Switch layout: the switch, then the オン/オフ label to its right, then the chevron of an expander.
+スイッチの配置: スイッチ、その右にオン/オフのラベル、さらにエクスパンダーのシェブロン。
 
-## Decisions already taken
+## すでに決めたこと
 
-- Our own settings (capture delay, dim and freeze, notifications, keep the toolbar, history size,
-  frame rate, border colors, and so on) stay in their current sections, drawn like the other cards.
-- Settings that need an editing window are implemented as functions, not only drawn.
+- 独自の設定（キャプチャの遅延、暗転と静止、通知、ツールバーの保持、履歴サイズ、フレームレート、
+  境界の色など）は現在のセクションに残し、ほかのカードと同じように描く。
+- エディターウィンドウを必要とする設定は、表示するだけでなく機能として実装する。
 
-## Stages
+## 段階
 
-1. Widgets: Snipping Tool style card, expander (chevron, divider, nested rows), switch with the
-   オン/オフ label to its right, slider, color swatch, link, subtitle text.
-2. Wording and order of the shared items, in both sections.
-3. Expanders: save folder, border (preview, color picker, thickness slider), app theme.
-4. Layout: responsive two columns with the このアプリについて pane; the license and third-party
-   links open the About page.
-5. Functions: confirm when closing an edited screenshot, open every screenshot in its own window,
-   and ask before saving an edited recording.
-6. Verify in dark and light against screenshots, run `validate.ps1` and `coverage.ps1`.
+1. ウィジェット: Snipping Tool 風のカード、エクスパンダー（シェブロン、区切り線、入れ子の行）、
+   右側にオン/オフのラベルが付くスイッチ、スライダー、色のスウォッチ、リンク、サブタイトルの文字。
+2. 両セクションで、共通の項目の文言と順序をそろえる。
+3. エクスパンダー: 保存先、境界（プレビュー、カラーピッカー、太さのスライダー）、アプリ テーマ。
+4. レイアウト: このアプリについてのペインを持つレスポンシブな 2 列。ライセンスとサードパーティの
+   リンクはバージョン情報ページを開く。
+5. 機能: 編集したスクリーンショットを閉じるときの確認、スクリーンショットごとに別ウィンドウで開く、
+   編集した録画を保存する前の確認。
+6. ダークとライトでスクリーンショットと見比べて確認し、`validate.ps1` と `coverage.ps1` を実行する。
 
-## Decisions (later)
+## 決定（その後）
 
-- The HDR color corrector is left out: capture goes through GDI and has no HDR path.
-- The back arrow is left out; the page has nothing to go back to.
-- Theme options are Light, Dark and Use system setting. After 外観 only the license items remain.
-- Stages 1-4 are done (4dcfa38). The recording editor is in scope (see below), which also gives the
-  recording-side settings a meaning.
+- HDR カラー コレクターは入れない。キャプチャは GDI を通り、HDR の経路がないため。
+- 戻る矢印は入れない。このページには戻る先がない。
+- テーマの選択肢は ライト、ダーク、システム設定を使用。外観の後に残るのはライセンス項目だけ。
+- 段階 1〜4 は完了（4dcfa38）。録画エディターを対象に含める（下記）。これで録画側の設定にも意味ができる。
 
-## Recording editor
+## 録画エディター
 
-Goal: after a recording ends, a window like the Snipping Tool's opens on it: video with play/pause,
-elapsed/total time, seek slider, volume, trim, save, copy, and "more" (open folder, delete).
+目標: 録画が終わったら、Snipping Tool のようなウィンドウがその録画で開く。動画、再生/一時停止、
+経過/合計時間、シークスライダー、音量、トリミング、保存、コピー、「その他」（フォルダーを開く、削除）。
 
-Shape: a separate process, `snippinglite --player <file>`, like `--history`, drawn with egui so it
-shares the palette and the theme. History lists recordings too and opens them in the same window.
+構成: `--history` と同様に別プロセスの `snippinglite --player <file>` とし、egui で描いてパレットと
+テーマを共有する。履歴も録画を一覧し、同じウィンドウで開く。
 
-Engine, with no new dependency (only `windows` crate feature flags):
+エンジン。新しい依存関係は追加しない（`windows` クレートの feature フラグだけ）:
 
-- Playback: WinRT `MediaPlayer` in frame-server mode. It decodes, plays the audio, seeks and sets the
-  volume; each frame is copied to a D3D11 texture and read back into an egui texture.
-- Trim and save: WinRT `MediaComposition` (`MediaClip` trimmed from start/end, rendered to MP4).
-- Copy: put the file on the clipboard as a file drop (`CF_HDROP`), as Explorer does.
+- 再生: フレームサーバーモードの WinRT `MediaPlayer`。デコード、音声再生、シーク、音量を担当する。
+  各フレームは D3D11 テクスチャにコピーし、egui のテクスチャに読み戻す。
+- トリミングと保存: WinRT `MediaComposition`（開始/終了でトリミングした `MediaClip` を MP4 に書き出す）。
+- コピー: エクスプローラーと同じように、ファイルドロップ（`CF_HDROP`）としてクリップボードに置く。
 
-Stages:
+段階:
 
-1. Spike: open a recorded MP4 with `MediaPlayer`, get a frame, seek, read the duration. A test on a
-   file made by the recorder proves it. Decide here whether the engine holds; if not, fall back to
-   Media Foundation `IMFSourceReader` + WASAPI.
-2. Player window: frame, play/pause, time, seek, volume; opened by `--player` and by the
-   recording notification. Done: the engine opens without blocking, because the window's message
-   loop delivers the player's events.
-3. Trim: start/end handles on the seek bar; save as a new file, or replace.
-4. Save, copy, more (open folder, delete); open the window when a recording ends (setting-driven).
-5. Settings that depend on it: copy a recording automatically, keep the original recording
-   (with the recording-folder expander), ask before saving an edited recording.
-6. Same for the screenshot editor: confirm on closing an edited screenshot, open each screenshot in
-   its own window.
-7. Verify with screenshots, `validate.ps1`, `coverage.ps1`.
+1. 試作: 録画した MP4 を `MediaPlayer` で開き、フレームを取り、シークし、長さを読む。レコーダーが
+   作ったファイルでテストして確かめる。ここでエンジンが使えるか判断し、だめなら Media Foundation の
+   `IMFSourceReader` + WASAPI にフォールバックする。
+2. プレイヤーウィンドウ: フレーム、再生/一時停止、時間、シーク、音量。`--player` と録画の通知から開く。
+   完了: ウィンドウのメッセージループがプレイヤーのイベントを届けるため、エンジンはブロックせずに開く。
+3. トリミング: シークバー上の開始/終了ハンドル。新しいファイルとして保存、または置き換え。
+4. 保存、コピー、その他（フォルダーを開く、削除）。録画が終わったらウィンドウを開く（設定で切り替え）。
+5. それに依存する設定: 録画を自動でコピー、元の録画を残す（録画フォルダーのエクスパンダー付き）、
+   編集した録画を保存する前に確認する。
+6. スクリーンショットのエディターにも同じことを行う: 編集したスクリーンショットを閉じるときの確認、
+   スクリーンショットごとに別ウィンドウで開く。
+7. スクリーンショットで確認し、`validate.ps1` と `coverage.ps1` を実行する。
