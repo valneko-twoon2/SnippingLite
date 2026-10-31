@@ -98,15 +98,7 @@ pub(crate) unsafe extern "system" fn main_proc(
                 begin_capture();
             }
             if lp as u32 == WM_RBUTTONUP {
-                let menu = CreatePopupMenu();
-                if state().recording.is_some() {
-                    AppendMenuW(menu, MF_STRING, TRAY_STOP, w(tr("Stop recording")).as_ptr());
-                }
-                // The first entry carries the icon's name and opens the app's window.
-                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Snipping Lite").as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_ABOUT, w(tr("About")).as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_EXIT, w(tr("Exit")).as_ptr());
-                SetMenuDefaultItem(menu, TRAY_SETTINGS as u32, 0);
+                let menu = tray_menu(state().recording.is_some());
                 let mut cursor: POINT = std::mem::zeroed();
                 GetCursorPos(&mut cursor);
                 SetForegroundWindow(hwnd);
@@ -143,6 +135,20 @@ pub(crate) unsafe extern "system" fn main_proc(
         _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
 }
+/// アイコンを右クリックしたときのメニュー。録画中だけ「録画を停止」を先頭に加える。
+/// 表示せずに中身を確かめられるよう、組み立てを分けてある。
+unsafe fn tray_menu(recording: bool) -> HMENU {
+    let menu = CreatePopupMenu();
+    if recording {
+        AppendMenuW(menu, MF_STRING, TRAY_STOP, w(tr("Stop recording")).as_ptr());
+    }
+    // The first entry carries the icon's name and opens the app's window.
+    AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Snipping Lite").as_ptr());
+    AppendMenuW(menu, MF_STRING, TRAY_ABOUT, w(tr("About")).as_ptr());
+    AppendMenuW(menu, MF_STRING, TRAY_EXIT, w(tr("Exit")).as_ptr());
+    SetMenuDefaultItem(menu, TRAY_SETTINGS as u32, 0);
+    menu
+}
 unsafe fn tray(hwnd: HWND, operation: u32) {
     let mut data: NOTIFYICONDATAW = std::mem::zeroed();
     data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
@@ -162,3 +168,6 @@ unsafe fn tray(hwnd: HWND, operation: u32) {
         state().tray_icon = null_mut();
     }
 }
+
+#[cfg(test)]
+mod tests;

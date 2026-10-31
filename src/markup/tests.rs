@@ -215,3 +215,5 @@ fn escape_and_the_close_button_discard_a_marked_up_snip() {
     assert!(!s().active);
     assert_eq!(crate::history::list().len(), 1);
 }
+
+mod tray;
