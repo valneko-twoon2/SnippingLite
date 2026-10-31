@@ -16,6 +16,38 @@ fn sample() -> Vec<u8> {
     ]
 }
 
+/// このプロセスがこれまでにコミットしたメモリーの最大値（バイト）。テストは並んで走るので、
+/// 増え方は大きな余裕をもって比べる。
+fn peak_commit() -> usize {
+    /// PROCESS_MEMORY_COUNTERS（psapi.h）。
+    #[repr(C)]
+    #[derive(Default)]
+    struct Counters {
+        size: u32,
+        page_faults: u32,
+        peak_working_set: usize,
+        working_set: usize,
+        quota_peak_paged_pool: usize,
+        quota_paged_pool: usize,
+        quota_peak_non_paged_pool: usize,
+        quota_non_paged_pool: usize,
+        commit: usize,
+        peak_commit: usize,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn K32GetProcessMemoryInfo(process: isize, counters: *mut Counters, size: u32) -> i32;
+    }
+    let mut counters = Counters {
+        size: std::mem::size_of::<Counters>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: -1 is the pseudo handle of this process, and the structure is sized as declared.
+    let ok = unsafe { K32GetProcessMemoryInfo(-1, &mut counters, counters.size) };
+    assert_ne!(ok, 0, "the memory counters are readable");
+    counters.peak_commit
+}
+
 #[test]
 fn png_files_keep_size_and_pixels() {
     let path = scratch("sample.png");
