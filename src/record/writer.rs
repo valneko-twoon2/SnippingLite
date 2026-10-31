@@ -82,9 +82,11 @@ pub(super) fn open_with(
     // SAFETY: plain Media Foundation calls on objects created here.
     unsafe {
         let mut attributes = None;
-        MFCreateAttributes(&mut attributes, 2)?;
+        MFCreateAttributes(&mut attributes, 3)?;
         let attributes = attributes.ok_or_else(windows::core::Error::empty)?;
         attributes.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+        // 録画は一時名（`.partial`）で書くので、入れ物を名前の拡張子でなくここで MP4 に決める。
+        attributes.SetGUID(&MF_TRANSCODE_CONTAINERTYPE, &MFTranscodeContainerType_MPEG4)?;
         // The capture loop already owns frame pacing; avoid a second wait here.
         attributes.SetUINT32(&MF_SINK_WRITER_DISABLE_THROTTLING, 1)?;
         let url = HSTRING::from(path.to_string_lossy().as_ref());

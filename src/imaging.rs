@@ -33,7 +33,7 @@ use windows_sys::{
 };
 
 use crate::i18n::tr;
-use crate::w;
+use crate::{staging, w};
 
 static GDIPLUS: AtomicUsize = AtomicUsize::new(0);
 
@@ -83,21 +83,55 @@ pub fn bad_size() -> std::io::Error {
 }
 
 /// Encodes straight-alpha top-down BGRA pixels; the extension picks PNG or BMP.
+/// 一時名で書き終えてから `path` に名前を変えるので、途中で止まっても `path` に書きかけは残らない。
 pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
+    let partial = encode_partial(path, pixels, width, height)?;
+    staging::step("picture written", path);
+    staging::commit(&partial, path)
+}
+
+/// `path` の画像を一時名（`staging::partial`）で書き、その名前を返す。`staging::commit` で置く。
+pub fn encode_partial(
+    path: &Path,
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+) -> std::io::Result<PathBuf> {
     if !fits(pixels, width, height) {
         return Err(bad_size());
     }
     if !start_gdiplus() {
         return Err(std::io::Error::other("Could not start GDI+"));
     }
+    let partial = staging::partial(path);
     let bmp = path
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("bmp"));
+    match save(&partial, pixels, width, height, bmp) {
+        Ok(()) => Ok(partial),
+        Err(error) => {
+            let _ = fs::remove_file(&partial);
+            Err(error)
+        }
+    }
+}
+
+/// GDI+ で `path` に書く。種類は名前でなく `bmp` で選ぶ（一時名には `.png` も `.bmp` も付かない）。
+fn save(path: &Path, pixels: &[u8], width: i32, height: i32, bmp: bool) -> std::io::Result<()> {
     let encoder = GUID {
         data1: if bmp { 0x557cf400 } else { 0x557cf406 },
         data2: 0x1a04,
         data3: 0x11d3,
         data4: [0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e],
+    };
+    // BMP には透明がなく、GDI+ はアルファを捨てて色だけを書く。README のとおり透明な部分を白にし、
+    // 半透明の画素（自由形式の外側に描いた線）も、PNG を白い背景で見たときと同じ色にする。
+    let flattened;
+    let pixels = if bmp {
+        flattened = on_white(pixels);
+        &flattened
+    } else {
+        pixels
     };
     // SAFETY: `pixels` outlives the bitmap, which is disposed before returning.
     unsafe {
@@ -123,6 +157,20 @@ pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::R
             Err(std::io::Error::other("Could not encode the image"))
         }
     }
+}
+
+/// 白の上に重ねた、不透明な画素。`c * a + 255 * (255 - a)` を 255 で割って四捨五入する
+/// （255 は奇数なので、ちょうど半分にはならない）。
+fn on_white(pixels: &[u8]) -> Vec<u8> {
+    let mut opaque = pixels.to_vec();
+    for pixel in opaque.as_chunks_mut::<4>().0 {
+        let alpha = pixel[3] as u32;
+        for channel in &mut pixel[..3] {
+            *channel = ((*channel as u32 * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        }
+        pixel[3] = 255;
+    }
+    opaque
 }
 
 /// Decodes an image file into straight-alpha top-down BGRA pixels.
@@ -287,9 +335,11 @@ unsafe fn put_on_clipboard(owner: HWND, format: u32, global: *mut std::ffi::c_vo
 }
 
 /// The screenshot folder from the settings, created when missing.
+/// 前に止まったプロセスが残した書きかけの画像は、ここで消す。
 pub fn screenshot_folder() -> std::io::Result<PathBuf> {
     let folder = crate::config::screenshot_folder(&crate::config::load_settings());
     fs::create_dir_all(&folder)?;
+    staging::remove_leftovers(&folder);
     Ok(folder)
 }
 
