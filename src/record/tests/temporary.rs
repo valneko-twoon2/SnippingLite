@@ -8,7 +8,9 @@
 //! | 古さ | 同値分割 | 0、1 時間 → 残る; 2 日、30 日 → 消える; 未来の日時（時計が戻った）→ 残る |
 //! | 場所 | 範囲 | 親のフォルダー、その隣のフォルダー、一時フォルダーの直下の古いファイル → 残る |
 //! | 環境 | 失敗 | 開いたままで消せないファイル → 残り、ほかの古いファイルは消え、panic せず Ok |
-//! | 環境 | 失敗 | 中のフォルダー → 掃除を止めない（フォルダーそのものの扱いは仕様になく、質問に回す） |
+//! | 環境 | 失敗 | 中のフォルダー → 掃除を止めない |
+//! | 名前 | 同値分割 | 録画専用のフォルダーなので、録画以外の名前（.txt、.part、拡張子なし、大文字、ドットで始まる）も古ければ消える |
+//! | 中のフォルダー | 同値分割 | 古いフォルダー、空のフォルダー → 中身ごと残る |
 
 use super::*;
 use crate::test_support::Sandbox;
@@ -132,4 +134,43 @@ fn a_folder_inside_does_not_stop_the_cleanup() {
     let old = file_at(&folder, "Snipping Lite b.mp4", now - 2 * DAY);
     assert_eq!(temporary_folder_in(sandbox.path(), now).unwrap(), folder);
     assert!(!old.exists());
+}
+
+#[test]
+fn an_old_file_is_removed_whatever_its_name() {
+    // このフォルダーは録画専用なので、録画の名前でないファイルも、1 日より古ければ消す。
+    let sandbox = Sandbox::new();
+    let now = now();
+    let folder = recordings(sandbox.path(), now);
+    let old = now - 2 * DAY;
+    let names = [
+        "notes.txt",
+        "Snipping Lite 1.mp4.part",
+        "no extension",
+        "録画.MP4",
+        ".hidden",
+    ];
+    let files = names.map(|name| file_at(&folder, name, old));
+    let fresh = file_at(&folder, "fresh.txt", now);
+    temporary_folder_in(sandbox.path(), now).unwrap();
+    for (path, name) in files.iter().zip(names) {
+        assert!(!path.exists(), "{name} is removed");
+    }
+    assert!(fresh.exists(), "a file newer than a day stays");
+}
+
+#[test]
+fn an_old_folder_inside_is_kept_with_what_is_in_it() {
+    // 中のフォルダーは消さない。作ったのはこのアプリではなく、中身ごと消すと取り返せない。
+    let sandbox = Sandbox::new();
+    let now = now();
+    let folder = recordings(sandbox.path(), now);
+    // フォルダーは作ったままなので、10 日先の「今」から見て古い。中のファイルも古くする。
+    let inner = folder.join("a folder");
+    let inside = file_at(&inner, "Snipping Lite old.mp4", now - 30 * DAY);
+    let empty = folder.join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    temporary_folder_in(sandbox.path(), now).unwrap();
+    assert!(inner.is_dir() && empty.is_dir(), "the folders stay");
+    assert!(inside.exists(), "and so does what is in them");
 }
