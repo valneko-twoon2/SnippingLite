@@ -377,6 +377,7 @@ mod tests {
         assert!(folder().is_none_or(|f| fs::read_dir(f).is_ok_and(|d| d.count() == 0)));
     }
 
+    mod compat;
     mod folder;
     mod names;
 }
