@@ -38,7 +38,10 @@ foreach ($package in $entries) {
         Sort-Object { $_.Name.ToLowerInvariant() }
     if (!$files) {
         # Some crates publish without their license files; the texts are vendored from upstream.
-        $key = if ($package.repository -match 'github\.com/emilk/egui') { 'egui' } else { $package.name }
+        # 同じリポジトリのクレートは、取り込んだ同じ本文を使う。
+        $key = if ($package.repository -match 'github\.com/emilk/egui') { 'egui' }
+            elseif ($package.repository -match 'github\.com/AccessKit/accesskit') { 'accesskit' }
+            else { $package.name }
         $files = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'licenses') -File -Filter "$key-*" -ErrorAction SilentlyContinue |
             Sort-Object { $_.Name.ToLowerInvariant() }
     }
