@@ -33,23 +33,52 @@ fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
     }
 }
 
+/// 消しゴムを `at` で押しただけ（道筋が 1 点）のときに触れるか。
+fn touches_at(mark: &Mark, at: (f32, f32), reach: f32) -> bool {
+    touches(mark, at, at, reach)
+}
+
 #[test]
 fn the_eraser_reaches_a_line_up_to_its_width_plus_the_reach() {
     let mark = line(&[(0.0, 0.0), (100.0, 0.0)], 2.0);
     // 境界値: 線の太さ 2 と届く距離 8 の合計 10 までは触れる。
-    assert!(touches(&mark, (50.0, 10.0), 8.0));
-    assert!(!touches(&mark, (50.0, 10.5), 8.0));
+    assert!(touches_at(&mark, (50.0, 10.0), 8.0));
+    assert!(!touches_at(&mark, (50.0, 10.5), 8.0));
     // 端の先は、端からの距離で決まる。
-    assert!(touches(&mark, (110.0, 0.0), 8.0));
-    assert!(!touches(&mark, (110.5, 0.0), 8.0));
+    assert!(touches_at(&mark, (110.0, 0.0), 8.0));
+    assert!(!touches_at(&mark, (110.5, 0.0), 8.0));
     // 1 点だけの線（クリック）と、点のない線。
-    assert!(touches(&line(&[(5.0, 5.0)], 1.0), (5.0, 12.0), 6.0));
-    assert!(!touches(&line(&[], 1.0), (0.0, 0.0), 100.0));
+    assert!(touches_at(&line(&[(5.0, 5.0)], 1.0), (5.0, 12.0), 6.0));
+    assert!(!touches_at(&line(&[], 1.0), (0.0, 0.0), 100.0));
     // 同じ点が続いても割り算で壊れない。
-    assert!(touches(
+    assert!(touches_at(
         &line(&[(3.0, 3.0), (3.0, 3.0)], 1.0),
         (3.0, 4.0),
         0.0
+    ));
+}
+
+#[test]
+fn a_quick_eraser_stroke_erases_a_thin_line_it_jumps_over() {
+    // y=0 の線を、(0,-15) と (0,15) の 2 点で横切る。どちらの点も線から 15 離れていて届かないが、
+    // 2 点の間の道筋は線の上を通る。
+    let mark = line(&[(-50.0, 0.0), (50.0, 0.0)], 2.0);
+    assert!(!touches_at(&mark, (0.0, -15.0), 8.0));
+    assert!(!touches_at(&mark, (0.0, 15.0), 8.0));
+    assert!(touches(&mark, (0.0, -15.0), (0.0, 15.0), 8.0));
+    assert!(touches(&mark, (0.0, 15.0), (0.0, -15.0), 8.0), "either way");
+    // 境界値: 道筋が線の端から太さ + 届く距離（10）まで近づけば触れ、それより遠ければ触れない。
+    assert!(touches(&mark, (60.0, -15.0), (60.0, 15.0), 8.0));
+    assert!(!touches(&mark, (60.5, -15.0), (60.5, 15.0), 8.0));
+    // 線に沿って動く道筋は、線までの距離で決まる。
+    assert!(touches(&mark, (-80.0, 10.0), (80.0, 10.0), 8.0));
+    assert!(!touches(&mark, (-80.0, 10.5), (80.0, 10.5), 8.0));
+    // 1 点だけの線（クリック）も、横切れば消える。
+    assert!(touches(
+        &line(&[(0.0, 0.0)], 1.0),
+        (-20.0, 3.0),
+        (20.0, 3.0),
+        2.0
     ));
 }
 

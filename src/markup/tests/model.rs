@@ -42,13 +42,21 @@ impl Model {
         self.change(marks);
     }
 
-    /// なぞった点のどれかから届く線が消える。消えた線があれば、まとめて 1 回で元に戻せる。
+    /// なぞった道筋（押した点と、そこから順に動いた点を結ぶ線分）のどこかから届く線が消える。
+    /// 消えた線があれば、まとめて 1 回で元に戻せる。
     fn erase(&mut self, points: &[(f32, f32)]) -> bool {
         let reach = ERASER_REACH * s().scale;
+        let paths: Vec<((f32, f32), (f32, f32))> = (0..points.len())
+            .map(|i| (points[i.saturating_sub(1)], points[i]))
+            .collect();
         let kept: Vec<Mark> = self
             .marks
             .iter()
-            .filter(|mark| !points.iter().any(|&p| touches(mark, p, reach)))
+            .filter(|mark| {
+                !paths
+                    .iter()
+                    .any(|&(from, to)| touches(mark, from, to, reach))
+            })
             .cloned()
             .collect();
         let erased = kept.len() != self.marks.len();
