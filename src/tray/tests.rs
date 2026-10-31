@@ -35,7 +35,10 @@
 //!   Ctrl+Z、Ctrl+Y → 元に戻す、やり直す（`markup::tests::keys`、既存の `markup::tests`）
 //! - TRAY_SETTINGS、TRAY_HISTORY → 切り取り中と同じ。書き込みは続き、Enter で確定できる
 //!   （`settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead`）
-//! - TRAY_EXIT → 書かない: 書き込み中の切り取りを捨てて終わるか、確定するかを仕様が決めていない（質問）
+//! - TRAY_EXIT → 書き込みを捨てて終わる（Escape と同じ。README）
+//!   （`markup::tests::tray::exiting_while_marking_up_throws_the_snip_away_like_escape`）
+//! - TRAY_RELOAD（コピー、保存、履歴、枠線）→ 確定したときの設定が効く
+//!   （`markup::tests::tray::settings_changed_while_marking_up_apply_when_it_is_captured`）
 //!
 //! 遅延の待ち（`pending`）
 //! - 遅延の設定を外したので、利用者の操作では到達しない。開始で何もしないことと、タイマーで撮ることは
@@ -59,7 +62,8 @@
 //! - TRAY_EXIT → ファイルを仕上げて終わる（既存 `a_recording_is_finished_when_the_program_exits`）
 //! - TRAY_RELOAD（keep_toolbar をオフ）→ 停止の後に残したツールバーを出さない。オフにしなければ出す
 //!   （`recording::a_kept_toolbar_returns_after_a_recording_unless_switched_off_meanwhile`）
-//! - TRAY_SETTINGS、TRAY_HISTORY → 書かない: 開いたウィンドウが録画に映ってよいか、仕様にない（質問）
+//! - TRAY_SETTINGS、TRAY_HISTORY → 開く。開いた画面は録画に写ってよい（README）
+//!   （`recording::settings_and_history_open_while_recording`）
 
 use super::*;
 use crate::test_support::{desk::Desk, stub_window};

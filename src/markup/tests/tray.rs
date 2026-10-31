@@ -1,7 +1,7 @@
 //! トレイの状態とイベントの表（`tray::tests` の先頭のコメント）のうち、書き込み中の行。
 
 use super::*;
-use crate::test_support::stub_window;
+use crate::test_support::{clipboard_image, clipboard_text, stub_window};
 
 /// 撮影を始めるトレイのイベント（`tray::tests::STARTS` と同じ）。どれも `begin_capture` に届く。
 const STARTS: [(&str, u32, WPARAM, LPARAM); 3] = [
@@ -113,6 +113,99 @@ fn switching_the_kept_toolbar_off_while_marking_up_keeps_it_closed_afterwards() 
             !switched_off,
             "switched_off={switched_off}"
         );
+        drop(desk);
+    }
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn exiting_while_marking_up_throws_the_snip_away_like_escape() {
+    let desk = Desk::start_with(|settings| {
+        settings.copy = true;
+        settings.save = true;
+        settings.history = true;
+        settings.notify = false;
+    });
+    // 前の画像と取り違えないよう、クリップボードを文字にしておく。
+    assert!(imaging::copy_text(null_mut(), "-"));
+    mark_up(&desk);
+    stroke(&desk);
+    desk.send(desk.main, WM_COMMAND, TRAY_EXIT, 0);
+    // SAFETY: plain window query.
+    assert_eq!(unsafe { IsWindow(desk.main) }, 0, "the program ends");
+    desk.pump(Duration::from_millis(50));
+    assert!(crate::history::list().is_empty(), "nothing is kept");
+    assert!(shots(&desk).is_empty(), "nothing is saved");
+    assert_eq!(clipboard_text().as_deref(), Some("-"), "nothing is copied");
+}
+
+/// 撮影に効く設定（コピー、保存、履歴、枠線）をまとめて切り替える。
+fn deliver(settings: &mut config::Settings, copy: bool, save: bool, history: bool, outline: bool) {
+    settings.copy = copy;
+    settings.save = save;
+    settings.history = history;
+    settings.outline = outline;
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn settings_changed_while_marking_up_apply_when_it_is_captured() {
+    // (書き込みを始めたときの設定, 確定の前に変えた設定)。どの設定もオンからオフ、オフからオンの
+    // 両方に変わる。コピーか履歴のどちらかに画像が残るので、枠線もどちらでも確かめられる。
+    for (before, after) in [
+        ((false, false, true, false), (true, true, false, true)),
+        ((true, true, false, true), (false, false, true, false)),
+    ] {
+        let desk = Desk::start_with(|settings| {
+            deliver(settings, before.0, before.1, before.2, before.3);
+            settings.notify = false;
+        });
+        assert!(imaging::copy_text(null_mut(), "-"));
+        mark_up(&desk);
+        let snip = s().markup_session.as_ref().unwrap().pixels.clone();
+        let mut settings = config::load_settings();
+        let (copy, save, history, outline) = after;
+        deliver(&mut settings, copy, save, history, outline);
+        config::save_settings(&settings).unwrap();
+        desk.send(desk.main, TRAY_RELOAD, 0, 0);
+        assert!(s().markup_session.is_some(), "marking up goes on");
+        desk.key(s().overlay, VK_RETURN);
+        assert!(!s().active, "captured");
+        let what = format!("{before:?} -> {after:?}");
+        // 届いた画像（どこから取っても同じ）の左上は、枠線がオンなら枠線の色、オフなら切り取ったまま。
+        let mut images = Vec::new();
+        match clipboard_image() {
+            Some(image) => {
+                assert!(copy, "copied only when copying is on now: {what}");
+                images.push(image);
+            }
+            None => assert!(!copy, "copied: {what}"),
+        }
+        let files = shots(&desk);
+        assert_eq!(files.len(), save as usize, "saved: {what}");
+        images.extend(files.iter().map(|file| imaging::decode(file).unwrap()));
+        let entries = crate::history::list();
+        assert_eq!(entries.len(), history as usize, "in the history: {what}");
+        images.extend(
+            entries
+                .iter()
+                .map(|entry| imaging::decode(&entry.image).unwrap()),
+        );
+        assert!(!images.is_empty(), "{what}");
+        let [r, g, b] = annotate::COLORS[s().outline_color];
+        for (width, height, pixels) in images {
+            assert_eq!((width, height), (160, 80), "{what}");
+            let corner = [pixels[0], pixels[1], pixels[2], pixels[3]];
+            if outline {
+                assert_eq!(corner, [b, g, r, 255], "the border is drawn: {what}");
+            } else {
+                assert_eq!(
+                    corner,
+                    [snip[0], snip[1], snip[2], snip[3]],
+                    "no border: {what}"
+                );
+            }
+        }
         drop(desk);
     }
 }

@@ -125,6 +125,28 @@ fn settings_or_history_asked_for_during_the_countdown_open_nothing() {
 
 #[test]
 #[ignore = "Records the screen"]
+fn settings_and_history_open_while_recording() {
+    // 録画中に開いた画面は、録画に写ってよい（README）。
+    let desk = Desk::start_with(|settings| {
+        settings.countdown = false;
+        settings.system_audio = false;
+        settings.notify = false;
+        settings.copy_video = false;
+    });
+    let windows = closed_windows();
+    record(&desk);
+    for ((name, command), window) in OPENS.into_iter().zip(windows.0) {
+        desk.send(desk.main, WM_COMMAND, command, 0);
+        assert!(shown(window), "{name} opens");
+        assert!(s().recording.is_some(), "{name} leaves the recording going");
+    }
+    desk.send(desk.main, WM_COMMAND, TRAY_STOP, 0);
+    assert!(s().recording.is_none());
+    assert_eq!(videos(&desk).len(), 1, "the recording is finished");
+}
+
+#[test]
+#[ignore = "Records the screen"]
 fn starting_events_stop_a_recording_and_start_nothing() {
     let desk = Desk::start_with(|settings| {
         settings.countdown = false;

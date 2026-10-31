@@ -169,6 +169,18 @@ fn marks() -> usize {
     s().markup_session.as_ref().map_or(0, |m| m.marks.len())
 }
 
+/// スクリーンショットの保存先にできたファイル。
+fn shots(desk: &Desk) -> Vec<PathBuf> {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(desk.sandbox.path().join("shots"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|f| f.path())
+        .collect();
+    files.sort();
+    files
+}
+
 #[test]
 #[ignore = "Covers the screen"]
 fn a_marked_up_snip_is_drawn_on_undone_erased_and_captured() {
