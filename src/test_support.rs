@@ -310,6 +310,9 @@ pub mod screen;
 /// real ones, and the test plays the part of the message loop and of the mouse.
 pub mod desk;
 
+/// ランダムテストのためのシード固定の乱数と、ケースを回して失敗を再現できるようにする仕組み。
+pub mod rng;
+
 /// The GDI and USER objects this process owns, to see whether a flow gives them all back.
 pub fn gui_objects() -> (u32, u32) {
     use windows_sys::Win32::Foundation::HANDLE;
