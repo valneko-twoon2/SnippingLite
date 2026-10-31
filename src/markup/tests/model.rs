@@ -2,7 +2,10 @@
 //! なぞったりしている途中の Ctrl+Z と Ctrl+Y も）、すべて消去、道具とペンの切り替えを無作為な順に
 //! 本物のオーバーレイへ送り、同じ操作を小さな
 //! モデル（書き込みの一覧と、元に戻す・やり直すのスタック）にも当てて、1 手ごとに一致を確かめる。
-//! ウィンドウは表示しないままメッセージを直接送るので、画面は覆わない。
+//! ウィンドウは表示しないままメッセージを直接送るので、画面は覆わない。ウィンドウはこのテストだけの
+//! デスクトップに作る（`Desk::start_apart`）。利用者の画面で前面のウィンドウが替わっても（同時に
+//! 動くほかのテストのプロセスが窓を前に出すたびに起きる）、Ctrl+Z と Ctrl+Y のために書いた Ctrl の
+//! 状態が消えない。
 
 use super::*;
 use crate::test_support::rng::{self, Reach, Rng};
@@ -86,19 +89,9 @@ fn action(rng: &mut Rng, area: RECT, model: &Model) -> Action {
     }
 }
 
-/// Ctrl を押したまま `key` を押す。オーバーレイが読む GetKeyState はこのスレッドのキーの状態
-/// なので、本物のキーボードには触れずに済む。
+/// Ctrl を押したまま `key` を押す（`with_control` を参照）。
 fn control_key(desk: &Desk, key: u8) {
-    let mut keys = [0u8; 256];
-    // SAFETY: both calls read or write the 256 key states of this thread.
-    unsafe {
-        GetKeyboardState(keys.as_mut_ptr());
-        let saved = keys;
-        keys[VK_CONTROL as usize] = 0x80;
-        SetKeyboardState(keys.as_ptr());
-        desk.key(s().overlay, key as u16);
-        SetKeyboardState(saved.as_ptr());
-    }
+    with_control(true, || desk.key(s().overlay, key as u16));
 }
 
 fn session() -> &'static mut Session {
@@ -347,7 +340,7 @@ fn hidden_bar() {
 
 #[test]
 fn random_markup_edits_match_a_model_of_the_marks_and_their_history() {
-    let desk = Desk::start();
+    let desk = Desk::start_apart();
     hidden_bar();
     let mut reach = Reach::new(&[
         "drew a line",

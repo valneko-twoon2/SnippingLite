@@ -21,19 +21,10 @@
 use super::*;
 use crate::test_support::{clipboard_image, clipboard_text};
 
-/// `key` を押す。`control` のときは Ctrl を押したままにする。オーバーレイが読む GetKeyState は
-/// このスレッドのキーの状態なので、本物のキーボードには触れずに済む。
+/// `key` を押す。`control` のときは Ctrl を押したままにする（`with_control` を参照）。ここの
+/// テストは画面を覆うので、入力デスクトップから離れられない。
 fn press(desk: &Desk, key: u16, control: bool) {
-    let mut keys = [0u8; 256];
-    // SAFETY: both calls read or write the 256 key states of this thread.
-    unsafe {
-        GetKeyboardState(keys.as_mut_ptr());
-        let saved = keys;
-        keys[VK_CONTROL as usize] = if control { 0x80 } else { 0 };
-        SetKeyboardState(keys.as_ptr());
-        desk.key(s().overlay, key);
-        SetKeyboardState(saved.as_ptr());
-    }
+    with_control(control, || desk.key(s().overlay, key));
 }
 
 /// 範囲の中に横線を 1 本引く。線の中心は、範囲の左上から (60, 40)。

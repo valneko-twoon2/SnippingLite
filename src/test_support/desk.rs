@@ -32,6 +32,8 @@ pub struct Desk {
     state: Box<crate::State>,
     pub main: HWND,
     dpi: DPI_AWARENESS_CONTEXT,
+    /// `start_apart` で移ったデスクトップ。窓を壊した後（`drop` の後）で元に戻る。
+    _desktop: Option<desktop::Own>,
     _guards: [MutexGuard<'static, ()>; 2],
 }
 
@@ -39,6 +41,17 @@ impl Desk {
     /// Starts the tray process with the settings saved in a fresh sandbox.
     pub fn start() -> Desk {
         Desk::start_with(|_| {})
+    }
+
+    /// `start` と同じだが、窓をこのテストだけの見えないデスクトップに作る。利用者の画面で前面の
+    /// ウィンドウが替わったりキーが押されたりしても、テストが書いたキーの状態（SetKeyboardState）
+    /// が消えない（`desktop` を参照）。窓を表示しないままメッセージを直接送るテストのためのもので、
+    /// 画面を写す・覆うテストには使えない。クリップボードはデスクトップをまたいで共有される。
+    pub fn start_apart() -> Desk {
+        let desktop = desktop::Own::enter();
+        let mut desk = Desk::start();
+        desk._desktop = Some(desktop);
+        desk
     }
 
     /// Like `start`, after `prepare` changed the saved settings.
@@ -69,6 +82,7 @@ impl Desk {
                 state,
                 main,
                 dpi,
+                _desktop: None,
                 _guards: [theme, captions],
             }
         }
@@ -191,4 +205,5 @@ impl Drop for Desk {
     }
 }
 
+mod desktop;
 mod tests;
