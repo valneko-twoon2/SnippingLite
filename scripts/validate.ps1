@@ -7,6 +7,11 @@ try {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-text-alignment.ps1')
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    pwsh -NoProfile -File (Join-Path $PSScriptRoot 'test-commit-message.ps1')
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # 既知の脆弱性がある依存関係を拒む。勧告のデータベースはネットワークから取得する。
+    cargo audit --file src/Cargo.lock
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cargo fmt --manifest-path src/Cargo.toml -- --check
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     cargo clippy --config src/.cargo/config.toml --manifest-path src/Cargo.toml --all-targets -- -D warnings
