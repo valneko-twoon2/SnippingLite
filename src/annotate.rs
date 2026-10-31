@@ -1,5 +1,7 @@
 //! Pen and highlighter marks drawn on top of a stored screenshot.
 
+mod brush;
+
 /// A freehand stroke in image pixel coordinates.
 #[derive(Clone, Debug)]
 pub struct Mark {
@@ -72,20 +74,8 @@ pub fn shown_color(
     color_at(pixels, width, height, (x, y))?;
     let at = (y as usize * width as usize + x as usize) * 4;
     let mut pixel = pixels[at..at + 4].to_vec();
-    // Drawing on a 1x1 image with the marks moved by the same offset gives the
-    // same coverage and blending as drawing on the whole image.
-    let moved: Vec<Mark> = marks
-        .iter()
-        .map(|mark| Mark {
-            points: mark
-                .points
-                .iter()
-                .map(|&(px, py)| (px - x as f32, py - y as f32))
-                .collect(),
-            ..mark.clone()
-        })
-        .collect();
-    draw(&mut pixel, 1, 1, &moved);
+    // その 1 画素だけを、画像の中の位置に描く。全体に描いたときと同じ計算になる。
+    draw_part(&mut pixel, (x, y), 1, 1, marks);
     (pixel[3] != 0).then(|| [pixel[2], pixel[1], pixel[0]])
 }
 
@@ -104,12 +94,16 @@ pub fn opacity(highlight: bool) -> f32 {
 }
 
 /// Cuts the area out of top-down BGRA pixels; the area is clipped to the image.
+/// 画素の数が大きさと合わない（短い、長い、大きさが 0 以下）ときも、空の範囲と同じく `None`。
 pub fn crop(
     pixels: &[u8],
     width: i32,
     height: i32,
     (x0, y0, x1, y1): (i32, i32, i32, i32),
 ) -> Option<(i32, i32, Vec<u8>)> {
+    if !crate::imaging::fits(pixels, width, height) {
+        return None;
+    }
     let (x0, y0) = (x0.clamp(0, width), y0.clamp(0, height));
     let (x1, y1) = (x1.clamp(0, width), y1.clamp(0, height));
     if x1 <= x0 || y1 <= y0 {
@@ -126,76 +120,28 @@ pub fn crop(
 
 /// Draws the marks onto straight-alpha top-down BGRA pixels.
 pub fn draw(pixels: &mut [u8], width: i32, height: i32, marks: &[Mark]) {
-    for mark in marks {
-        let opacity = opacity(mark.highlight);
-        stroke(
-            pixels,
-            width,
-            height,
-            &mark.points,
-            mark.color,
-            opacity,
-            mark.radius,
-        );
-    }
+    draw_part(pixels, (0, 0), width, height, marks);
 }
 
-fn stroke(
+/// 画像の一部に線を描く。`pixels` は画像の画素 `(left, top)` を左上とする `width` x `height`
+/// の部分で、線の座標は画像の座標のまま渡す。どの画素も画像の中の位置から計算するので、全体に
+/// 描いた画像の同じ部分とぴったり同じになる。線の座標のほうを部分の左上の分だけずらして描くと、
+/// ずらす引き算と、ずれた大きさの座標での計算の丸めが変わり、1 段階ずれる画素が出る。
+pub fn draw_part(
     pixels: &mut [u8],
+    (left, top): (i32, i32),
     width: i32,
     height: i32,
-    points: &[(f32, f32)],
-    color: [u8; 3],
-    opacity: f32,
-    radius: f32,
+    marks: &[Mark],
 ) {
-    if points.is_empty() || width <= 0 || height <= 0 {
-        return;
-    }
-    // Coverage is collected first so overlapping stamps of one stroke are not blended twice.
-    let mut coverage = vec![0u8; width as usize * height as usize];
-    let mut stamp = |cx: f32, cy: f32| {
-        let reach = radius + 1.0;
-        let x0 = ((cx - reach).floor() as i32).max(0);
-        let x1 = ((cx + reach).ceil() as i32).min(width - 1);
-        let y0 = ((cy - reach).floor() as i32).max(0);
-        let y1 = ((cy + reach).ceil() as i32).min(height - 1);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let distance =
-                    ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
-                let value = ((radius + 0.5 - distance).clamp(0.0, 1.0) * 255.0) as u8;
-                let slot = &mut coverage[y as usize * width as usize + x as usize];
-                *slot = (*slot).max(value);
-            }
-        }
+    let part = brush::Part {
+        left,
+        top,
+        width,
+        height,
     };
-    let step = (radius / 2.0).max(0.5);
-    let mut last = points[0];
-    stamp(last.0, last.1);
-    for &next in &points[1..] {
-        let (dx, dy) = (next.0 - last.0, next.1 - last.1);
-        let steps = ((dx * dx + dy * dy).sqrt() / step).ceil().max(1.0) as u32;
-        for i in 1..=steps {
-            let t = i as f32 / steps as f32;
-            stamp(last.0 + dx * t, last.1 + dy * t);
-        }
-        last = next;
-    }
-    for (pixel, &cover) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(&coverage) {
-        if cover == 0 {
-            continue;
-        }
-        let source = opacity * cover as f32 / 255.0;
-        let behind = pixel[3] as f32 / 255.0;
-        let alpha = source + behind * (1.0 - source);
-        // The pixels are BGRA while the color is RGB.
-        for (channel, value) in pixel[..3].iter_mut().zip(color.iter().rev()) {
-            let mixed =
-                (*value as f32 * source + *channel as f32 * behind * (1.0 - source)) / alpha;
-            *channel = mixed.round().clamp(0.0, 255.0) as u8;
-        }
-        pixel[3] = (alpha * 255.0).round() as u8;
+    for mark in marks {
+        brush::stroke(pixels, part, mark);
     }
 }
 

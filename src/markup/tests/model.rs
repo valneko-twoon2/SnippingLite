@@ -121,20 +121,6 @@ fn assert_same<T: PartialEq + std::fmt::Debug>(actual: &[T], expected: &[T], wha
     }
 }
 
-/// 画面の画像（0xAARRGGBB）が、どの色でも 1 段階以内で同じか。
-fn assert_close(actual: &[u32], expected: &[u32], what: &str) {
-    assert_eq!(actual.len(), expected.len(), "{what}");
-    let far = |a: u32, e: u32| {
-        (0..4).any(|byte| ((a >> (byte * 8)) as u8).abs_diff((e >> (byte * 8)) as u8) > 1)
-    };
-    if let Some(at) = (0..actual.len()).find(|&i| far(actual[i], expected[i])) {
-        panic!(
-            "{what}: at {at}, {:#010x} instead of {:#010x}",
-            actual[at], expected[at]
-        );
-    }
-}
-
 fn listed(marks: &[Mark]) -> String {
     format!("{marks:?}")
 }
@@ -220,8 +206,8 @@ fn apply(desk: &Desk, action: &Action, model: &mut Model, area: RECT, reach: &mu
             if drawing {
                 model.draw(centers);
                 // 描いている間に見えていた線が、離した後もそのまま残る。描いている間は線の
-                // まわりだけを切り抜いて描くので、座標の丸めで色が 1 段階ずれる画素はありうる。
-                assert_close(
+                // まわりだけを切り抜き、その位置に描くので、全体を描き直した画像とぴったり同じ。
+                assert_same(
                     &view(),
                     &while_drawing,
                     "the line looks the same once let go",
