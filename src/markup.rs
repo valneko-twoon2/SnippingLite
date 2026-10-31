@@ -10,6 +10,8 @@ pub(crate) use bar::{bar_proc, BAR};
 use eraser::{erase, Erasing};
 #[cfg(test)]
 use eraser::{touches, ERASER_REACH};
+#[cfg(test)]
+pub(crate) mod probe;
 
 /// 書き込みの道具。
 #[derive(Clone, Copy, Debug, PartialEq)]
