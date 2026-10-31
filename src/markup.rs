@@ -6,6 +6,8 @@ use crate::annotate::{self, Mark};
 
 mod bar;
 pub(crate) use bar::{bar_proc, BAR};
+#[cfg(test)]
+pub(crate) mod probe;
 
 /// 書き込みの道具。
 #[derive(Clone, Copy, Debug, PartialEq)]

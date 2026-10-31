@@ -455,3 +455,6 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) mod probe;

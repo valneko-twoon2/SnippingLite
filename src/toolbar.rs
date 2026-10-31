@@ -5,13 +5,13 @@ use super::*;
 /// Fluent command bar: capture type, area picker, editing, history and settings.
 const BAR_HEIGHT: f32 = 48.0;
 const BAR_WIDTH: f32 = 332.0;
-const CAMERA_BUTTON: i32 = 0;
-const VIDEO_BUTTON: i32 = 1;
-const AREA_BUTTON: i32 = 2;
+pub(crate) const CAMERA_BUTTON: i32 = 0;
+pub(crate) const VIDEO_BUTTON: i32 = 1;
+pub(crate) const AREA_BUTTON: i32 = 2;
 pub(crate) const EDIT_BUTTON: i32 = 3;
-const HISTORY_BUTTON: i32 = 4;
-const SETTINGS_BUTTON: i32 = 5;
-const CLOSE_BUTTON: i32 = 6;
+pub(crate) const HISTORY_BUTTON: i32 = 4;
+pub(crate) const SETTINGS_BUTTON: i32 = 5;
+pub(crate) const CLOSE_BUTTON: i32 = 6;
 const GLYPHS: [&str; 7] = [
     "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E70F}", "\u{E81C}", "\u{E713}", "\u{E711}",
 ];

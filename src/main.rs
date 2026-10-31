@@ -11,6 +11,8 @@ mod launch;
 #[cfg(test)]
 mod leaks;
 mod markup;
+#[cfg(test)]
+mod monkey;
 mod ocr;
 mod overlay;
 mod player;
