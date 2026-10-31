@@ -80,18 +80,6 @@ impl SettingsApp {
             switch(ui, &mut self.ask, title, p);
         });
         divider(ui, p);
-        row(ui, p, tr("Capture delay"), None, |ui| {
-            let text = seconds(self.delay);
-            egui::ComboBox::from_id_salt("delay")
-                .selected_text(text)
-                .width(124.0)
-                .show_ui(ui, |ui| {
-                    for d in DELAYS {
-                        ui.selectable_value(&mut self.delay, d, seconds(d));
-                    }
-                });
-        });
-        divider(ui, p);
         let title = tr("Dim and freeze the screen while snipping");
         let note = (
             tr("Turn off to keep videos and apps running while you select"),
@@ -169,7 +157,19 @@ impl SettingsApp {
         (self.outline_color, self.outline_width) = picked;
     }
 
+    /// Snipping Tool と同じく、保存先、ファイル名の確認、マイク、システムオーディオの順に並べ、
+    /// このアプリ独自の項目をその後ろに置く。
     fn recording(&mut self, ui: &mut egui::Ui, p: &Palette, folder: &mut Folder) {
+        let current = config::video_folder(&self.settings());
+        if let Some(action) = folder_row(ui, p, tr("Recording folder"), &current, true) {
+            *folder = Some((true, action));
+        }
+        divider(ui, p);
+        let title = tr("Ask for a file name when saving a recording");
+        row(ui, p, title, None, |ui| {
+            switch(ui, &mut self.ask_video, title, p);
+        });
+        divider(ui, p);
         let title = tr("Include microphone input in recordings");
         icon_row(ui, p, Icon::Microphone, title, |ui| {
             switch(ui, &mut self.mic, title, p);
@@ -202,36 +202,11 @@ impl SettingsApp {
             switch(ui, &mut self.record_cursor, title, p);
         });
         divider(ui, p);
-        row(ui, p, tr("Recording frame rate"), None, |ui| {
-            egui::ComboBox::from_id_salt("record_fps")
-                .selected_text(tr("{n} fps").replace("{n}", &self.record_fps.to_string()))
-                .width(124.0)
-                .show_ui(ui, |ui| {
-                    for fps in FRAME_RATES {
-                        ui.selectable_value(
-                            &mut self.record_fps,
-                            fps,
-                            tr("{n} fps").replace("{n}", &fps.to_string()),
-                        );
-                    }
-                });
-        });
-        divider(ui, p);
         let title = tr("Leave out the title bar when recording a window");
         let note = (tr("Click a window to record it"), p.secondary);
         row(ui, p, title, Some(note), |ui| {
             switch(ui, &mut self.skip_title, title, p);
         });
-        divider(ui, p);
-        let title = tr("Ask for a file name when saving a recording");
-        row(ui, p, title, None, |ui| {
-            switch(ui, &mut self.ask_video, title, p);
-        });
-        divider(ui, p);
-        let current = config::video_folder(&self.settings());
-        if let Some(action) = folder_row(ui, p, tr("Recording folder"), &current, true) {
-            *folder = Some((true, action));
-        }
     }
 
     fn history_cards(&mut self, ui: &mut egui::Ui, p: &Palette) {
@@ -282,7 +257,7 @@ impl SettingsApp {
         ui.add_space(24.0);
         let text = |ui: &mut egui::Ui, text: String, size: f32, family: FontFamily| {
             let (rect, _) =
-                ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
+                ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::hover());
             ui.painter().text(
                 rect.left_center() + Vec2::new(12.0, 0.0),
                 Align2::LEFT_CENTER,
@@ -323,12 +298,5 @@ impl SettingsApp {
                 imaging::shell_open(&w(FEEDBACK_URL), None);
             }
         });
-    }
-}
-
-fn seconds(delay: u32) -> String {
-    match delay {
-        0 => tr("None").to_owned(),
-        n => tr("{n} seconds").replace("{n}", &n.to_string()),
     }
 }

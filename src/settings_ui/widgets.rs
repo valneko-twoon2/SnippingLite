@@ -142,30 +142,38 @@ pub(super) fn folder_row(
     action
 }
 
-/// A bordered text button, as the Windows 11 settings use for secondary actions.
+/// A filled text button without a border, as the Snipping Tool uses for secondary actions.
 pub(super) fn outline_button(ui: &mut egui::Ui, label: &str, p: &Palette) -> egui::Response {
-    let font = FontId::new(13.0, FontFamily::Proportional);
+    let font = FontId::new(14.0, FontFamily::Proportional);
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font.clone(), p.text);
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(galley.size().x + 24.0, 30.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(galley.size().x + 32.0, 32.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), label));
-    let fill = if response.is_pointer_button_down_on() {
-        p.stroke
-    } else if response.hovered() {
-        p.field
-    } else {
-        Color32::TRANSPARENT
+    let dark = p.text == Color32::WHITE;
+    let fill = match (
+        response.is_pointer_button_down_on(),
+        response.hovered(),
+        dark,
+    ) {
+        (true, _, true) => Color32::from_rgb(0x2f, 0x2f, 0x2f),
+        (true, _, false) => Color32::from_rgb(0xf0, 0xf0, 0xf0),
+        (false, true, true) => Color32::from_rgb(0x40, 0x40, 0x40),
+        (false, true, false) => Color32::from_rgb(0xf6, 0xf6, 0xf6),
+        (false, false, true) => Color32::from_rgb(0x38, 0x38, 0x38),
+        (false, false, false) => Color32::WHITE,
     };
     let painter = ui.painter();
     painter.rect_filled(rect, CornerRadius::same(4), fill);
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(4),
-        Stroke::new(1.0, p.stroke),
-        StrokeKind::Inside,
-    );
+    if !dark {
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(4),
+            Stroke::new(1.0, p.stroke),
+            StrokeKind::Inside,
+        );
+    }
     painter.text(rect.center(), Align2::CENTER_CENTER, label, font, p.text);
     if response.has_focus() {
         painter.rect_stroke(

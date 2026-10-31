@@ -231,12 +231,12 @@ unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             state().copy = settings.copy;
             state().save = settings.save;
             state().ask = settings.ask;
-            state().delay = settings.delay;
+            state().delay = 0; // 撮影の遅延は設定から外した
             state().history = settings.history;
             state().countdown = settings.countdown;
             state().skip_title = settings.skip_title;
             state().record_cursor = settings.record_cursor;
-            state().record_fps = settings.record_fps;
+            state().record_fps = 60; // フレームレートは 60 fps に固定
             state().freeze = settings.freeze;
             state().notify = settings.notify;
             state().keep_toolbar = settings.keep_toolbar;
@@ -393,7 +393,7 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         copy: settings.copy,
         save: settings.save,
         ask: settings.ask,
-        delay: settings.delay,
+        delay: 0,
         pending: false,
         history: settings.history,
         hotkey_ok: false,
@@ -411,7 +411,7 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         countdown: settings.countdown,
         skip_title: settings.skip_title,
         record_cursor: settings.record_cursor,
-        record_fps: settings.record_fps,
+        record_fps: 60,
         count_window: null_mut(),
         count_left: 0,
         count_points: Vec::new(),

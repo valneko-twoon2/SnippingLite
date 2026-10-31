@@ -97,7 +97,6 @@ fn the_page_lists_every_setting_under_its_section() {
         "Automatically copy screenshots",
         "Automatically save screenshots",
         "Choose a file name when saving",
-        "Capture delay",
         "Dim and freeze the screen while snipping",
         "Show notifications",
         "Keep the toolbar open after a snip",
@@ -108,7 +107,6 @@ fn the_page_lists_every_setting_under_its_section() {
         "Include microphone input in recordings",
         "Include system audio in recordings",
         "Record only the sound of the window's app",
-        "Recording frame rate",
         "Leave out the title bar when recording a window",
         "Ask for a file name when saving a recording",
         "Recording folder",
@@ -122,6 +120,10 @@ fn the_page_lists_every_setting_under_its_section() {
         "App theme",
     ] {
         assert!(window.screen.has(tr(text)), "missing {text:?}");
+    }
+    // 撮影の遅延とフレームレートは設定から外した。
+    for text in ["Capture delay", "Recording frame rate"] {
+        assert!(!window.screen.has(tr(text)), "{text:?} is still listed");
     }
     // Rows that only matter after another switch is on stay out of the way.
     for text in ["Screenshot folder", "Border color", "Border thickness"] {
@@ -263,22 +265,6 @@ fn drop_downs_store_the_chosen_value() {
     let _guard = THEME.lock().unwrap_or_else(|e| e.into_inner());
     let _sandbox = Sandbox::new();
     let mut window = Window::open(true, false);
-    window.choose(tr("None"), &tr("{n} seconds").replace("{n}", "5"));
-    assert_eq!(saved().delay, 5);
-    window.choose(
-        &tr("{n} seconds").replace("{n}", "5"),
-        &tr("{n} seconds").replace("{n}", "10"),
-    );
-    assert_eq!(saved().delay, 10);
-    window.choose(&tr("{n} seconds").replace("{n}", "10"), tr("None"));
-    assert_eq!(saved().delay, 0);
-
-    window.choose(
-        &tr("{n} fps").replace("{n}", "60"),
-        &tr("{n} fps").replace("{n}", "30"),
-    );
-    assert_eq!(saved().record_fps, 30);
-
     window.choose(
         &tr("{n} screenshots").replace("{n}", "200"),
         &tr("{n} screenshots").replace("{n}", "50"),

@@ -168,12 +168,12 @@ pub(super) fn link(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), p.accent);
     let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(galley.size().x + 24.0, 44.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(galley.size().x + 36.0, 44.0), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Link, ui.is_enabled(), text));
     if response.hovered() {
         ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::PointingHand);
     }
-    let at = pos2(rect.left() + 12.0, rect.center().y);
+    let at = pos2(rect.left() + 24.0, rect.center().y);
     let shown = ui
         .painter()
         .text(at, Align2::LEFT_CENTER, text, font, p.accent);

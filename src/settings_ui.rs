@@ -21,7 +21,7 @@ use windows_sys::Win32::{
 
 use crate::i18n::tr;
 use crate::{
-    config::{self, DELAYS, FRAME_RATES, HISTORY_LIMITS},
+    config::{self, HISTORY_LIMITS},
     imaging, ui, w, MAIN, SETTINGS_TITLE, SETTINGS_WINDOW, TRAY_HISTORY, TRAY_RELOAD,
 };
 
@@ -114,7 +114,6 @@ pub fn run(hotkey_ok: bool) {
             .with_inner_size([WIDTH, HEIGHT])
             .with_resizable(false)
             .with_maximize_button(false)
-            .with_transparent(ui::supports_mica())
             .with_icon(egui::IconData {
                 rgba: ui::icon_rgba(64),
                 width: 64,
@@ -129,7 +128,9 @@ pub fn run(hotkey_ok: bool) {
             if !install_fonts(&cc.egui_ctx) {
                 return Err("No usable system font was found.".into());
             }
-            let mica = ui::supports_mica();
+            // Mica は壁紙の色でウィンドウがアクティブなときに青みを帯びる。
+            // Snipping Tool は中立な灰色のままなので、不透明な背景を使う。
+            let mica = false;
             apply_theme(&cc.egui_ctx, config::load_settings().theme);
             install_visuals(&cc.egui_ctx, mica);
             Ok(Box::new(SettingsApp::new(hotkey_ok, mica)))
@@ -169,7 +170,7 @@ pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
         ..FontTweak::default()
     };
     let japanese = load(
-        &["YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"],
+        &["YuGothR.ttc", "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"],
         "japanese",
         centered(),
     );
@@ -177,10 +178,9 @@ pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
     let Some(regular) = regular else {
         return false;
     };
-    let body: Vec<String> = japanese
-        .iter()
-        .cloned()
-        .chain(Some(regular.clone()))
+    let body: Vec<String> = Some(regular.clone())
+        .into_iter()
+        .chain(japanese.iter().cloned())
         .collect();
     fonts
         .families
