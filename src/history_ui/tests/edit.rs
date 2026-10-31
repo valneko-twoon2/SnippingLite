@@ -222,7 +222,12 @@ fn the_copy_text_button_recognizes_the_picture() {
         "{message:?}"
     );
     // A second press while one is running starts nothing new.
-    viewer.app.ocr = Some(std::sync::mpsc::channel().1);
+    // 送り手を持ったままにする。落とすと、次の描画で認識が終わったことになり、押したときに新しい
+    // 認識が始まって、それが終わる速さで結果が変わる。
+    let (_sender, receiver) = std::sync::mpsc::channel();
+    viewer.app.ocr = Some(receiver);
+    viewer.app.notice = None;
     viewer.click_text(tr("Copy text"));
-    assert!(viewer.app.ocr.is_some());
+    assert!(viewer.app.ocr.is_some(), "the recognition goes on");
+    assert!(viewer.app.notice.is_none(), "no new recognition starts");
 }
