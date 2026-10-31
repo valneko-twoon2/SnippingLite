@@ -65,35 +65,50 @@ impl Drop for Sandbox {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
-/// Presses a button of the next dialog this process shows, from another thread:
-/// 1 accepts it, 2 cancels or closes it (message boxes only close this way). Returns whether a dialog was found.
-pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
+/// このプロセスの、見えている `class`（"#32770" はダイアログ、"#32768" はメニュー）の窓。なければ 0。
+/// ほかのプロセス（同時に動くほかのテストや、利用者のアプリ）のダイアログやメニューは数えない。
+fn own_visible_window(class: &'static str) -> usize {
     use windows_sys::Win32::{
         Foundation::{BOOL, HWND, LPARAM},
         UI::WindowsAndMessaging::{
-            EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible, PostMessageW,
-            WM_CLOSE, WM_COMMAND,
+            EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
         },
     };
-    unsafe extern "system" fn find(hwnd: HWND, found: LPARAM) -> BOOL {
+    struct Search {
+        class: &'static str,
+        found: usize,
+    }
+    unsafe extern "system" fn find(hwnd: HWND, search: LPARAM) -> BOOL {
+        let search = &mut *(search as *mut Search);
         let mut class = [0u16; 16];
-        let length = GetClassNameW(hwnd, class.as_mut_ptr(), 16) as usize;
+        let length = GetClassNameW(hwnd, class.as_mut_ptr(), 16).clamp(0, 16) as usize;
         let mut process = 0;
         GetWindowThreadProcessId(hwnd, &mut process);
         if IsWindowVisible(hwnd) != 0
             && process == std::process::id()
-            && String::from_utf16_lossy(&class[..length]) == "#32770"
+            && String::from_utf16_lossy(&class[..length]) == search.class
         {
-            *(found as *mut usize) = hwnd as usize;
+            search.found = hwnd as usize;
             return 0;
         }
         1
     }
+    let mut search = Search { class, found: 0 };
+    // SAFETY: `search` outlives the synchronous enumeration.
+    unsafe { EnumWindows(Some(find), &mut search as *mut Search as LPARAM) };
+    search.found
+}
+
+/// Presses a button of the next dialog this process shows, from another thread:
+/// 1 accepts it, 2 cancels or closes it (message boxes only close this way). Returns whether a dialog was found.
+pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
+    use windows_sys::Win32::{
+        Foundation::HWND,
+        UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE, WM_COMMAND},
+    };
     std::thread::spawn(move || {
         for _ in 0..300 {
-            let mut found = 0usize;
-            // SAFETY: `found` outlives the synchronous enumeration.
-            unsafe { EnumWindows(Some(find), &mut found as *mut usize as LPARAM) };
+            let found = own_visible_window("#32770");
             if found != 0 {
                 eprintln!("DIALOG {found:#x} for {command}");
                 // Give the dialog a moment to finish opening.
@@ -147,7 +162,7 @@ pub fn stub_window(identity: &str) -> windows_sys::Win32::Foundation::HWND {
 pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
     use windows_sys::Win32::UI::{
         Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_RETURN},
-        WindowsAndMessaging::{FindWindowW, PostThreadMessageW, WM_KEYDOWN},
+        WindowsAndMessaging::{PostThreadMessageW, WM_KEYDOWN},
     };
     extern "system" {
         fn GetCurrentThreadId() -> u32;
@@ -155,10 +170,8 @@ pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
     // SAFETY: plain query of the calling thread.
     let target = unsafe { GetCurrentThreadId() };
     std::thread::spawn(move || {
-        let class: Vec<u16> = "#32768".encode_utf16().chain(Some(0)).collect();
         for _ in 0..300 {
-            // SAFETY: the class name is nul-terminated.
-            if unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) }.is_null() {
+            if own_visible_window("#32768") == 0 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
@@ -315,6 +328,12 @@ pub mod rng;
 
 /// クラッシュ時の整合性のテスト: 子プロセスを書き込みの段階ごとに止めて殺す仕組み。
 pub mod crash;
+
+/// テストのバイナリーを子プロセスとして起動し、子のテスト関数を 1 つ走らせる仕組み。
+pub mod child;
+
+/// ほかのプロセスで動く Snipping Lite の窓の代わり（子プロセスが作る）。
+pub mod others;
 
 /// 壊れた画像のファジングのための PNG の部品（組み立て、分解、参照の読み取り、変異）。
 pub mod png;

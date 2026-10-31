@@ -237,7 +237,11 @@ unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
         hbrBackground: brush,
         ..std::mem::zeroed()
     };
-    RegisterClassW(&class);
+    // 登録できなかった（すでに登録してあるなどの）クラスは、背景のブラシを持たない。持ち主の
+    // いないブラシは消す。登録できたクラスのブラシは、クラスとともにシステムが消す。
+    if RegisterClassW(&class) == 0 && !brush.is_null() {
+        DeleteObject(brush);
+    }
 }
 /// The state of a fresh tray process, taken from the saved settings.
 fn initial_state(settings: &config::Settings) -> Box<State> {

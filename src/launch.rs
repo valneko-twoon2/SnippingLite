@@ -9,8 +9,15 @@ pub(crate) const SETTINGS_WINDOW: &str = "SnippingLite.Settings";
 pub(crate) const HISTORY_WINDOW: &str = "SnippingLite.History";
 pub(crate) const PLAYER_WINDOW: &str = "SnippingLite.Player";
 pub(crate) const WINDOWS: [&str; 3] = [SETTINGS_WINDOW, HISTORY_WINDOW, PLAYER_WINDOW];
+/// トレイと設定・履歴・プレイヤーの窓が互いを探すプロセス（`None` はすべて）。どれも別のプロセスで
+/// 動くので、製品はすべてのプロセスから探す。テストは代わりの窓（`stub_window`）やトレイを自分の
+/// プロセスに作るので、自分のプロセスだけから探す。同時に動くほかのテストのプロセスの窓や、利用者が
+/// 動かしている Snipping Lite の窓を見つけて、隠したり、前に出したり、知らせを送ったりしない。
+pub(crate) fn searched_process() -> Option<u32> {
+    cfg!(test).then(std::process::id)
+}
 pub(crate) unsafe fn find_window(identity: &str) -> HWND {
-    ui::find_app_window(identity)
+    ui::find_app_window(identity, searched_process())
 }
 /// Opens a window process (`--settings` or `--history`), or brings the running one forward.
 /// `latest` asks a new history window to open the newest screenshot.

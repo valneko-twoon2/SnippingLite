@@ -9,15 +9,12 @@ use eframe::egui::{
 use std::{
     fs,
     path::{Path, PathBuf},
-    ptr::null,
     sync::Arc,
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
     Foundation::HWND,
-    UI::WindowsAndMessaging::{
-        AllowSetForegroundWindow, FindWindowW, PostMessageW, ASFW_ANY, WM_COMMAND,
-    },
+    UI::WindowsAndMessaging::{AllowSetForegroundWindow, PostMessageW, ASFW_ANY, WM_COMMAND},
 };
 
 use crate::i18n::tr;

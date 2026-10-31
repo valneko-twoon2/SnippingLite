@@ -12,6 +12,8 @@
 //! | Z | 押す | 最後の線を取り消す。取り消すものがなければ何もしない | `ctrl_z_takes_back_the_last_stroke_and_ctrl_y_puts_it_back` |
 //! | Y | 押す | 取り消した線を戻す。戻すものがなければ何もしない | 同上 |
 //! | Z、Y（描いている・なぞっている途中） | 押す | 途中の線やなぞって消した分を先に確定してから、元に戻す・やり直す。その後は離すまで何もしない | `ctrl_z_and_ctrl_y_in_the_middle_of_a_drag_settle_it_first`、モデルベーステスト |
+//! | Enter、C、キャプチャのボタン（描いている途中） | C は押す | 描きかけの線を先に確定してから届ける | `confirming_while_a_line_is_being_drawn_keeps_the_line` |
+//! | Enter、C、キャプチャのボタン（消しゴムでなぞっている途中） | C は押す | なぞって消した線は消えたまま届く | `confirming_while_erasing_leaves_the_erased_line_out` |
 //! | Z、Y、C | 押さない | 何もしない | `letters_without_ctrl_and_other_ctrl_letters_leave_the_snip_alone` |
 //! | X | 押す | 何もしない | 同上 |
 //! | Escape | - | 捨てる。何も届かない | `escape_throws_away_the_strokes_and_delivers_nothing`、既存 `escape_and_the_close_button_discard_a_marked_up_snip` |
@@ -43,6 +45,27 @@ fn stroke(desk: &Desk) {
 fn stacks() -> (usize, usize, usize) {
     let session = s().markup_session.as_ref().expect("marking up");
     (session.marks.len(), session.undo.len(), session.redo.len())
+}
+
+/// 確定の 3 つの操作。ボタンは押す前にマウスを離すので普通は途中に押せないが、念のため確かめる。
+const CONFIRMS: [&str; 3] = ["Enter", "Ctrl+C", "the capture button"];
+
+/// `CONFIRMS` の 1 つで確定する。
+fn confirm(desk: &Desk, name: &str) {
+    match name {
+        "Enter" => press(desk, VK_RETURN, false),
+        "Ctrl+C" => press(desk, b'C' as u16, true),
+        // SAFETY: the windows belong to this test.
+        _ => unsafe { crate::markup::bar::press(CAPTURE) },
+    }
+}
+
+/// クリップボードの画像の、範囲の左上から (60, 40) の画素（BGRA）。`stroke` の線の中心。
+fn copied_center(name: &str) -> [u8; 4] {
+    let (width, height, pixels) = clipboard_image().expect(name);
+    assert_eq!((width, height), (160, 80), "{name}");
+    let at = ((40 * width + 60) * 4) as usize;
+    pixels[at..at + 4].try_into().unwrap()
 }
 
 /// 画面に出している画像に線が描かれているか（切り取ったままの画像と違うか）。
@@ -141,6 +164,81 @@ fn ctrl_c_and_enter_deliver_the_marked_up_snip() {
             pixels[at..at + 4],
             [b, g, r, 255],
             "{name}: the stroke is in it"
+        );
+        drop(desk);
+    }
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn confirming_while_a_line_is_being_drawn_keeps_the_line() {
+    for name in CONFIRMS {
+        let desk = Desk::start_with(|settings| {
+            settings.copy = true;
+            settings.save = false;
+            settings.history = false;
+            settings.notify = false;
+        });
+        assert!(imaging::copy_text(null_mut(), "-"));
+        mark_up(&desk);
+        // `stroke` と同じ横線を、押したまま描いている途中に確定する。
+        let overlay = s().overlay;
+        desk.mouse(overlay, WM_MOUSEMOVE, 220, 240);
+        desk.mouse(overlay, WM_LBUTTONDOWN, 220, 240);
+        desk.mouse(overlay, WM_MOUSEMOVE, 260, 240);
+        desk.mouse(overlay, WM_MOUSEMOVE, 300, 240);
+        confirm(&desk, name);
+        assert!(!s().active && s().markup_session.is_none(), "{name}");
+        // SAFETY: a plain query on this thread.
+        assert!(
+            unsafe { GetCapture() } != overlay,
+            "{name} lets the mouse go"
+        );
+        let [r, g, b] = annotate::COLORS[config::load_pen().0];
+        assert_eq!(
+            copied_center(name),
+            [b, g, r, 255],
+            "{name}: the line being drawn is in it"
+        );
+        drop(desk);
+    }
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn confirming_while_erasing_leaves_the_erased_line_out() {
+    for name in CONFIRMS {
+        let desk = Desk::start_with(|settings| {
+            settings.copy = true;
+            settings.save = false;
+            settings.history = false;
+            settings.notify = false;
+        });
+        assert!(imaging::copy_text(null_mut(), "-"));
+        mark_up(&desk);
+        stroke(&desk);
+        let session = s().markup_session.as_ref().expect("marking up");
+        let at = ((40 * session.width + 60) * 4) as usize;
+        let snipped: [u8; 4] = session.pixels[at..at + 4].try_into().unwrap();
+        // 消しゴムで線をなぞっている途中（押したまま）に確定する。
+        // SAFETY: the windows belong to this test.
+        unsafe { set_tool(Tool::Eraser) };
+        let overlay = s().overlay;
+        desk.mouse(overlay, WM_MOUSEMOVE, 260, 230);
+        desk.mouse(overlay, WM_LBUTTONDOWN, 260, 230);
+        desk.mouse(overlay, WM_MOUSEMOVE, 260, 250);
+        assert_eq!(stacks().0, 0, "{name}: the line is erased");
+        confirm(&desk, name);
+        assert!(!s().active && s().markup_session.is_none(), "{name}");
+        // SAFETY: a plain query on this thread.
+        assert!(
+            unsafe { GetCapture() } != overlay,
+            "{name} lets the mouse go"
+        );
+        assert_eq!(
+            copied_center(name),
+            snipped,
+            "{name}: the snip comes without the erased line"
         );
         drop(desk);
     }

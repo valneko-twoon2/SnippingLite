@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::test_support::{CAPTIONS, THEME};
+use crate::test_support::{others::Others, Sandbox, CAPTIONS, THEME};
 
 #[test]
 fn document_roles_distinguish_windows_with_the_same_caption() {
@@ -37,8 +37,10 @@ fn document_roles_distinguish_windows_with_the_same_caption() {
             w("SnippingLite.Test.History").as_ptr(),
             1usize as HANDLE,
         );
-        let found_settings = find_app_window("SnippingLite.Test.Settings");
-        let found_history = find_app_window("SnippingLite.Test.History");
+        // 同じテストを走らせるほかのプロセスの窓は数えない。
+        let mine = Some(std::process::id());
+        let found_settings = find_app_window("SnippingLite.Test.Settings", mine);
+        let found_history = find_app_window("SnippingLite.Test.History", mine);
         DestroyWindow(settings);
         DestroyWindow(history);
         assert_eq!(found_settings, settings);
@@ -133,15 +135,40 @@ fn a_window_process_tags_only_its_own_window() {
     use windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow;
     let _turn = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
     let mine = test_window(crate::SETTINGS_TITLE);
+    // 同じテストを走らせるほかのプロセスの窓は数えない。
+    let process = Some(std::process::id());
     // SAFETY: the window is created and destroyed here.
     unsafe {
         let found = identify_app_window("SnippingLite.Test.Identity");
         assert_eq!(found, mine);
-        assert_eq!(find_app_window("SnippingLite.Test.Identity"), mine);
+        assert_eq!(find_app_window("SnippingLite.Test.Identity", process), mine);
         DestroyWindow(mine);
         // Boundary: with no window of that caption left, nothing is found or tagged.
         assert!(identify_app_window("SnippingLite.Test.Identity").is_null());
-        assert!(find_app_window("SnippingLite.Test.Identity").is_null());
+        assert!(find_app_window("SnippingLite.Test.Identity", process).is_null());
+    }
+}
+
+#[test]
+#[ignore = "Creates windows in another process"]
+fn a_window_of_another_process_is_found_only_when_every_process_is_searched() {
+    let _turn = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = Sandbox::new();
+    let others = Others::open(&sandbox);
+    // SAFETY: plain window queries.
+    unsafe {
+        // すべてのプロセスから探せば、ほかのプロセスの窓が見つかる（2 つ目の起動が動いている
+        // トレイを、トレイが別のプロセスの設定や履歴の窓を見つけるのと同じ）。
+        let document = find_app_window(&others.identity, None);
+        let tray = find_class_window(crate::MAIN, Some(others.id()));
+        let mut process = 0;
+        GetWindowThreadProcessId(document, &mut process);
+        assert_eq!(process, others.id(), "the document of the other process");
+        assert!(!tray.is_null(), "the tray of the other process");
+        // 自分のプロセスに限れば、どちらも見つからない。
+        let mine = Some(std::process::id());
+        assert!(find_app_window(&others.identity, mine).is_null());
+        assert!(find_class_window(crate::MAIN, mine).is_null());
     }
 }
 

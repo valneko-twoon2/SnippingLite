@@ -390,7 +390,7 @@ fn the_window_frame_follows_the_theme_and_the_backdrop() {
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                null(),
+                std::ptr::null(),
             );
             let mut window = Window::open(true, mica);
             // The window process tags its document so the tray can find it again.
@@ -484,3 +484,4 @@ fn the_change_link_picks_a_folder_or_leaves_it_alone() {
 
 mod fonts;
 mod look;
+mod tray;

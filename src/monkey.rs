@@ -276,9 +276,10 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
 
 /// 1 ケース: 新しいトレイを無作為な設定で始め、手を送り、最後に待機へ戻す。
 /// (手数, 届いた画像の数, 始めから終わりまでに増えた GDI のオブジェクト) を返す。
-/// 始めはトレイと舞台を作った後、終わりは片付ける前に数える。テストの `Desk` は起動のたびに
-/// 窓のクラスを登録し直し、使われない枠のブラシを 1 つ作る（本物は 1 回だけ）ので、それは含めない。
+/// 始めはトレイと舞台を作る前、終わりは片付けた後に数える。トレイの起動と片付けが返さない
+/// もの（起動のたびの窓のクラスの登録など）も、ケースが残したものに入る。
 fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
+    let first = gui_objects();
     let mut desk = Desk::start_with(|settings| {
         scene::randomize(rng, settings);
         config::save_markup(rng.chance(0.6));
@@ -303,7 +304,6 @@ fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
         shots,
     };
     crate::test_support::take_shell_opened();
-    let first = gui_objects();
     let count = rng.range(STEPS);
     for step in 0..count {
         let before = Snapshot::take(&world);
@@ -328,10 +328,10 @@ fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
     let before = Snapshot::take(&world);
     oracle::after_step(&mut world, &scene, &before, &Action::Wait(0));
     assert!(!s().active, "the case ends idle");
-    let left = gui_objects().0 as i64 - first.0 as i64;
     let delivered = world.delivered;
     crate::ui::set_theme_choice(config::AppTheme::System);
     drop(scene);
     drop(desk);
+    let left = gui_objects().0 as i64 - first.0 as i64;
     (count, delivered, left)
 }

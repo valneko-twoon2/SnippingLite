@@ -109,9 +109,10 @@ impl SettingsApp {
     }
 }
 
-fn tray_window() -> HWND {
-    // SAFETY: the class name is a valid, nul-terminated UTF-16 string.
-    unsafe { FindWindowW(w(MAIN).as_ptr(), null()) }
+/// 知らせを送るトレイの窓。探すプロセスはトレイが設定の窓を探すときと同じ（`searched_process`）。
+pub(super) fn tray_window() -> HWND {
+    // SAFETY: plain window queries.
+    unsafe { ui::find_class_window(MAIN, crate::searched_process()) }
 }
 
 fn post(message: u32, wparam: usize) {
@@ -195,7 +196,8 @@ impl eframe::App for SettingsApp {
                 FolderAction::Open => imaging::open_folder(&current),
                 FolderAction::Change => {
                     // SAFETY: the title is a valid UTF-16 string; the handle only owns the dialog.
-                    let owner = unsafe { ui::find_app_window(SETTINGS_WINDOW) };
+                    let owner =
+                        unsafe { ui::find_app_window(SETTINGS_WINDOW, Some(std::process::id())) };
                     if let Some(path) = imaging::choose_folder(owner, &current) {
                         let text = path.to_string_lossy().into_owned();
                         if video {

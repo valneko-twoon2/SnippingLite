@@ -293,6 +293,21 @@ fn opening_a_window_that_is_not_running_starts_another_copy_of_the_program() {
 }
 
 #[test]
+#[ignore = "Creates windows in another process"]
+fn in_tests_the_tray_looks_only_at_the_windows_of_its_own_process() {
+    use crate::test_support::{others::Others, Sandbox, CAPTIONS};
+    let _captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = Sandbox::new();
+    let _others = Others::open(&sandbox);
+    // ほかのプロセスに設定・履歴・プレイヤーの窓があっても、テストのトレイは見つけない。見つければ、
+    // 撮影の間に隠し、開くときに前に出し、テストの代わりの窓は出てこない。
+    for identity in WINDOWS {
+        // SAFETY: plain window queries.
+        assert!(unsafe { find_window(identity) }.is_null(), "{identity}");
+    }
+}
+
+#[test]
 fn only_a_window_flag_makes_a_window_process() {
     let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
     assert!(!run_window_process(&args(&["snippinglite.exe"])));

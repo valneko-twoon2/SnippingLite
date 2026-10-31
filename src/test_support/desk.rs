@@ -1,10 +1,11 @@
 use super::{Sandbox, CAPTIONS, THEME};
 use std::{
+    io::Write as _,
     sync::MutexGuard,
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
-    Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    Foundation::{BOOL, HWND, LPARAM, LRESULT, WPARAM},
     UI::{
         HiDpi::{
             SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT,
@@ -13,6 +14,18 @@ use windows_sys::Win32::{
         WindowsAndMessaging::*,
     },
 };
+
+/// 1 回に流すか捨てるメッセージの上限。取り出しても消えないメッセージ（描かれないままの窓の
+/// WM_PAINT など）があっても、ループを終える。
+pub const MESSAGE_LIMIT: usize = 10_000;
+
+/// 見えている窓を隠す（`EnumThreadWindows` のコールバック）。
+unsafe extern "system" fn hide(hwnd: HWND, _: LPARAM) -> BOOL {
+    if IsWindowVisible(hwnd) != 0 {
+        ShowWindow(hwnd, SW_HIDE);
+    }
+    1
+}
 
 pub struct Desk {
     pub sandbox: Sandbox,
@@ -73,7 +86,10 @@ impl Desk {
             // SAFETY: plain message loop calls on this thread's queue.
             unsafe {
                 let mut message: MSG = std::mem::zeroed();
-                while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                for _ in 0..MESSAGE_LIMIT {
+                    if PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) == 0 {
+                        break;
+                    }
                     TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }
@@ -135,6 +151,15 @@ impl Drop for Desk {
             crate::cancel();
             crate::cancel_countdown();
             crate::toast::close();
+            // このスレッドの見えている窓を隠す。途中で失敗したテストは、表示した窓（設定や履歴の
+            // 代わりの窓など）を残す。見えている窓は描かれるまで WM_PAINT を出し続け、取り出しても
+            // 消えないので、下でメッセージを捨てるループが終わらなくなる。隠した窓には WM_PAINT が
+            // 来ない。取り消しは撮影のために隠した窓を戻すので、その後で隠す。
+            EnumThreadWindows(
+                GetWindowThreadProcessId(self.main, std::ptr::null_mut()),
+                Some(hide),
+                0,
+            );
             for window in [
                 std::mem::replace(&mut crate::state().record_window, std::ptr::null_mut()),
                 std::mem::replace(&mut crate::state().record_frame, std::ptr::null_mut()),
@@ -147,8 +172,16 @@ impl Drop for Desk {
                 }
             }
             // Messages for the destroyed windows, such as the quit request, are not wanted.
+            // 上限まで捨てても尽きなければ、そう書いて先へ進む（後片付けの中では panic しない）。
             let mut message: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {}
+            let emptied = (0..MESSAGE_LIMIT)
+                .any(|_| PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_REMOVE) == 0);
+            if !emptied {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "Desk: {MESSAGE_LIMIT} messages were thrown away and more kept coming"
+                );
+            }
             crate::STATE = std::ptr::null_mut();
             if !self.dpi.is_null() {
                 SetThreadDpiAwarenessContext(self.dpi);
@@ -157,3 +190,5 @@ impl Drop for Desk {
         let _ = &self.state;
     }
 }
+
+mod tests;
