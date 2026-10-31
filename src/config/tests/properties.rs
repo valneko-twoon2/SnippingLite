@@ -1,7 +1,9 @@
 //! 設定ファイルの性質: どんな中身を読んでも、設定ウィンドウが示す選択肢の中の値になり、
 //! 書き戻して読むと変わらない。正しい設定は書いて読むと元に戻り、1 行の傷はその行の設定にしか
-//! 響かない。ペンと書き込みのファイルも同じように扱う。
+//! 響かない。ペンと書き込みのファイルも同じように扱う。UTF-8 として正しくないバイトも、その行の
+//! 設定にしか響かない（期待値は `damaged::first_value` の、書式から決めた規則で計算する）。
 
+use super::damaged::{first_value, index};
 use super::*;
 use crate::annotate::{COLORS, OUTLINE_WIDTHS};
 use crate::test_support::{
@@ -170,7 +172,7 @@ fn mutated(rng: &mut Rng, keys: &[String]) -> String {
     text
 }
 
-/// 有効な設定と、壊れた UTF-8 を lossy で読んだ文字列。
+/// 有効な設定のバイト列を壊し、アプリと同じく壊れた行だけを読めなくした文字列。
 fn broken_utf8(rng: &mut Rng) -> String {
     let mut bytes = settings_text(&settings(rng)).into_bytes();
     for _ in 0..rng.range(1..=6) {
@@ -184,7 +186,7 @@ fn broken_utf8(rng: &mut Rng) -> String {
             }
         }
     }
-    String::from_utf8_lossy(&bytes).into_owned()
+    readable_lines(&bytes)
 }
 
 /// 読み込んだ設定が、設定ウィンドウの示す選択肢の中にあり、書き戻して読むと変わらない。
@@ -458,15 +460,21 @@ fn damaged_pen_and_markup_files_read_as_offered_choices() {
             fs::write(folder.join("pen.ini"), &bytes).unwrap();
             let (read_color, read_thickness) = load_pen();
             assert!(read_color < COLORS.len() && read_thickness < 3, "{bytes:?}");
+            // 壊れたバイトや行は、その行の設定だけを既定にする。傷のない行の値は残る。
+            let expected = (
+                index(first_value(&bytes, "color="), COLORS.len(), 0),
+                index(first_value(&bytes, "thickness="), 3, 1),
+            );
+            assert_eq!((read_color, read_thickness), expected, "{bytes:?}");
             if bytes == valid.as_bytes() {
-                assert_eq!((read_color, read_thickness), (color, thickness));
+                assert_eq!(expected, (color, thickness));
             }
             reach.hit(if (read_color, read_thickness) == (color, thickness) {
                 "pen kept"
             } else {
                 "pen fell back"
             });
-            // 書き込みの切り替えは、壊れたファイルからはオンにならない（オンの行がそのまま残るときだけ）。
+            // 書き込みの切り替えは、最初の markup= の行がそのまま markup=1 のときだけオン。
             let mut markup = format!("markup={}\r\n", rng.below(2)).into_bytes();
             if rng.chance(0.7) {
                 let at = rng.below(markup.len() + 1);
@@ -475,10 +483,8 @@ fn damaged_pen_and_markup_files_read_as_offered_choices() {
             }
             fs::write(folder.join("markup.ini"), &markup).unwrap();
             let on = load_markup();
-            if on {
-                let text = String::from_utf8_lossy(&markup);
-                assert!(text.lines().any(|line| line == "markup=1"), "{markup:?}");
-            }
+            let first = first_value(&markup, "markup=");
+            assert_eq!(on, first == Some(Some("1")), "{markup:?}");
             reach.hit(if on { "markup on" } else { "markup off" });
         },
     );

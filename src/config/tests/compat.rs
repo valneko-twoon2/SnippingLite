@@ -156,3 +156,51 @@ fn the_current_version_writes_pen_and_markup_files_in_the_first_layouts() {
         b"markup=0\r\n"
     );
 }
+
+/// 古い版のファイルを、メモ帳で ANSI（Shift_JIS）として保存し直したもの。日本語を書いた行だけが
+/// UTF-8 として読めなくなる。以前はファイル全体が読めない扱いになり、どの設定も既定に戻っていた。
+#[test]
+fn an_old_file_edited_in_shift_jis_keeps_every_line_but_the_japanese_one() {
+    // 「screenshot_folder=D:\スクショ」を Shift_JIS で書いた行（ス 83 58、ク 83 4E、シ 83 56、ョ 83 87）。
+    let mut settings: Vec<u8> = GENERATIONS[..4]
+        .iter()
+        .flat_map(|(_, t)| t.bytes())
+        .collect();
+    let folder = b"screenshot_folder=D:/Shots\r\n";
+    let at = settings
+        .windows(folder.len())
+        .position(|w| w == folder)
+        .unwrap();
+    settings.splice(
+        at..at + folder.len(),
+        b"screenshot_folder=D:\\\x83\x58\x83\x4e\x83\x56\x83\x87\r\n"
+            .iter()
+            .copied(),
+    );
+    assert!(std::str::from_utf8(&settings).is_err());
+    let sandbox = crate::test_support::Sandbox::new();
+    let roaming = sandbox.path().join("roaming").join("Snipping Lite");
+    fs::create_dir_all(&roaming).unwrap();
+    fs::write(roaming.join("settings.ini"), &settings).unwrap();
+    // 読めない保存先だけが既定のフォルダーになり、ほかの 3 世代分の値は残る。
+    assert_eq!(
+        load_settings(),
+        Settings {
+            screenshot_folder: String::new(),
+            ..expected(4)
+        }
+    );
+    // ペンの色の行の後ろに「; 色」（90 46）を書き足したものと、書き込みの切り替えの前に書いたもの。
+    fs::write(
+        roaming.join("pen.ini"),
+        [OLD_PEN, b"; \x90\x46\r\n"].concat(),
+    )
+    .unwrap();
+    fs::write(
+        roaming.join("markup.ini"),
+        [b"; \x90\x46\r\n", OLD_MARKUP].concat(),
+    )
+    .unwrap();
+    assert_eq!(load_pen(), (3, 2));
+    assert!(load_markup());
+}
