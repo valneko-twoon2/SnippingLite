@@ -137,6 +137,27 @@ fn new_settings_reach_the_running_tray_process() {
 }
 
 #[test]
+#[ignore = "Creates the tray window"]
+fn a_second_launch_opens_the_settings_of_the_running_tray() {
+    let desk = Desk::start();
+    let settings = stub_window(SETTINGS_WINDOW);
+    // SAFETY: the windows belong to this test.
+    unsafe { ShowWindow(settings, SW_HIDE) };
+    // トレイが見つからなければ、自分がトレイとして起動する。
+    assert!(!unsafe { hand_over_to(null_mut()) });
+    desk.pump(Duration::from_millis(50));
+    assert!(!shown(settings), "nothing was asked of anyone");
+    // 見つかったトレイには設定ウィンドウを開かせ、自分は終わる。
+    assert!(unsafe { hand_over_to(desk.main) });
+    assert!(
+        desk.pump_until(Duration::from_secs(2), || shown(settings)),
+        "the running tray opened its settings"
+    );
+    assert!(!s().active, "it does not start a snip");
+    unsafe { DestroyWindow(settings) };
+}
+
+#[test]
 #[ignore = "Covers the screen"]
 fn the_tray_commands_start_a_snip_and_open_the_windows() {
     let desk = Desk::start();

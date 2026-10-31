@@ -37,7 +37,12 @@ pub(crate) unsafe fn apply_settings(settings: &config::Settings) {
 /// トレイがすでに動いていれば、その設定ウィンドウを開かせて true を返す。
 /// 2 つのトレイが動くと、設定の変更が片方にしか届かず、もう片方が古い設定のまま撮影する。
 pub(crate) unsafe fn hand_over_to_running_tray() -> bool {
-    let running = FindWindowW(w(MAIN).as_ptr(), null());
+    hand_over_to(FindWindowW(w(MAIN).as_ptr(), null()))
+}
+
+/// `running`（見つかったトレイのウィンドウ、なければ null）に設定ウィンドウを開かせる。
+/// テストは、利用者が動かしている本物のトレイではなく、自分のトレイを渡して確かめる。
+pub(crate) unsafe fn hand_over_to(running: HWND) -> bool {
     if running.is_null() {
         return false;
     }
