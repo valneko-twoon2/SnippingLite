@@ -80,6 +80,39 @@ fn an_unreadable_picture_is_reported_instead_of_opened() {
 }
 
 #[test]
+fn a_picture_wider_than_a_texture_can_be_is_reported_instead_of_crashing_the_window() {
+    // テクスチャの辺の上限（ウィンドウなしの画面では egui の既定の 2048、実際のウィンドウでは GPU の
+    // 上限）を 1 画素超える絵。そのままテクスチャにすると egui が panic し、履歴のウィンドウごと落ちる。
+    let _sandbox = Sandbox::new();
+    let t = now();
+    let keep = seed(t - HOUR, 60, 40);
+    let wide = seed(t, 2049, 1);
+    let mut viewer = Viewer::open();
+    assert_eq!(viewer.screen.ctx.input(|i| i.max_texture_side), 2048);
+    assert_eq!(viewer.app.entries.len(), 2);
+    assert_eq!(
+        viewer.screen.images().len(),
+        1,
+        "only the other thumbnail is drawn"
+    );
+    let ctx = viewer.screen.ctx.clone();
+    viewer.app.open(&ctx, wide);
+    viewer.settle();
+    assert!(viewer.app.opened.is_none());
+    assert_eq!(
+        viewer.app.notice.map(|n| n.1),
+        Some(tr("Could not open the image."))
+    );
+    // 境界: ちょうど上限の幅なら開ける。ほかの項目もそのまま開ける。
+    let edge = seed(t + 1, 2048, 1);
+    viewer.app.open(&ctx, edge.clone());
+    viewer.settle();
+    assert_eq!(viewer.opened_id(), Some(edge.id));
+    viewer.app.open(&ctx, keep.clone());
+    assert_eq!(viewer.opened_id(), Some(keep.id));
+}
+
+#[test]
 fn a_notice_fades_back_to_the_hint_after_four_seconds() {
     let _sandbox = Sandbox::new();
     seed(now(), 60, 40);

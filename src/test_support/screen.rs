@@ -68,12 +68,16 @@ impl Screen {
         out
     }
 
-    /// The rectangles of the pictures painted in the last frame (not text or shapes).
+    /// The rectangles of the pictures painted in the last frame (not text or shapes). 絵は自分の
+    /// テクスチャを持つ。既定のテクスチャ（文字の画像の白い点）で塗った面は、スクロールの端の影の
+    /// ような図形なので数えない。
     pub fn images(&self) -> Vec<Rect> {
         fn collect(shape: &Shape, out: &mut Vec<Rect>) {
             match shape {
                 Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
-                Shape::Mesh(mesh) => out.push(mesh.calc_bounds()),
+                Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                    out.push(mesh.calc_bounds())
+                }
                 _ => {}
             }
         }

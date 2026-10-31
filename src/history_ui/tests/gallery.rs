@@ -99,19 +99,67 @@ fn an_empty_history_says_so_and_offers_nothing_to_clear() {
     assert!(viewer.screen.images().is_empty());
 }
 
-#[test]
-fn the_gallery_groups_screenshots_by_day_and_counts_them() {
-    let _sandbox = Sandbox::new();
-    let t = now();
+fn noon() -> u128 {
+    june_15(12, 0)
+}
+
+fn five_past_midnight() -> u128 {
+    june_15(0, 5)
+}
+
+/// 時計が `clock` を返すときに、その時刻、15 分前、3 日前に撮った見本を並べたギャラリー。
+fn three_screenshots_at(clock: fn() -> u128) -> Viewer {
+    let t = clock();
     for (offset, size) in [(0, 40), (HOUR / 4, 50), (3 * DAY, 60)] {
         seed(t - offset, size, 30);
     }
-    let viewer = Viewer::open();
+    let mut app = HistoryApp::new(false, false);
+    app.clock = clock;
+    Viewer::with(app)
+}
+
+/// 日付の段が上から `days` の順に並び、各段の下（次の段より上）にその時刻の札があり、ほかに日付の段がない。
+fn assert_days(viewer: &Viewer, days: &[(&str, &[&str])]) {
+    let texts = viewer.screen.texts();
+    let is_date = |text: &str| {
+        text.len() == 10
+            && text.char_indices().all(|(i, c)| {
+                if i == 4 || i == 7 {
+                    c == '/'
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+    };
+    let mut headings: Vec<(&str, f32)> = texts
+        .iter()
+        .filter(|(text, _)| is_date(text))
+        .map(|(text, rect)| (text.as_str(), rect.top()))
+        .collect();
+    headings.sort_by(|a, b| a.1.total_cmp(&b.1));
+    let dates: Vec<&str> = headings.iter().map(|h| h.0).collect();
+    let expected: Vec<&str> = days.iter().map(|d| d.0).collect();
+    assert_eq!(dates, expected, "the day headings, newest first");
+    for (index, (date, times)) in days.iter().enumerate() {
+        let below = headings[index].1;
+        let above = headings.get(index + 1).map_or(f32::INFINITY, |h| h.1);
+        for time in *times {
+            assert!(
+                texts
+                    .iter()
+                    .any(|(text, rect)| text == time && below < rect.top() && rect.top() < above),
+                "a screenshot at {time} under {date}: {texts:?}"
+            );
+        }
+    }
+}
+
+/// 3 枚の見本の件数の表示、1 枚に 1 つのサムネイル、絞り込みと消去のボタン。
+fn assert_three_counted(viewer: &Viewer) {
     let count = tr("{total} screenshots, newest first (the oldest beyond {limit} are removed)")
         .replace("{total}", "3")
         .replace("{limit}", "200");
     assert!(viewer.screen.has(&count), "{:?}", viewer.screen.texts());
-    assert!(viewer.screen.has(&date_label(t - 3 * DAY)));
     assert_eq!(
         viewer.screen.images().len(),
         3,
@@ -124,6 +172,51 @@ fn the_gallery_groups_screenshots_by_day_and_counts_them() {
     assert!(!viewer
         .screen
         .has(tr("History recording is turned off in Settings.")));
+}
+
+#[test]
+fn the_gallery_groups_screenshots_by_day_and_counts_them() {
+    let _sandbox = Sandbox::new();
+    let viewer = three_screenshots_at(noon);
+    // 正午: 15 分前（11:45）は同じ日、3 日前は 6 月 12 日の正午。
+    assert_days(
+        &viewer,
+        &[
+            ("2026/06/15", &["12:00", "11:45"]),
+            ("2026/06/12", &["12:00"]),
+        ],
+    );
+    assert_three_counted(&viewer);
+}
+
+#[test]
+fn a_screenshot_from_just_before_midnight_is_grouped_under_the_day_before() {
+    let _sandbox = Sandbox::new();
+    let viewer = three_screenshots_at(five_past_midnight);
+    // 0:05: 15 分前は前の日の 23:50 なので、日付の段は 3 つになり、ギャラリーは画面に収まらない。
+    assert_days(
+        &viewer,
+        &[
+            ("2026/06/15", &["00:05"]),
+            ("2026/06/14", &["23:50"]),
+            ("2026/06/12", &["00:05"]),
+        ],
+    );
+    assert_three_counted(&viewer);
+}
+
+#[test]
+fn the_range_filters_count_back_from_the_clock_of_the_window() {
+    let _sandbox = Sandbox::new();
+    // 時計の 23 時間前と 25 時間前。最近 24 時間に入るのは前者だけで、実行した時刻にはよらない。
+    let t = noon();
+    seed(t - 23 * HOUR, 40, 30);
+    seed(t - 25 * HOUR, 40, 30);
+    let mut app = HistoryApp::new(false, false);
+    app.clock = noon;
+    app.range = Range::Day;
+    assert_eq!(app.visible().len(), 1);
+    assert_eq!(app.visible()[0].id, t - 23 * HOUR);
 }
 
 #[test]

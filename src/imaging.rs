@@ -173,11 +173,18 @@ fn on_white(pixels: &[u8]) -> Vec<u8> {
     opaque
 }
 
+/// ファイル 1 バイトあたりの画素の上限。PNG の deflate は 1 バイトを最大 1032 バイトに広げ、PNG の
+/// 画素は最小 1 ビットなので、どの PNG もこれを超えない（GIF の LZW や JPEG も下回る）。超えるのは
+/// 中身のない大きさの宣言だけで、信じて読むと、GDI+ が足りない行を埋めて、数十バイトのファイルから
+/// 何 GB もの画素を返す。
+const PIXELS_PER_BYTE: u64 = 1032 * 8;
+
 /// Decodes an image file into straight-alpha top-down BGRA pixels.
 pub fn decode(path: &Path) -> Option<(i32, i32, Vec<u8>)> {
     if !start_gdiplus() {
         return None;
     }
+    let length = fs::metadata(path).map_or(0, |m| m.len());
     // SAFETY: the locked buffer is only read while the lock is held.
     unsafe {
         let name = wide(path);
@@ -196,9 +203,12 @@ pub fn decode(path: &Path) -> Option<(i32, i32, Vec<u8>)> {
         };
         let mut data: BitmapData = std::mem::zeroed();
         let mut pixels = None;
+        let declared = width as u64 * height as u64;
         // ImageLockModeRead, PixelFormat32bppARGB
         if width > 0
             && height > 0
+            && i32::try_from(width.max(height)).is_ok()
+            && declared <= length.saturating_mul(PIXELS_PER_BYTE)
             && GdipBitmapLockBits(bitmap, &area, 1, 0x0026200A, &mut data) == 0
         {
             let row = width as usize * 4;

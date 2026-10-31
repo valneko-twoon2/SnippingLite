@@ -118,3 +118,41 @@ fn what_the_current_version_writes_still_starts_with_the_first_release_keys() {
     let text = settings_text(&parse_settings(""));
     assert!(text.starts_with("copy=1\r\nsave=0\r\nask=0\r\ndelay=0\r\n"));
 }
+
+/// pen.ini の書式は最初の版（68c4ed5、2026-10-28）から 1 つだけ（c0d9cd3 からは pen.tmp を経て
+/// 書くが、中身は同じ）。その版のコードの `save_pen(3, 2)` が書いたバイト列。
+const OLD_PEN: &[u8] = b"color=3\r\nthickness=2\r\n";
+/// markup.ini の書式も最初の版（8249a83、2026-11-01）から 1 つだけ。その版の `save_markup(true)` が
+/// 書いたバイト列。
+const OLD_MARKUP: &[u8] = b"markup=1\r\n";
+
+#[test]
+fn pen_and_markup_files_from_the_first_versions_keep_their_choices() {
+    let sandbox = crate::test_support::Sandbox::new();
+    let folder = sandbox.path().join("roaming").join("Snipping Lite");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("pen.ini"), OLD_PEN).unwrap();
+    fs::write(folder.join("markup.ini"), OLD_MARKUP).unwrap();
+    assert_eq!(load_pen(), (3, 2));
+    assert!(load_markup());
+    // 番号の意味もその版のまま: 色 3 は青（#0078D4）、太さ 2 は太いペン（半径 4.5）と蛍光ペン（16）。
+    assert_eq!(crate::annotate::COLORS[3], [0x00, 0x78, 0xd4]);
+    assert_eq!(crate::annotate::PEN_RADII[2], 4.5);
+    assert_eq!(crate::annotate::HIGHLIGHTER_RADII[2], 16.0);
+}
+
+#[test]
+fn the_current_version_writes_pen_and_markup_files_in_the_first_layouts() {
+    // 固定テスト: 今の版が書くバイト列は、最初の版のものと同じ。
+    let sandbox = crate::test_support::Sandbox::new();
+    let folder = sandbox.path().join("roaming").join("Snipping Lite");
+    save_pen(3, 2);
+    assert_eq!(fs::read(folder.join("pen.ini")).unwrap(), OLD_PEN);
+    save_markup(true);
+    assert_eq!(fs::read(folder.join("markup.ini")).unwrap(), OLD_MARKUP);
+    save_markup(false);
+    assert_eq!(
+        fs::read(folder.join("markup.ini")).unwrap(),
+        b"markup=0\r\n"
+    );
+}

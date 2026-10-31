@@ -93,7 +93,40 @@ fn now() -> u128 {
     imaging::timestamp().unwrap()
 }
 
+/// この機械の時間帯で、2026 年 6 月 15 日の `hour`:`minute`（Unix 紀元からのミリ秒）。6 月の半ばは
+/// どの時間帯でも夏時間の切り替えから離れているので、前の日の同じ時刻はちょうど 24 時間前にある。
+fn june_15(hour: u16, minute: u16) -> u128 {
+    use windows_sys::Win32::{
+        Foundation::{FILETIME, SYSTEMTIME},
+        System::Time::{SystemTimeToFileTime, TzSpecificLocalTimeToSystemTime},
+    };
+    let local = SYSTEMTIME {
+        wYear: 2026,
+        wMonth: 6,
+        wDayOfWeek: 0,
+        wDay: 15,
+        wHour: hour,
+        wMinute: minute,
+        wSecond: 0,
+        wMilliseconds: 0,
+    };
+    // SAFETY: all structures are valid, initialized locals.
+    unsafe {
+        let mut utc: SYSTEMTIME = std::mem::zeroed();
+        assert_ne!(
+            TzSpecificLocalTimeToSystemTime(std::ptr::null(), &local, &mut utc),
+            0
+        );
+        let mut file: FILETIME = std::mem::zeroed();
+        assert_ne!(SystemTimeToFileTime(&utc, &mut file), 0);
+        let ticks = ((file.dwHighDateTime as u64) << 32) | file.dwLowDateTime as u64;
+        // FILETIME は 1601 年からの 100 ns 単位で、Unix 紀元はその 11644473600 秒後。
+        (ticks / 10_000 - 11_644_473_600_000) as u128
+    }
+}
+
 mod browse;
+mod damaged;
 mod edit;
 mod gallery;
 mod window;

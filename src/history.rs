@@ -31,17 +31,28 @@ fn entry(folder: &Path, id: u128) -> Entry {
     }
 }
 
-/// Parses the id out of a full-size image file name such as `1793151938315.png`.
+/// 項目の時刻（Unix 紀元からのミリ秒）の上限、9999-12-31 00:00 UTC。履歴は日付を 4 桁の年で
+/// 書き、この時刻はどの時間帯（UTC-12 〜 UTC+14）でも 9999 年のうちにある。ずっと後の時刻は
+/// `local_time` の FILETIME の計算があふれる。
+const LAST_ID: u128 = 253_402_214_400_000;
+
+/// Parses the id out of a full-size image file name such as `1793151938315.png`. アプリが書く名前
+/// （先頭に 0 や符号のない 10 進、`LAST_ID` まで）だけを項目にする。`05.png` や `+5.png` を 5 と読むと、
+/// 項目の画像の場所（`5.png`）にファイルがなく、消しても消えない項目が一覧に残る。巨大な数は、
+/// 日付にするときに計算があふれる。
 fn parse_id(name: &str) -> Option<u128> {
-    name.strip_suffix(".png")?.parse().ok()
+    let digits = name.strip_suffix(".png")?;
+    let id: u128 = digits.parse().ok()?;
+    (id <= LAST_ID && id.to_string() == digits).then_some(id)
 }
 
-/// Lists the entries in `folder`, newest first.
+/// Lists the entries in `folder`, newest first. 名前が合っていても、フォルダーは項目にしない。
 fn list_in(folder: &Path) -> Vec<Entry> {
     let mut ids: Vec<u128> = fs::read_dir(folder)
         .into_iter()
         .flatten()
         .flatten()
+        .filter(|f| f.file_type().is_ok_and(|t| t.is_file()))
         .filter_map(|f| parse_id(f.file_name().to_str()?))
         .collect();
     ids.sort_unstable_by(|a, b| b.cmp(a));
@@ -440,4 +451,8 @@ mod tests {
         // The folder may exist, but it holds no half-written entry.
         assert!(folder().is_none_or(|f| fs::read_dir(f).is_ok_and(|d| d.count() == 0)));
     }
+
+    mod compat;
+    mod folder;
+    mod names;
 }
