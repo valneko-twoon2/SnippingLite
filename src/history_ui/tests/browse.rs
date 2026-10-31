@@ -79,10 +79,18 @@ fn an_unreadable_picture_is_reported_instead_of_opened() {
     );
 }
 
+/// 開いている画像の表示用のテクスチャの大きさ（幅、高さ）。
+fn shown_texture(viewer: &Viewer) -> [usize; 2] {
+    let opened = viewer.app.opened.as_ref().expect("an image is opened");
+    opened.texture.as_ref().expect("a texture is made").size()
+}
+
 #[test]
-fn a_picture_wider_than_a_texture_can_be_is_reported_instead_of_crashing_the_window() {
+fn a_picture_wider_than_a_texture_can_be_opens_shrunk_for_the_screen_only() {
     // テクスチャの辺の上限（ウィンドウなしの画面では egui の既定の 2048、実際のウィンドウでは GPU の
-    // 上限）を 1 画素超える絵。そのままテクスチャにすると egui が panic し、履歴のウィンドウごと落ちる。
+    // 上限）を 1 画素超える絵。そのままテクスチャにすると egui が panic するので、表示だけを上限に
+    // 収まるよう縮める。手計算: 2049 x 1 は長い辺を 2048 に合わせ、高さは 1 x 2048 / 2049 = 0.9995
+    // を丸めて 1。開いた画像そのもの（コピーや保存に使う画素）は 2049 x 1 のまま。
     let _sandbox = Sandbox::new();
     let t = now();
     let keep = seed(t - HOUR, 60, 40);
@@ -92,24 +100,62 @@ fn a_picture_wider_than_a_texture_can_be_is_reported_instead_of_crashing_the_win
     assert_eq!(viewer.app.entries.len(), 2);
     assert_eq!(
         viewer.screen.images().len(),
-        1,
-        "only the other thumbnail is drawn"
+        2,
+        "the wide thumbnail is drawn too"
     );
     let ctx = viewer.screen.ctx.clone();
-    viewer.app.open(&ctx, wide);
+    viewer.app.open(&ctx, wide.clone());
     viewer.settle();
-    assert!(viewer.app.opened.is_none());
-    assert_eq!(
-        viewer.app.notice.map(|n| n.1),
-        Some(tr("Could not open the image."))
-    );
-    // 境界: ちょうど上限の幅なら開ける。ほかの項目もそのまま開ける。
+    assert_eq!(viewer.opened_id(), Some(wide.id));
+    assert_eq!(viewer.app.notice, None);
+    assert_eq!(shown_texture(&viewer), [2048, 1]);
+    let opened = viewer.app.opened.as_ref().unwrap();
+    assert_eq!(opened.size, (2049, 1));
+    assert_eq!(opened.flattened().len(), 2049 * 4);
+    assert!(viewer.screen.has("   2049 x 1"));
+    // 境界: ちょうど上限の幅なら縮めない。ほかの項目もそのまま開ける。
     let edge = seed(t + 1, 2048, 1);
     viewer.app.open(&ctx, edge.clone());
     viewer.settle();
     assert_eq!(viewer.opened_id(), Some(edge.id));
+    assert_eq!(shown_texture(&viewer), [2048, 1]);
     viewer.app.open(&ctx, keep.clone());
     assert_eq!(viewer.opened_id(), Some(keep.id));
+    assert_eq!(shown_texture(&viewer), [60, 40]);
+}
+
+#[test]
+fn a_shrunk_picture_keeps_its_shape_and_the_pen_draws_in_its_own_pixels() {
+    // 手計算: 3000 x 1500 は長い辺を 2048 に合わせ、高さは 1500 x 2048 / 3000 = 1024。縦横比 2:1 の
+    // まま 2048 x 1024 のテクスチャになる。画面上の絵は元の画像の大きさから配置するので、絵の右下の
+    // 角は元の画像の (3000, 1500) に当たり、縮めたテクスチャの (2048, 1024) ではない。
+    let _sandbox = Sandbox::new();
+    let big = seed(now(), 3000, 1500);
+    let mut viewer = Viewer::open();
+    let cell = viewer.screen.images()[0].center();
+    viewer.click(cell);
+    assert_eq!(viewer.opened_id(), Some(big.id));
+    assert_eq!(shown_texture(&viewer), [2048, 1024]);
+    assert_eq!(viewer.app.opened.as_ref().unwrap().size, (3000, 1500));
+    let canvas = viewer.canvas();
+    assert!(
+        (canvas.width() / canvas.height() - 2.0).abs() < 0.01,
+        "{canvas:?}"
+    );
+    viewer.click_text(tr("Pen"));
+    let (from, to) = (
+        canvas.min + egui::vec2(1.0, 1.0),
+        canvas.max - egui::vec2(1.0, 1.0),
+    );
+    viewer.act(|s, show| s.drag(from, to, show));
+    let opened = viewer.app.opened.as_ref().unwrap();
+    let &(x, y) = opened.marks[0].points.last().unwrap();
+    // 1 画面画素は 3000 / 絵の幅 画像画素。端から 1 画面画素の内側なので、数画素の内側に来る。
+    let per = 3000.0 / canvas.width();
+    assert!((x - (3000.0 - per)).abs() < 2.0 * per, "{x}");
+    assert!((y - (1500.0 - per)).abs() < 2.0 * per, "{y}");
+    // コピーや保存に使う画素は元の解像度のまま。
+    assert_eq!(opened.flattened().len(), 3000 * 1500 * 4);
 }
 
 #[test]

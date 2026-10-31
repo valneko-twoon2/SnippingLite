@@ -368,8 +368,14 @@ impl HistoryApp {
         ui.painter()
             .rect_filled(room, CornerRadius::same(8), p.card);
         let mut canvas = None;
-        if let Some(texture) = self.opened.as_ref().and_then(|o| o.texture.as_ref()) {
-            let source = texture.size_vec2();
+        if let Some((texture, size)) = self
+            .opened
+            .as_ref()
+            .and_then(|o| o.texture.as_ref().map(|t| (t, o.size)))
+        {
+            // 配置と倍率は元の画像の大きさから決める。テクスチャは上限に合わせて縮めてあることがあり、
+            // その大きさを使うと、ペンや切り抜きや色の取得が指す画像の画素がずれる。
+            let source = Vec2::new(size.0 as f32, size.1 as f32);
             let inner = room.shrink(8.0);
             let scale = (inner.width() / source.x)
                 .min(inner.height() / source.y)
