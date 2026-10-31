@@ -2,10 +2,34 @@ use super::*;
 use crate::test_support::clipboard_text;
 use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
 
+const SCRATCH: &str = "snipping-lite-imaging-";
+
+/// このプロセスのテストが画像を書くフォルダーの中のパス。テストは並んで走って同じフォルダーを
+/// 使うので、テストごとには消さない。代わりに初めて使うとき、もう動いていないプロセスが残した
+/// フォルダーを消す（以前は実行のたびに 1 つずつ残っていた）。
 fn scratch(name: &str) -> PathBuf {
-    let folder = std::env::temp_dir().join(format!("snipping-lite-imaging-{}", std::process::id()));
+    static TIDY: std::sync::Once = std::sync::Once::new();
+    let temp = std::env::temp_dir();
+    TIDY.call_once(|| remove_stale_scratch(&temp));
+    let folder = temp.join(format!("{SCRATCH}{}", std::process::id()));
     fs::create_dir_all(&folder).unwrap();
     folder.join(name)
+}
+
+fn remove_stale_scratch(temp: &Path) {
+    let Ok(entries) = fs::read_dir(temp) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let owner = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(SCRATCH))
+            .and_then(|id| id.parse::<u32>().ok());
+        if owner.is_some_and(|id| !crate::staging::alive(id)) {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
 }
 
 /// A 3x2 image whose pixels all differ, including every alpha class.

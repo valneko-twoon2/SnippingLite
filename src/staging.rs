@@ -70,7 +70,8 @@ fn writer_of(name: &str) -> Option<u32> {
 }
 
 /// プロセスが動いているか。開けないプロセス（もう無いか、別の利用者のもの）は書きかけの持ち主ではない。
-fn alive(id: u32) -> bool {
+/// テストも、終わったプロセスが残した作業用のフォルダーを見分けるのに使う。
+pub fn alive(id: u32) -> bool {
     if id == std::process::id() {
         return true;
     }
