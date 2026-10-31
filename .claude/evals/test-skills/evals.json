@@ -1,0 +1,99 @@
+[
+  {
+    "skills": [
+      "surveying-tests",
+      "measuring-coverage",
+      "designing-test-cases",
+      "randomizing-tests",
+      "testing-systems",
+      "proving-test-quality"
+    ],
+    "fixture": "fixtures/ts-ledger",
+    "query": "このプロジェクトにはまだテストが1つもありません。テストの土台を作って、大事なところから入れてください。",
+    "planted": [
+      "src/money.ts: parseAmount refuses exactly 1,000,000.00 (>= instead of >)",
+      "src/split.ts: splitBill accepts a weight of 0 (w < 0 instead of w < 1)",
+      "src/transfer.ts: cancel() is allowed from approved",
+      "src/transfer.ts: reject() keeps the reason even when the call is refused"
+    ],
+    "expected_behavior": [
+      "Inventories the project and says there is no runner, test script or coverage; sets up Node's built-in runner without adding a dependency and adds a test script",
+      "Measures line and branch coverage with a command, reports before and after per file, and notices or avoids that unloaded files are left out of Node's coverage",
+      "Writes cases from the README, not from the code: the 1,000,000.00 limit and one cent above, the input classes of parseAmount, every state-by-event cell of Transfer with 'nothing changed' after a refused call, seeded properties of splitBill (sum, within one cent, ties)",
+      "Finds the four planted bugs, each with a failing test, and fixes them or marks them as known bugs; never changes an expected value to the code's output",
+      "Proves the tests catch faults (a mutation run or injected faults) and handles the survivors",
+      "Reports commands, numbers, what was not run and why"
+    ],
+    "found_during_evaluation": [
+      "src/split.ts: ties are decided by floating-point error (about 0.8% of small splits give the cent to the wrong person)",
+      "src/split.ts: weights times total above 2^53 break the sum"
+    ],
+    "results": {
+      "opus_baseline": "found all 4 planted bugs; asked the owner, src unchanged",
+      "opus_with_skill": "found all 4 planted bugs plus the tie bug; 175 tests, 100% lines and branches; bugs kept as todo; src unchanged",
+      "six_skills_opus": "4 planted + tie bug found; todo marks; 100% lines and branches; src unchanged"
+    }
+  },
+  {
+    "skills": [
+      "surveying-tests",
+      "measuring-coverage",
+      "designing-test-cases",
+      "randomizing-tests",
+      "testing-systems",
+      "proving-test-quality"
+    ],
+    "fixture": "fixtures/py-pricing",
+    "query": "行カバレッジは100%なのに、価格計算のバグ報告が続いています。テストの質を上げてください。",
+    "planted": [
+      "pricing/rules.py: the bulk discount starts at 11 items (> 10 instead of >= 10)",
+      "pricing/rules.py: free shipping is decided on the subtotal before discounts and the coupon"
+    ],
+    "expected_behavior": [
+      "Runs the existing suite first and records the result",
+      "States that 100% line coverage does not show quality and measures quality before changing: a mutation run (the bundled sampler, since no mutation tool is installed) with the score",
+      "Says that coverage.py is not installed instead of claiming numbers, and uses the standard library's trace or reports coverage as not measured",
+      "Replaces the hollow assertions with exact values from the README rules: a decision table over member, item count, coupon and shipping, and the boundaries 9/10/11 items, 49.99/50.00 for the coupon, 99.99/100.00 for shipping, 1/999/1000 quantity, a half-up rounding case",
+      "Finds both planted bugs with failing tests, fixes them or marks them, and does not delete existing tests without saying why",
+      "Reports the mutation score before and after, with each remaining survivor explained"
+    ],
+    "results": {
+      "opus_baseline": "own mutation script 28.8% -> 100%; fixed both bugs in a separate commit",
+      "opus_with_skill": "mutants 20% -> 100%; both bugs found; known-bug marks; src unchanged",
+      "haiku_baseline": "mutants 27% -> 97%; both bugs found, marked expectedFailure",
+      "haiku_with_skill": "mutants 20% -> 100%; both bugs found; 38 tests; src unchanged",
+      "six_skills_opus": "both bugs found and fixed; mutants 22% -> 96% (2 equivalent)"
+    }
+  },
+  {
+    "skills": [
+      "surveying-tests",
+      "measuring-coverage",
+      "designing-test-cases",
+      "randomizing-tests",
+      "testing-systems",
+      "proving-test-quality"
+    ],
+    "fixture": "fixtures/rs-records",
+    "query": "このクレートで、どんな種類のテストが足りないかを洗い出して、優先度の高いものから入れてください。",
+    "planted": [
+      "src/format.rs: decode panics on a payload length beyond the end of the file (unchecked slice)",
+      "src/format.rs: decode accepts bytes after the last record",
+      "src/store.rs: save accepts names with characters other than letters, digits, - and _ (only '/' is refused)",
+      "src/store.rs: save writes the file in place, not whole or nothing"
+    ],
+    "expected_behavior": [
+      "Produces a matrix of test kinds (present, partial, missing) with files as evidence, and ranks the missing ones by risk",
+      "Puts the decoder first (it reads user files): seeded fuzzing from valid encoded samples that saves failing inputs, a round-trip property, boundaries 1000/1001 records and 4096/4097 text bytes",
+      "Finds the panic and the accepted trailing bytes, pins each as an ordinary test, and fixes or reports them",
+      "Tests the store with hostile names (.., backslash, spaces, 64/65 characters) and the whole-or-nothing rule (a stop before the rename, or a fault injected), finding both store bugs",
+      "Measures coverage with cargo llvm-cov and runs cargo-mutants on format.rs (or a sampled run), with counts",
+      "Reports commands, numbers, what was not run and why"
+    ],
+    "results": {
+      "opus_baseline": "found 5 bugs (4 planted + oversized record), fixed in separate commits; 3 -> 37 tests",
+      "opus_with_skill": "found all 4 planted bugs, kept as #[ignore]; 3 -> 38 tests; lines 89.7% -> 100%; src unchanged",
+      "six_skills_opus": "4 bugs found and fixed with regression tests; 3 -> 29 tests; lines 89.7% -> 100%; mutants 13 missed -> 0"
+    }
+  }
+]
