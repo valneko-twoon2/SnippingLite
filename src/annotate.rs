@@ -396,4 +396,6 @@ mod tests {
             assert!(pixels.iter().all(|p| *p == 9), "{w}x{h} border {border}");
         }
     }
+
+    mod properties;
 }

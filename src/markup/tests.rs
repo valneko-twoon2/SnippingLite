@@ -217,3 +217,4 @@ fn escape_and_the_close_button_discard_a_marked_up_snip() {
 }
 
 mod model;
+mod properties;
