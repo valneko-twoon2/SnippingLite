@@ -236,20 +236,32 @@ fn a_recording_ends_only_from_the_stop_button() {
     let indicator = backdrop.indicator();
     click(backdrop.button(indicator, TIMER));
     settle(1500);
-    let files = app.files("videos", "mp4");
-    assert_eq!(files.len(), 1, "One recording is running");
+    // 録画中は一時名（`.partial`）に書き、仕上がるまで最後の名前の MP4 はない。
+    assert_eq!(
+        app.files("videos", "partial").len(),
+        1,
+        "One recording is running"
+    );
     assert!(
-        mp4_seconds(&files[0]).is_none(),
+        app.files("videos", "mp4").is_empty(),
         "A click on the elapsed time does not end the recording"
     );
     click(backdrop.button(indicator, STOP));
     let seconds =
-        wait_for(15, || mp4_seconds(&files[0])).expect("The Stop button finishes the recording");
+        wait_for(15, || finished_video(&app)).expect("The Stop button finishes the recording");
     assert!(
         seconds >= 2.0,
         "The video covers the whole recording: {seconds} s"
     );
     assert_eq!(app.files("videos", "mp4").len(), 1);
+    assert!(app.files("videos", "partial").is_empty());
+}
+
+/// 仕上がった録画の長さ。まだ録画中（最後の名前の MP4 がない）なら `None`。
+fn finished_video(app: &App) -> Option<f64> {
+    app.files("videos", "mp4")
+        .first()
+        .and_then(|f| mp4_seconds(f))
 }
 
 #[test]
@@ -269,17 +281,17 @@ fn recording_areas_below_the_encoder_minimum_are_ignored() {
     for size in [20, 33] {
         select(backdrop.free(), size, size);
         assert!(
-            app.files("videos", "mp4").is_empty(),
+            app.files("videos", "mp4").is_empty() && app.files("videos", "partial").is_empty(),
             "{size} px starts no recording"
         );
         assert!(dimmed(probe), "The snip stays open after {size} px");
     }
     select(backdrop.free(), 34, 34);
     settle(1200);
-    assert_eq!(app.files("videos", "mp4").len(), 1, "34 px records");
+    // 録画中は一時名（`.partial`）に書く。
+    assert_eq!(app.files("videos", "partial").len(), 1, "34 px records");
     shortcut();
-    let files = app.files("videos", "mp4");
-    let seconds = wait_for(15, || mp4_seconds(&files[0])).expect("The shortcut finishes it");
+    let seconds = wait_for(15, || finished_video(&app)).expect("The shortcut finishes it");
     assert!(seconds > 0.5, "{seconds} s");
 }
 

@@ -68,9 +68,11 @@ pub struct Recording {
 }
 
 /// The recording folder from the settings, created when missing.
+/// 前に止まったプロセスが残した書きかけの録画は、ここで（次の録画を始めるときに）消す。
 pub fn video_folder() -> std::io::Result<PathBuf> {
     let folder = crate::config::video_folder(&crate::config::load_settings());
     std::fs::create_dir_all(&folder)?;
+    crate::staging::remove_leftovers(&folder);
     Ok(folder)
 }
 
@@ -85,6 +87,8 @@ pub fn temporary_folder() -> std::io::Result<PathBuf> {
 fn temporary_folder_in(base: &Path, now: std::time::SystemTime) -> std::io::Result<PathBuf> {
     let folder = base.join("Snipping Lite").join("Recordings");
     std::fs::create_dir_all(&folder)?;
+    // 止まったプロセスの書きかけは、1 日を待たずに消す（貼り付けられるのは仕上がった録画だけ）。
+    crate::staging::remove_leftovers(&folder);
     let day = std::time::Duration::from_secs(24 * 60 * 60);
     for entry in std::fs::read_dir(&folder)?.flatten() {
         let stale = entry
@@ -223,15 +227,26 @@ fn run(
     unsafe {
         let com = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
         let started = MFStartup(MF_VERSION, MFSTARTUP_FULL).is_ok();
-        let result = record(area, path, stop, clock, points, options);
+        // 一時名で書き、仕上げてから最後の名前に変える。録画の途中でプロセスが止まっても、
+        // 保存先に再生できないファイルが最後の名前で残らない。
+        let partial = crate::staging::partial(path);
+        let mut result = record(area, &partial, stop, clock, points, options);
         if started {
             let _ = MFShutdown();
         }
         if com {
             CoUninitialize();
         }
+        if result.is_ok() {
+            if let Err(error) = crate::staging::commit(&partial, path) {
+                result = Err(format!(
+                    "{}: {error}",
+                    tr("Could not finish the video file")
+                ));
+            }
+        }
         if result.is_err() {
-            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(&partial);
         }
         result
     }
