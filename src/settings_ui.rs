@@ -141,63 +141,68 @@ pub fn run(hotkey_ok: bool) {
     );
 }
 
+/// 英数字のフォントの候補（ファイル, フェイスの番号）。前にあるものほど優先する。
+const REGULAR_FACES: [(&str, u32); 5] = [
+    ("SegUIVar.ttf", 0),
+    ("segoeui.ttf", 0),
+    ("tahoma.ttf", 0),
+    ("arial.ttf", 0),
+    ("micross.ttf", 0),
+];
+/// 見出しの Semibold の候補。可変フォントでは太さの軸で Semibold にする。
+const SEMIBOLD_FACES: [(&str, u32); 2] = [("SegUIVar.ttf", 0), ("seguisb.ttf", 0)];
+/// Yu Gothic UI は YuGothM.ttc などの 2 番目以降のフェイスにある。かながプロポーショナル幅で、
+/// 行の寸法も Segoe UI と同じなので、英数字と混ぜても WinUI と同じ位置に並ぶ。
+/// 游ゴシック（全角幅のかな）や古い Windows のメイリオは使わない。
+const JAPANESE_FACES: [(&str, u32); 3] =
+    [("YuGothM.ttc", 1), ("meiryo.ttc", 2), ("msgothic.ttc", 1)];
+const JAPANESE_BOLD_FACES: [(&str, u32); 2] = [("YuGothB.ttc", 2), ("meiryob.ttc", 2)];
+
+/// Windows のフォントのフォルダー。
+fn fonts_folder() -> PathBuf {
+    std::env::var_os("WINDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("Fonts")
+}
+
 /// Snipping Tool（WinUI）と同じ組み合わせのフォントを読み込む。英数字は Segoe UI Variable
 /// （Windows 10 では Segoe UI）、日本語は Yu Gothic UI で描く。egui ships no fonts here,
 /// so returns false if none is found.
 pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
+    install_fonts_from(ctx, &fonts_folder())
+}
+
+/// `folder` の中のフォントで `install_fonts` をする。テストが用意したフォルダーを渡せるよう分けてある。
+fn install_fonts_from(ctx: &egui::Context, folder: &Path) -> bool {
     let mut fonts = FontDefinitions::empty();
-    let folder = std::env::var_os("WINDIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
-        .join("Fonts");
-    // (ファイル, フェイスの番号) の候補のうち、最初に読めたものを登録する。
+    // (ファイル, フェイスの番号) の候補のうち、最初に読めたものを登録する。epaint は読めない
+    // フォントで最初のフレームに panic するので、中身がファイルに収まっているフェイスだけを使う。
     let mut load = |faces: &[(&str, u32)], name: &str, tweak: FontTweak| {
         let (bytes, index) = faces.iter().find_map(|&(file, index)| {
             let bytes = fs::read(folder.join(file)).ok()?;
-            (index < face_count(&bytes)).then_some((bytes, index))
+            face_fits(&bytes, index).then_some((bytes, index))
         })?;
         let mut data = FontData::from_owned(bytes).tweak(tweak.clone());
         data.index = index;
         fonts.font_data.insert(name.to_owned(), Arc::new(data));
         Some(name.to_owned())
     };
-    let regular = load(
-        &[
-            ("SegUIVar.ttf", 0),
-            ("segoeui.ttf", 0),
-            ("tahoma.ttf", 0),
-            ("arial.ttf", 0),
-            ("micross.ttf", 0),
-        ],
-        "regular",
-        FontTweak::default(),
-    );
-    // 可変フォントでは太さの軸で Semibold にする。
+    let regular = load(&REGULAR_FACES, "regular", FontTweak::default());
     let semibold = load(
-        &[("SegUIVar.ttf", 0), ("seguisb.ttf", 0)],
+        &SEMIBOLD_FACES,
         "semibold",
         FontTweak {
             coords: VariationCoords::new([(b"wght", 600.0)]),
             ..FontTweak::default()
         },
     );
-    // Yu Gothic UI は YuGothM.ttc などの 2 番目以降のフェイスにある。かながプロポーショナル幅で、
-    // 行の寸法も Segoe UI と同じなので、英数字と混ぜても WinUI と同じ位置に並ぶ。
-    // 游ゴシック（全角幅のかな）や古い Windows のメイリオは使わない。
     let centered = || FontTweak {
         y_offset_factor: JAPANESE_Y_OFFSET,
         ..FontTweak::default()
     };
-    let japanese = load(
-        &[("YuGothM.ttc", 1), ("meiryo.ttc", 2), ("msgothic.ttc", 1)],
-        "japanese",
-        centered(),
-    );
-    let japanese_bold = load(
-        &[("YuGothB.ttc", 2), ("meiryob.ttc", 2)],
-        "japanese_bold",
-        centered(),
-    );
+    let japanese = load(&JAPANESE_FACES, "japanese", centered());
+    let japanese_bold = load(&JAPANESE_BOLD_FACES, "japanese_bold", centered());
     let Some(regular) = regular else {
         return false;
     };
@@ -230,6 +235,56 @@ fn face_count(bytes: &[u8]) -> u32 {
         Some(_) => 1,
         None => 0,
     }
+}
+
+/// フェイス `index` を epaint に渡してよいか。epaint は読めないフォントで最初のフレームに panic
+/// するので、ヘッダーの数（`face_count`）を信じずに、途中で切れたファイルや壊れたファイルを
+/// 渡す前に除く。TTC は位置の表がすべてファイルに収まり（読み手は表を丸ごと読み、収まらなければ
+/// 空として扱う）、その番号の位置にフェイスの始まりがある。フェイスは TrueType か CFF の印で
+/// 始まり、テーブルの一覧と、一覧が示す各テーブル（位置と長さ）がファイルに収まる。
+fn face_fits(bytes: &[u8], index: u32) -> bool {
+    face_tables_fit(bytes, index).is_some()
+}
+
+fn face_tables_fit(bytes: &[u8], index: u32) -> Option<()> {
+    // `at` から `size` バイトのビッグエンディアンの数。ファイルの外なら `None`。
+    let number = |at: usize, size: usize| -> Option<usize> {
+        let field = bytes.get(at..at.checked_add(size)?)?;
+        Some(
+            field
+                .iter()
+                .fold(0, |value, &byte| value << 8 | byte as usize),
+        )
+    };
+    let count = face_count(bytes);
+    if index >= count {
+        return None;
+    }
+    let start = if bytes.starts_with(b"ttcf") {
+        let table_end = (count as usize).checked_mul(4)?.checked_add(12)?;
+        if table_end > bytes.len() {
+            return None;
+        }
+        number(12 + 4 * index as usize, 4)?
+    } else {
+        0
+    };
+    // TrueType（0x00010000 と 'true'）と CFF（'OTTO'）の印。
+    let version = bytes.get(start..start.checked_add(4)?)?;
+    let marks: [&[u8]; 3] = [&[0, 1, 0, 0], b"true", b"OTTO"];
+    if !marks.contains(&version) {
+        return None;
+    }
+    let tables = number(start.checked_add(4)?, 2)?;
+    for table in 0..tables {
+        let record = start.checked_add(12 + 16 * table)?;
+        let offset = number(record.checked_add(8)?, 4)?;
+        let length = number(record.checked_add(12)?, 4)?;
+        if offset.checked_add(length)? > bytes.len() {
+            return None;
+        }
+    }
+    Some(())
 }
 
 /// Applies the chosen app theme to `ui::theme()` and to the egui context.
