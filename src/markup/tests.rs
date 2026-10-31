@@ -216,4 +216,6 @@ fn escape_and_the_close_button_discard_a_marked_up_snip() {
     assert_eq!(crate::history::list().len(), 1);
 }
 
+mod keys;
+mod modes;
 mod tray;
