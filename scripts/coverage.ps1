@@ -59,7 +59,8 @@ try {
         $running | Wait-Process -Timeout 10 -ErrorAction SilentlyContinue
     }
     # Test helpers and the end-to-end tests are not part of the product, so they are not measured.
-    $ignore = 'test_support|[\\/]tests[\\/]|[\\/](tests|flows|leaks)\.rs$'
+    # モンキーテストと、テストに状態を見せる窓口（probe.rs）もテストだけのコード。
+    $ignore = 'test_support|[\\/]tests[\\/]|[\\/]monkey([\\/]|\.rs$)|[\\/](tests|flows|leaks|probe)\.rs$'
     $report = if ($Html) { '--html' } else { '--summary-only' }
     # The coverage data is lost when any test fails, so a failed or stalled run is tried once
     # more: menus and focus can be disturbed by something else on the desktop. The audio test

@@ -1,6 +1,7 @@
 //! Leak tests: a tray app that runs for weeks must give back every GDI and USER object that a
 //! capture takes. Each flow runs once to warm up its caches, then many times while the object
-//! counts of the process are watched. The counts belong to the whole process, so these tests are\n//! ignored by default and run alone (coverage.ps1 does that).
+//! counts of the process are watched. The counts belong to the whole process, so these tests are
+//! ignored by default and run alone (coverage.ps1 does that).
 
 use crate::{
     history, imaging,
