@@ -1,7 +1,8 @@
 //! 壊れた 1 件のファジング。正しい項目の間に、画像かサムネイル（または両方）を壊した 1 件を置いて
 //! ギャラリーを開き、すべての項目を開く。オラクル: どのフレームも panic せず、すべての項目が一覧と
 //! 件数に入り、正しい項目のサムネイルはすべて描かれ、正しい項目は元の大きさで開ける。壊れた項目は、
-//! 読めてテクスチャにできる大きさなら開き、そうでなければ「開けません」と知らせて、ギャラリーに留まる。
+//! 読めれば（テクスチャの辺の上限を超えるなら表示を縮めて）元の大きさで開き、そうでなければ
+//! 「開けません」と知らせて、ギャラリーに留まる。
 
 use super::*;
 use crate::test_support::{
@@ -13,18 +14,16 @@ fn noon() -> u128 {
     june_15(12, 0)
 }
 
-/// 項目の画像を、元の画像を壊したものに置き換える。読めて、テクスチャの辺の上限（`side`）に収まり、
-/// 画面に出せるなら、その大きさを返す。
-fn damage(rng: &mut rng::Rng, path: &Path, donor: &[u8], side: usize) -> Option<(i32, i32)> {
+/// 項目の画像を、元の画像を壊したものに置き換える。読めるなら、その大きさを返す。テクスチャの辺の
+/// 上限を超える大きさでも、表示を縮めて開けるので、読めるかどうかだけで決まる。
+fn damage(rng: &mut rng::Rng, path: &Path, donor: &[u8]) -> Option<(i32, i32)> {
     let sample = Sample {
         name: path.display().to_string(),
         png: fs::read(path).unwrap(),
         bgra: Vec::new(),
     };
     fs::write(path, png::damage(rng, &sample, donor)).unwrap();
-    imaging::decode(path)
-        .map(|(width, height, _)| (width, height))
-        .filter(|&(width, height)| width.max(height) as usize <= side)
+    imaging::decode(path).map(|(width, height, _)| (width, height))
 }
 
 #[test]
@@ -48,16 +47,15 @@ fn one_damaged_screenshot_leaves_the_others_listed_shown_and_openable() {
                 .collect();
             let broken = seed(t - 2 * rng.range(0..=3u64) as u128 * HOUR, 60, 40);
             let donor = fs::read(&good[0].image).unwrap();
-            let side = viewer.screen.ctx.input(|i| i.max_texture_side);
             let part = rng.below(3);
             rng.note(format!("damage part {part} of {}", broken.id));
             let image = if part != 1 {
-                damage(rng, &broken.image, &donor, side)
+                damage(rng, &broken.image, &donor)
             } else {
                 Some((60, 40))
             };
             let thumbnail = if part != 0 {
-                damage(rng, &broken.thumbnail, &donor, side)
+                damage(rng, &broken.thumbnail, &donor)
             } else {
                 Some((60, 40))
             };

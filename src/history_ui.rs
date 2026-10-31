@@ -24,6 +24,7 @@ use crate::{
 
 mod detail;
 mod gallery;
+mod shrink;
 mod widgets;
 use widgets::*;
 
@@ -217,7 +218,7 @@ impl HistoryApp {
     }
 
     fn open(&mut self, ctx: &egui::Context, entry: Entry) {
-        let Some((width, height, pixels)) = decode_shown(ctx, &entry.image) else {
+        let Some((width, height, pixels)) = imaging::decode(&entry.image) else {
             self.notice = Some((Instant::now(), tr("Could not open the image.")));
             return;
         };
@@ -252,6 +253,10 @@ impl HistoryApp {
     }
 }
 
+/// BGRA の画素から表示用のテクスチャを作る。どちらかの辺がテクスチャの辺の上限（GPU による。多くは
+/// 16384）を超えるなら、縦横比を保って上限に収まるよう縮めたテクスチャにする。上限を超えるテクスチャは
+/// egui とその描画が panic し、履歴のウィンドウごと落ちる。縮めるのは表示だけで、呼び出し側が持つ画素は
+/// 元の解像度のまま（画面上の配置も元の大きさから決める）。
 fn texture_from(
     ctx: &egui::Context,
     name: &str,
@@ -259,23 +264,25 @@ fn texture_from(
     height: i32,
     bgra: &[u8],
 ) -> TextureHandle {
-    let mut rgba = bgra.to_vec();
+    let side = ctx.input(|i| i.max_texture_side);
+    let (shown_width, shown_height) = shrink::fit(width, height, side);
+    let mut rgba = if (shown_width, shown_height) == (width, height) {
+        bgra.to_vec()
+    } else {
+        shrink::shrink(bgra, width, height, shown_width, shown_height)
+    };
     for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
-    let image = egui::ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+    let image = egui::ColorImage::from_rgba_unmultiplied(
+        [shown_width as usize, shown_height as usize],
+        &rgba,
+    );
     ctx.load_texture(name, image, TextureOptions::LINEAR)
 }
 
-/// 画像を読み、テクスチャにできる大きさ（どちらの辺もテクスチャの辺の上限まで）なら返す。上限を
-/// 超える絵をテクスチャにすると egui とその描画が panic し、履歴のウィンドウごと落ちる。
-fn decode_shown(ctx: &egui::Context, path: &Path) -> Option<(i32, i32, Vec<u8>)> {
-    let side = ctx.input(|i| i.max_texture_side);
-    imaging::decode(path).filter(|(width, height, _)| (*width).max(*height) as usize <= side)
-}
-
 fn load_texture(ctx: &egui::Context, path: &Path) -> Option<(TextureHandle, i32, i32)> {
-    let (width, height, pixels) = decode_shown(ctx, path)?;
+    let (width, height, pixels) = imaging::decode(path)?;
     Some((
         texture_from(ctx, &path.to_string_lossy(), width, height, &pixels),
         width,
