@@ -50,6 +50,7 @@ pub(super) fn button_at(p: POINT, scale: f32) -> i32 {
 }
 
 /// バーを置く左上（画面の座標）。範囲の下の中央に置き、入らなければ上、それも無理なら範囲の中の下端。
+/// どの置き方でも、モニター（作業領域）の中に収める。
 pub(super) fn place(area: RECT, monitor: RECT, scale: f32) -> POINT {
     let (width, height) = (
         (BAR_WIDTH * scale).round() as i32,
@@ -64,7 +65,9 @@ pub(super) fn place(area: RECT, monitor: RECT, scale: f32) -> POINT {
     } else if area.top - gap - height >= monitor.top + gap {
         area.top - gap - height
     } else {
-        monitor.bottom - gap * 2 - height
+        // 範囲の下端から、間隔 2 つ分だけ上（範囲が画面いっぱいのときと同じ間隔）。範囲がモニターの
+        // 下へはみ出していればモニターの下端から測り、低すぎる範囲でもモニターの上端は越えない。
+        (area.bottom.min(monitor.bottom) - gap * 2 - height).max(monitor.top + gap)
     };
     POINT { x, y }
 }

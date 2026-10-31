@@ -305,11 +305,19 @@ fn the_bar_goes_under_the_area_then_above_then_over_it_and_stays_centered() {
                 assert_eq!(at.y + height, area.top - gap, "above: {what}");
                 reach.hit("above");
             } else {
-                // 下にも上にも入らなければ、範囲に重ねる。
+                // 下にも上にも入らなければ、範囲の中の下端に重ねる。範囲がバーより低くても重なる。
                 assert!(
                     at.y < area.bottom && at.y + height > area.top,
                     "over: {what}"
                 );
+                // バーが入る高さの範囲（モニターの中の部分）なら、バーは範囲からはみ出さない。
+                let top = area.top.max(monitor.top);
+                if area.bottom - top >= height + 2 * gap {
+                    assert!(
+                        at.y >= top && at.y + height <= area.bottom,
+                        "inside: {what}"
+                    );
+                }
                 reach.hit("over");
             }
             // 横は範囲の中央。モニターの端（間隔の内側）からはみ出すときだけ、内側へ寄せる。

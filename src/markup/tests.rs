@@ -86,6 +86,9 @@ fn the_bar_goes_below_the_area_then_above_then_inside() {
     // どちらにも入らなければ（画面いっぱい）範囲の中の下端。
     let inside = place(monitor, monitor, 1.0);
     assert_eq!(inside.y, 1040 - 24 - 48);
+    // 範囲がモニターの下端より上で終わるときも、範囲の下端から同じ間隔だけ上（範囲の中）。
+    let short = place(rect(500, 50, 900, 990), monitor, 1.0);
+    assert_eq!(short.y, 990 - 24 - 48);
     // 画面の端では内側に寄せる。
     assert_eq!(place(rect(0, 100, 40, 200), monitor, 1.0).x, 12);
     assert_eq!(
