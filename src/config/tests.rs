@@ -487,6 +487,7 @@ fn a_known_folder_is_read_to_the_end_of_its_path() {
     assert!(windows.is_absolute(), "{windows:?}");
 }
 
+mod broken_bytes;
 mod compat;
 mod crash;
 mod damaged;

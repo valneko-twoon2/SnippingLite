@@ -100,18 +100,50 @@ pub struct Settings {
 
 /// The pen color and thickness (indexes) last used in the history editor.
 pub fn load_pen() -> (usize, usize) {
-    let text = std::env::var_os("APPDATA")
-        .map(|x| PathBuf::from(x).join("Snipping Lite").join("pen.ini"))
-        .and_then(|p| fs::read_to_string(p).ok())
-        .unwrap_or_default();
-    let value = |key: &str, limit: usize, default: usize| {
-        text.lines()
-            .find_map(|s| s.strip_prefix(key))
-            .and_then(|v| v.parse().ok())
-            .filter(|&v| v < limit)
-            .unwrap_or(default)
-    };
-    (value("color=", 5, 0), value("thickness=", 3, 1))
+    let text = read_text(
+        std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite").join("pen.ini")),
+    );
+    (
+        index(&text, "color=", 5, 0),
+        index(&text, "thickness=", 3, 1),
+    )
+}
+
+/// 設定ファイルを読む。ないか読めなければ空。UTF-8 として正しくないバイトがあっても、
+/// ファイル全体は捨てず、壊れた行だけを `readable_lines` の規則で読めない行にする。
+fn read_text(path: Option<PathBuf>) -> String {
+    path.and_then(|p| fs::read(p).ok())
+        .map(|bytes| readable_lines(&bytes))
+        .unwrap_or_default()
+}
+
+/// `\n` で区切った行のうち、UTF-8 として正しい行はそのまま残す（`\n` は複数バイトの文字の途中に
+/// 現れないので、行ごとに確かめてよい）。壊れたバイトのある行の値は捨てる。
+///
+/// 壊れた行が、あるキーの最初の行だった場合: その行を飛ばして次の同じキーの行を使うのではなく、
+/// そのキーを既定値にする。最初の `=` までが読める壊れた行は `キー=`（値が空）として残すので、
+/// `first` はその行を最初の行として選び、空の値はどの設定でも既定値になる（オン・オフ、番号、
+/// テーマ、既定のフォルダー）。重なったキーは最初の行だけで決まり、最初の行の値が使えなければ
+/// 既定値、という `first` / `switch` の規則のままにするため。最初の `=` までに壊れたバイトがある
+/// 行は、どのキーの行とも決められないので丸ごと捨てる（キーはどれも ASCII で `=` を 1 つだけ含む）。
+fn readable_lines(bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    for line in bytes.split_inclusive(|&b| b == b'\n') {
+        match std::str::from_utf8(line) {
+            Ok(line) => text.push_str(line),
+            Err(_) => {
+                let key = line
+                    .iter()
+                    .position(|&b| b == b'=')
+                    .and_then(|end| std::str::from_utf8(&line[..=end]).ok());
+                if let Some(key) = key {
+                    text.push_str(key);
+                    text.push('\n');
+                }
+            }
+        }
+    }
+    text
 }
 
 /// Writes through a temporary file so a reader never sees a half-written file.
@@ -139,9 +171,7 @@ fn markup_path() -> Option<PathBuf> {
 /// ツールバーのペンのボタン（撮影後にその場で書き込む）がオンか。Snipping Tool と同じく次回も
 /// 引き継ぐ。設定ウィンドウが開いたまま設定を書き戻しても消えないよう、別のファイルに置く。
 pub fn load_markup() -> bool {
-    markup_path()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .is_some_and(|text| switch(&text, "markup=", false))
+    switch(&read_text(markup_path()), "markup=", false)
 }
 
 pub fn save_markup(on: bool) {
@@ -286,11 +316,7 @@ pub fn video_folder(settings: &Settings) -> PathBuf {
 }
 
 pub fn load_settings() -> Settings {
-    parse_settings(
-        &settings_path()
-            .and_then(|p| fs::read_to_string(p).ok())
-            .unwrap_or_default(),
-    )
+    parse_settings(&read_text(settings_path()))
 }
 
 pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
