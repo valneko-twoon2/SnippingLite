@@ -10,7 +10,8 @@
 //! 収まっていても、描くのに要るテーブル（OpenType の仕様の Required Tables のうち cmap、head、hhea、
 //! hmtx、maxp と、輪郭の glyf と loca、CFF、CFF2 のどれか）が読めないフェイスは、文字が欠けるので
 //! 使わない。読み手（read-fonts）は位置が 0 の行と、ファイルの外へはみ出すテーブルを無いものとして扱い、
-//! 長さ 0 のテーブルからは何も読めない。
+//! 固定長の部分を持つテーブル（cmap、head、hhea、maxp、CFF、CFF2）はその部分より短いと読めず、
+//! 固定長の部分を持たないテーブル（glyf、hmtx、loca）も空だと何も読めない。
 //!
 //! | 項目 | 技法 | ケース → 期待値 |
 //! |---|---|---|
@@ -23,11 +24,11 @@
 //! | テーブルの範囲 | 境界値（バイト） | ちょうど終わりまで → 使う; 1 バイト越える、真ん中のテーブルだけ越える、空のテーブルが終わりの先 → 使わない; 足すとあふれる値 → panic しない |
 //! | TTC | 同値分割 | 頼んだ番号のフェイスだけを見る; 番号が数以上、位置が外、位置に印がない → 使わない |
 //! | TTC のヘッダー | 境界値、悪意ある入力 | 位置の表の途中で切れた → どの番号も使わない; 数が u32::MAX → 使わない |
-//! | 要るテーブル | 同値分割、境界値（バイト） | cmap、glyf、head、hhea、hmtx、loca、maxp のどれか 1 つが無い、位置が 0、長さが 0、終わりを 1 バイト越える → 使わない; 長さ 1、ちょうど終わりまで → 使う |
-//! | 輪郭 | 決定表 | glyf と loca、`CFF ` だけ、`CFF2` だけ → 使う; glyf か loca の片方だけ、どれも無い、大文字小文字や空白の違うタグ → 使わない |
-//! | TTC の 1 つだけ欠ける | 同値分割 | 要るテーブルが欠けたフェイスだけ使わず、ほかのフェイスは使う |
-//! | 本物のフォント | 回帰 | 手元の Windows にある候補はすべて使える |
-//! | 読み込み | 結合 | 最初の候補が切れた TTC → 次の候補で文字を描き、panic しない |
+//! | 要るテーブル | 同値分割、境界値（バイト） | cmap、glyf、head、hhea、hmtx、loca、maxp のどれか 1 つが無い、位置が 0、読むのに要る長さより 1 バイト短い（cmap 3、head 53、hhea 35、maxp 5、glyf・hmtx・loca 0）、終わりを 1 バイト越える → 使わない; 要る長さちょうど、それより長い、ちょうど終わりまで → 使う |
+//! | 輪郭 | 決定表、境界値（バイト） | glyf と loca、`CFF ` だけ（4 バイト）、`CFF2` だけ（5 バイト） → 使う; glyf か loca の片方だけ、どれも無い、`CFF ` が 3 バイト、`CFF2` が 4 バイト、大文字小文字や空白の違うタグ → 使わない |
+//! | TTC の 1 つだけ欠ける | 同値分割 | cmap が無いフェイス、head が 53 バイトのフェイスだけ使わず、ほかのフェイスは使う |
+//! | 本物のフォント | 回帰 | 手元の Windows にある候補はすべて使える（`loading.rs`） |
+//! | 読み込み | 結合 | 最初の候補が切れた TTC、要るテーブルが 1 バイト短い本物のフォント → 次の候補だけのときと同じに文字を描き、panic しない（`loading.rs`） |
 
 use super::*;
 
@@ -112,12 +113,26 @@ fn broken_files_never_panic() {
     }
 }
 
-/// 手で組むフェイスがどれも持つ、描くのに要るテーブル（TrueType の輪郭のもの）。
-const NEEDED: [&[u8; 4]; 7] = [
-    b"cmap", b"glyf", b"head", b"hhea", b"hmtx", b"loca", b"maxp",
+/// 手で組むフェイスがどれも持つ、描くのに要るテーブル（TrueType の輪郭のもの）と、その中身の長さ
+/// （バイト）。長さは読み手が読むのに要る最小の長さで、OpenType の仕様の各テーブルの固定長の部分を
+/// 手で数えた。中身までは確かめないので、値は何でもよい。
+/// - cmap: version と numTables の 2 + 2 = 4
+/// - head: version、fontRevision、checksumAdjustment、magicNumber の 4 × 4、flags と unitsPerEm の
+///   2 × 2、created と modified の 8 × 2、xMin・yMin・xMax・yMax の 2 × 4、macStyle、lowestRecPPEM、
+///   fontDirectionHint、indexToLocFormat、glyphDataFormat の 2 × 5 で 16 + 4 + 16 + 8 + 10 = 54
+/// - hhea: version の 4、ascender から caretOffset までの 2 × 10、reserved の 2 × 4、
+///   metricDataFormat と numberOfHMetrics の 2 × 2 で 4 + 20 + 8 + 4 = 36
+/// - maxp: 版 0.5 の version と numGlyphs の 4 + 2 = 6
+/// - glyf、hmtx、loca: 固定長の部分を持たないので、空でない 1
+const NEEDED: [(&[u8; 4], u32); 7] = [
+    (b"cmap", 4),
+    (b"glyf", 1),
+    (b"head", 54),
+    (b"hhea", 36),
+    (b"hmtx", 1),
+    (b"loca", 1),
+    (b"maxp", 6),
 ];
-/// 要るテーブルの中身の長さ（バイト）。中身までは確かめないので、値は何でもよい。
-const NEEDED_LENGTH: usize = 4;
 
 /// テーブルの一覧の 1 行（タグ、チェックサム、位置、長さ）を足す。
 fn push_record(bytes: &mut Vec<u8>, tag: &[u8], offset: usize, length: u32) {
@@ -138,16 +153,18 @@ fn face_at(base: usize, lengths: &[u32]) -> Vec<u8> {
     bytes.extend_from_slice(&(tables as u16).to_be_bytes());
     bytes.extend_from_slice(&[0; 6]);
     let contents = base + 12 + 16 * tables;
-    let mut offset = contents + NEEDED_LENGTH * NEEDED.len();
+    let needed: usize = NEEDED.iter().map(|&(_, length)| length as usize).sum();
+    let mut offset = contents + needed;
     for (index, &length) in lengths.iter().enumerate() {
         push_record(&mut bytes, format!("tab{index}").as_bytes(), offset, length);
         offset += length as usize;
     }
-    for (index, tag) in NEEDED.iter().enumerate() {
-        let at = contents + NEEDED_LENGTH * index;
-        push_record(&mut bytes, tag.as_slice(), at, NEEDED_LENGTH as u32);
+    let mut at = contents;
+    for (tag, length) in NEEDED {
+        push_record(&mut bytes, tag.as_slice(), at, length);
+        at += length as usize;
     }
-    bytes.extend(std::iter::repeat_n(0xee, NEEDED_LENGTH * NEEDED.len()));
+    bytes.extend(std::iter::repeat_n(0xee, needed));
     for (index, &length) in lengths.iter().enumerate() {
         bytes.extend(std::iter::repeat_n(index as u8 + 1, length as usize));
     }
@@ -308,7 +325,7 @@ fn a_face_whose_table_needed_to_draw_cannot_be_read_is_not_used() {
     let bytes = font(&[4]);
     assert!(face_fits(&bytes, 0), "every needed table is there");
     let end = bytes.len() as u32;
-    for tag in NEEDED {
+    for (tag, least) in NEEDED {
         let name = tag_name(tag);
         let table = table_of(&bytes, 0, tag);
         let changed = |field: usize, value: u32| {
@@ -320,11 +337,14 @@ fn a_face_whose_table_needed_to_draw_cannot_be_read_is_not_used() {
         assert!(!changed(TAG, UNUSED), "{name} is missing");
         // 読み手は位置が 0 の行を無いものとして扱う（その位置にはフェイスの印がある）。
         assert!(!changed(OFFSET, 0), "{name} at 0");
-        // 境界値: 長さ 0 では何も読めず、1 バイトあれば置ける。
-        assert!(!changed(LENGTH, 0), "{name} is empty");
-        assert!(changed(LENGTH, 1), "{name} of one byte");
+        // 境界値: 読むのに要る長さより 1 バイト短いと読めず（glyf、hmtx、loca では空）、ちょうどか
+        // それより長ければ読める（後ろのテーブルと重なっても、ファイルには収まる）。
+        let short = least - 1;
+        assert!(!changed(LENGTH, short), "{name} of {short} bytes");
+        assert!(changed(LENGTH, least), "{name} of {least} bytes");
+        assert!(changed(LENGTH, least + 1), "{name} of {} bytes", least + 1);
         // 境界値: ちょうどファイルの終わりまでなら読め、1 バイトでも越えると読めない。
-        let at = end - NEEDED_LENGTH as u32;
+        let at = end - least;
         assert!(changed(OFFSET, at), "{name} ends at the end");
         assert!(
             !changed(OFFSET, at + 1),
@@ -337,26 +357,32 @@ fn a_face_whose_table_needed_to_draw_cannot_be_read_is_not_used() {
 fn the_outlines_may_be_truetype_cff_or_cff2_and_truetype_needs_both_its_tables() {
     let bytes = font(&[4]);
     let (glyf, loca) = (table_of(&bytes, 0, b"glyf"), table_of(&bytes, 0, b"loca"));
-    // glyf と loca の一覧の行のタグを替えたフェイスを使うか。
-    let renamed = |glyf_tag: &[u8; 4], loca_tag: &[u8; 4]| {
+    // glyf の一覧の行のタグと長さ、loca の行のタグを替えたフェイスを使うか。glyf の後ろには head の
+    // 中身が続くので、長くしてもファイルに収まる。
+    let renamed = |(glyf_tag, length): (&[u8; 4], u32), loca_tag: &[u8; 4]| {
         let mut renamed = bytes.clone();
         set_record(&mut renamed, 0, glyf, TAG, u32::from_be_bytes(*glyf_tag));
+        set_record(&mut renamed, 0, glyf, LENGTH, length);
         set_record(&mut renamed, 0, loca, TAG, u32::from_be_bytes(*loca_tag));
         face_fits(&renamed, 0)
     };
-    assert!(renamed(b"glyf", b"loca"), "TrueType outlines");
+    assert!(renamed((b"glyf", 1), b"loca"), "TrueType outlines");
     // TrueType の輪郭は、字形の位置（loca）と中身（glyf）の両方が要る。
-    assert!(!renamed(b"zzzz", b"loca"), "loca without glyf");
-    assert!(!renamed(b"glyf", b"zzzz"), "glyf without loca");
-    assert!(!renamed(b"zzzz", b"yyyy"), "no outlines at all");
-    // CFF と CFF2 は 1 つのテーブルで足りる。
-    assert!(renamed(b"CFF ", b"zzzz"), "CFF outlines");
-    assert!(renamed(b"CFF2", b"zzzz"), "CFF2 outlines");
+    assert!(!renamed((b"zzzz", 1), b"loca"), "loca without glyf");
+    assert!(!renamed((b"glyf", 1), b"zzzz"), "glyf without loca");
+    assert!(!renamed((b"zzzz", 1), b"yyyy"), "no outlines at all");
+    // CFF と CFF2 は 1 つのテーブルで足りる。境界値: ヘッダー（CFF は major、minor、hdrSize、offSize
+    // の 1 バイトずつで 4、CFF2 は majorVersion、minorVersion、headerSize の 1 バイトずつと
+    // topDictLength の 2 で 5）より 1 バイト短いと読めない。
+    assert!(renamed((b"CFF ", 4), b"zzzz"), "CFF outlines");
+    assert!(!renamed((b"CFF ", 3), b"zzzz"), "CFF of 3 bytes");
+    assert!(renamed((b"CFF2", 5), b"zzzz"), "CFF2 outlines");
+    assert!(!renamed((b"CFF2", 4), b"zzzz"), "CFF2 of 4 bytes");
     // タグは大文字と小文字、後ろの空白まで一致しなければならない。
     for tag in [b"cff ", b"CFF\0", b"cff2"] {
-        assert!(!renamed(tag, b"zzzz"), "{}", tag_name(tag));
+        assert!(!renamed((tag, 5), b"zzzz"), "{}", tag_name(tag));
     }
-    assert!(!renamed(b"Glyf", b"loca"), "Glyf");
+    assert!(!renamed((b"Glyf", 1), b"loca"), "Glyf");
 }
 
 #[test]
@@ -368,84 +394,25 @@ fn in_a_collection_only_the_face_missing_a_needed_table_is_not_used() {
             u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]) as usize
         })
         .collect();
+    // 一覧に無いテーブルと、読むのに要る 54 バイトより 1 バイト短い head。
+    let breakages = [
+        ("no cmap", b"cmap", TAG, UNUSED),
+        ("a short head", b"head", LENGTH, 53),
+    ];
     for (broken, &start) in starts.iter().enumerate() {
-        let mut missing = bytes.clone();
-        let table = table_of(&missing, start, b"cmap");
-        set_record(&mut missing, start, table, TAG, UNUSED);
-        for face in 0..3 {
-            assert_eq!(
-                face_fits(&missing, face as u32),
-                face != broken,
-                "face {face} when face {broken} has no cmap"
-            );
+        for (what, tag, field, value) in breakages {
+            let mut changed = bytes.clone();
+            let table = table_of(&changed, start, tag);
+            set_record(&mut changed, start, table, field, value);
+            for face in 0..3 {
+                assert_eq!(
+                    face_fits(&changed, face as u32),
+                    face != broken,
+                    "face {face} when face {broken} has {what}"
+                );
+            }
         }
     }
 }
 
-#[test]
-fn the_system_fonts_the_windows_choose_from_pass_the_check() {
-    // 本物のフォントを誤って除くと、日本語や太字が出なくなる。手元にあるものだけを確かめる。
-    let folder = fonts_folder();
-    let mut checked = 0;
-    for &(file, index) in REGULAR_FACES
-        .iter()
-        .chain(&SEMIBOLD_FACES)
-        .chain(&JAPANESE_FACES)
-        .chain(&JAPANESE_BOLD_FACES)
-    {
-        if let Ok(bytes) = std::fs::read(folder.join(file)) {
-            assert!(face_fits(&bytes, index), "{file} #{index}");
-            checked += 1;
-        }
-    }
-    assert!(checked > 0, "no font of the list was found in {folder:?}");
-}
-
-#[test]
-fn a_cut_off_font_gives_way_to_the_next_one_and_text_still_draws() {
-    // 最初の候補は途中で切れた TTC（4 つのフェイスがあると言うが 16 バイトしかない）。
-    // そのまま渡すと、epaint は最初のフレームで panic する。
-    let sandbox = Sandbox::new();
-    let fonts = sandbox.path().join("Fonts");
-    std::fs::create_dir_all(&fonts).unwrap();
-    let cut = &collection_of(&[&[4], &[4], &[4], &[4]])[..16];
-    for (file, _) in REGULAR_FACES
-        .iter()
-        .take(1)
-        .chain(JAPANESE_FACES.iter().take(1))
-    {
-        std::fs::write(fonts.join(file), cut).unwrap();
-    }
-    // 次の候補は本物。
-    let (next, _) = REGULAR_FACES[1];
-    std::fs::copy(fonts_folder().join(next), fonts.join(next)).unwrap();
-    let ctx = egui::Context::default();
-    assert!(install_fonts_from(&ctx, &fonts));
-    let input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_size(
-            egui::Pos2::ZERO,
-            egui::vec2(400.0, 200.0),
-        )),
-        ..Default::default()
-    };
-    let mut output = ctx.run_ui(input, |ui| {
-        ui.label("Snipping Lite");
-    });
-    // 画面に送らないので、テクスチャの変更は捨てる。
-    output.textures_delta.clear();
-    fn widths(shape: &egui::Shape, out: &mut Vec<f32>) {
-        match shape {
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| widths(s, out)),
-            egui::Shape::Text(text) => out.push(text.galley.rect.width()),
-            _ => {}
-        }
-    }
-    let mut drawn = Vec::new();
-    for clipped in &output.shapes {
-        widths(&clipped.shape, &mut drawn);
-    }
-    assert!(
-        drawn.iter().any(|&w| w > 0.0),
-        "the label is drawn: {drawn:?}"
-    );
-}
+mod loading;
