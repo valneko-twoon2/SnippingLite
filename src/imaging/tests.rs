@@ -1,6 +1,12 @@
 use super::*;
 use crate::test_support::clipboard_text;
-use windows_sys::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+use windows_sys::Win32::{
+    Graphics::Gdi::{BITMAPV5HEADER, BI_BITFIELDS},
+    System::{
+        DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        Memory::{GlobalLock, GlobalUnlock},
+    },
+};
 
 const SCRATCH: &str = "snipping-lite-imaging-";
 
@@ -209,6 +215,131 @@ fn a_copied_image_reads_back_bottom_up() {
     let expected = sample();
     assert_eq!(pixels[..12], expected[12..]);
     assert_eq!(pixels[12..], expected[..12]);
+}
+
+/// クリップボードの CF_DIB（8）を、上から下の順の BGRA の画素として読む。ビットフィールドの
+/// マスクがあれば読み飛ばす。32 ビットでなければ `None`。
+fn clipboard_dib() -> Option<(i32, i32, Vec<u8>)> {
+    use windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER;
+    // SAFETY: the clipboard is opened and closed here, and the data is copied out while locked.
+    unsafe {
+        if OpenClipboard(null_mut()) == 0 {
+            return None;
+        }
+        let global = GetClipboardData(8);
+        let data = if global.is_null() {
+            null_mut()
+        } else {
+            GlobalLock(global).cast::<u8>()
+        };
+        let mut image = None;
+        if !data.is_null() {
+            let header = std::ptr::read_unaligned(data.cast::<BITMAPINFOHEADER>());
+            let masks = if header.biSize == 40 && header.biCompression == BI_BITFIELDS {
+                12
+            } else {
+                0
+            };
+            let (width, height) = (header.biWidth, header.biHeight);
+            // 下から上の順の 32 ビットのときだけ、行に余りがなく、この大きさで読める。
+            if header.biBitCount == 32 && width > 0 && height > 0 {
+                let size = width as usize * height as usize * 4;
+                let start = data.add(header.biSize as usize + masks);
+                let bottom_up = std::slice::from_raw_parts(start, size);
+                let rows: Vec<u8> = bottom_up
+                    .chunks_exact(width as usize * 4)
+                    .rev()
+                    .flatten()
+                    .copied()
+                    .collect();
+                image = Some((width, height, rows));
+            }
+            GlobalUnlock(global);
+        }
+        CloseClipboard();
+        image
+    }
+}
+
+#[test]
+#[ignore = "Replaces the clipboard content"]
+fn an_application_without_transparency_sees_the_image_on_white() {
+    assert!(copy_to_clipboard(null_mut(), &sample(), 3, 2));
+    // 透過を読むアプリは CF_DIBV5 から元のままの画素を受け取る。
+    let (_, _, v5) = clipboard_image().unwrap();
+    assert_eq!(v5[..12], sample()[12..]);
+    // 透過を読まないアプリの読む CF_DIB は、白の上に重ねた不透明な画素になる。期待値は
+    // (c * a + 255 * (255 - a)) / 255 の四捨五入を手で計算したもの。
+    // a = 128: 10 → 132.0、20 → 137.0、30 → 142.1。a = 1: 40 → 254.2、50 → 254.2、60 → 254.2。
+    let (width, height, pixels) = clipboard_dib().expect("a 32-bit CF_DIB");
+    assert_eq!((width, height), (3, 2));
+    #[rustfmt::skip]
+    let expected = [
+        0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255,
+        132, 137, 142, 255, 254, 254, 254, 255, 255, 255, 255, 255,
+    ];
+    assert_eq!(pixels, expected);
+    // CF_BITMAP だけを読むアプリには、Windows が作る DDB を渡す。その色も白の上に重ねたもの。
+    let colors: Vec<[u8; 3]> = clipboard_bitmap()
+        .expect("a CF_BITMAP")
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
+    let wanted: Vec<[u8; 3]> = expected
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
+    assert_eq!(colors, wanted);
+}
+
+/// クリップボードの CF_BITMAP（2）を、上から下の順の 32 ビットの画素として読む。
+fn clipboard_bitmap() -> Option<Vec<u8>> {
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO, DIB_RGB_COLORS,
+    };
+    // SAFETY: the clipboard is opened and closed here; the bitmap belongs to the clipboard and is
+    // only read while it is open.
+    unsafe {
+        if OpenClipboard(null_mut()) == 0 {
+            return None;
+        }
+        let bitmap = GetClipboardData(2);
+        let mut pixels = None;
+        let mut size: BITMAP = std::mem::zeroed();
+        if !bitmap.is_null()
+            && GetObjectW(
+                bitmap,
+                std::mem::size_of::<BITMAP>() as i32,
+                (&mut size as *mut BITMAP).cast(),
+            ) != 0
+        {
+            let mut info: BITMAPINFO = std::mem::zeroed();
+            info.bmiHeader.biSize = std::mem::size_of_val(&info.bmiHeader) as u32;
+            info.bmiHeader.biWidth = size.bmWidth;
+            info.bmiHeader.biHeight = -size.bmHeight;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            let mut out = vec![0u8; size.bmWidth as usize * size.bmHeight as usize * 4];
+            let dc = GetDC(null_mut());
+            let lines = GetDIBits(
+                dc,
+                bitmap,
+                0,
+                size.bmHeight as u32,
+                out.as_mut_ptr().cast(),
+                &mut info,
+                DIB_RGB_COLORS,
+            );
+            ReleaseDC(null_mut(), dc);
+            pixels = (lines == size.bmHeight).then_some(out);
+        }
+        CloseClipboard();
+        pixels
+    }
 }
 
 use crate::test_support::answer_dialog;

@@ -12,19 +12,11 @@ use std::{
 use windows_sys::{
     core::GUID,
     Win32::{
-        Foundation::{GlobalFree, HWND},
-        Graphics::{
-            Gdi::{BITMAPV5HEADER, BI_BITFIELDS},
-            GdiPlus::{
-                BitmapData, GdipBitmapLockBits, GdipBitmapUnlockBits, GdipCreateBitmapFromFile,
-                GdipCreateBitmapFromScan0, GdipDisposeImage, GdipGetImageHeight, GdipGetImageWidth,
-                GdipSaveImageToFile, GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput,
-                Rect,
-            },
-        },
-        System::{
-            DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
-            Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE},
+        Foundation::HWND,
+        Graphics::GdiPlus::{
+            BitmapData, GdipBitmapLockBits, GdipBitmapUnlockBits, GdipCreateBitmapFromFile,
+            GdipCreateBitmapFromScan0, GdipDisposeImage, GdipGetImageHeight, GdipGetImageWidth,
+            GdipSaveImageToFile, GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput, Rect,
         },
         UI::Controls::Dialogs::{
             GetSaveFileNameW, OFN_EXPLORER, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
@@ -34,6 +26,9 @@ use windows_sys::{
 
 use crate::i18n::tr;
 use crate::{staging, w};
+
+mod clipboard;
+pub use clipboard::{copy_file, copy_text, copy_to_clipboard};
 
 static GDIPLUS: AtomicUsize = AtomicUsize::new(0);
 
@@ -226,122 +221,6 @@ pub fn decode(path: &Path) -> Option<(i32, i32, Vec<u8>)> {
         GdipDisposeImage(bitmap.cast());
         pixels.map(|p| (width as i32, height as i32, p))
     }
-}
-
-/// Puts the image on the clipboard as a 32-bit DIB with alpha.
-pub fn copy_to_clipboard(owner: HWND, pixels: &[u8], width: i32, height: i32) -> bool {
-    if !fits(pixels, width, height) {
-        return false;
-    }
-    // SAFETY: the allocation is sized for the header and all pixel rows.
-    unsafe {
-        let header = std::mem::size_of::<BITMAPV5HEADER>();
-        let global = GlobalAlloc(GMEM_MOVEABLE, header + pixels.len());
-        if global.is_null() {
-            return false;
-        }
-        let data = GlobalLock(global).cast::<u8>();
-        if data.is_null() {
-            GlobalFree(global);
-            return false;
-        }
-        let mut info: BITMAPV5HEADER = std::mem::zeroed();
-        info.bV5Size = header as u32;
-        info.bV5Width = width;
-        info.bV5Height = height;
-        info.bV5Planes = 1;
-        info.bV5BitCount = 32;
-        info.bV5Compression = BI_BITFIELDS;
-        info.bV5SizeImage = pixels.len() as u32;
-        info.bV5RedMask = 0x00ff0000;
-        info.bV5GreenMask = 0x0000ff00;
-        info.bV5BlueMask = 0x000000ff;
-        info.bV5AlphaMask = 0xff000000;
-        info.bV5CSType = 0x73524742;
-        info.bV5Intent = 4;
-        std::ptr::copy_nonoverlapping((&info as *const BITMAPV5HEADER).cast::<u8>(), data, header);
-        // Clipboard DIBs are bottom-up while the rows are top-down.
-        let row = width as usize * 4;
-        for (i, line) in pixels.chunks_exact(row).rev().enumerate() {
-            std::ptr::copy_nonoverlapping(line.as_ptr(), data.add(header + i * row), row);
-        }
-        GlobalUnlock(global);
-        put_on_clipboard(owner, 17, global)
-    }
-}
-
-/// Puts text on the clipboard as Unicode text.
-pub fn copy_text(owner: HWND, text: &str) -> bool {
-    let units: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    let bytes = units.len() * 2;
-    // SAFETY: the allocation holds exactly the UTF-16 units copied into it.
-    unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, bytes);
-        if global.is_null() {
-            return false;
-        }
-        let data = GlobalLock(global).cast::<u16>();
-        if data.is_null() {
-            GlobalFree(global);
-            return false;
-        }
-        std::ptr::copy_nonoverlapping(units.as_ptr(), data, units.len());
-        GlobalUnlock(global);
-        put_on_clipboard(owner, 13, global)
-    }
-}
-
-/// ファイルをクリップボードに置く（CF_HDROP）。エクスプローラーやチャットに貼り付けると、
-/// エクスプローラーでコピーしたときと同じようにファイルが渡る。
-pub fn copy_file(owner: HWND, path: &Path) -> bool {
-    // DROPFILES の後ろにパスを並べ、空の文字列で終える。
-    const HEADER: usize = 20;
-    let mut list: Vec<u16> = path.as_os_str().encode_wide().collect();
-    list.extend([0, 0]);
-    let bytes = HEADER + list.len() * 2;
-    // SAFETY: the allocation holds the header and every UTF-16 unit copied into it.
-    unsafe {
-        let global = GlobalAlloc(GMEM_MOVEABLE, bytes);
-        if global.is_null() {
-            return false;
-        }
-        let data = GlobalLock(global).cast::<u8>();
-        if data.is_null() {
-            GlobalFree(global);
-            return false;
-        }
-        std::ptr::write_bytes(data, 0, HEADER);
-        // pFiles: パスの始まるオフセット。fWide: パスは UTF-16。
-        std::ptr::copy_nonoverlapping((HEADER as u32).to_le_bytes().as_ptr(), data, 4);
-        std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), data.add(16), 4);
-        std::ptr::copy_nonoverlapping(list.as_ptr().cast::<u8>(), data.add(HEADER), list.len() * 2);
-        GlobalUnlock(global);
-        put_on_clipboard(owner, 15, global)
-    }
-}
-
-/// Replaces the clipboard content with `global` in `format`. On success the
-/// clipboard owns the memory; otherwise it is freed here.
-unsafe fn put_on_clipboard(owner: HWND, format: u32, global: *mut std::ffi::c_void) -> bool {
-    let mut owned = false;
-    // Another application (a clipboard manager, for example) may hold it briefly.
-    let mut opened = false;
-    for attempt in 0..10 {
-        opened = OpenClipboard(owner) != 0;
-        if opened || attempt == 9 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    if opened {
-        EmptyClipboard();
-        owned = !SetClipboardData(format, global).is_null();
-        CloseClipboard();
-    }
-    if !owned {
-        GlobalFree(global);
-    }
-    owned
 }
 
 /// The screenshot folder from the settings, created when missing.
