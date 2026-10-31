@@ -397,5 +397,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_dot_paints_every_pixel_whose_center_it_covers_and_stays_round() {
+        // ブラシは半径 `radius` の円。点を 1 つ画素の中心に置くと、中心が円の中にある画素はどれも
+        // 塗られ、塗られ方は左右、上下、斜めに折り返しても同じになる（四方の縁まで同じだけ届く）。
+        const SIZE: i32 = 40;
+        const MIDDLE: i32 = 20;
+        for (highlight, radii) in [(false, PEN_RADII), (true, HIGHLIGHTER_RADII)] {
+            for radius in radii {
+                let mut pixels = vec![255u8; (SIZE * SIZE * 4) as usize];
+                let dot = Mark {
+                    highlight,
+                    color: COLORS[3],
+                    radius,
+                    points: vec![(MIDDLE as f32 + 0.5, MIDDLE as f32 + 0.5)],
+                };
+                draw(&mut pixels, SIZE, SIZE, &[dot]);
+                let at = |x: i32, y: i32| pixels[((y * SIZE + x) * 4) as usize..][..4].to_vec();
+                let mut covered = 0;
+                // いちばん太い蛍光ペン（16）の縁より外まで、画像の中で見る。
+                for dy in -18..=18 {
+                    for dx in -18..=18 {
+                        let (x, y) = (MIDDLE + dx, MIDDLE + dy);
+                        let what =
+                            format!("{dx},{dy} from a dot of {radius} (highlight {highlight})");
+                        if (((dx * dx + dy * dy) as f32).sqrt()) < radius {
+                            assert_ne!(at(x, y), [255; 4], "{what} is painted");
+                            covered += 1;
+                        }
+                        assert_eq!(at(x, y), at(MIDDLE - dx, y), "left-right {what}");
+                        assert_eq!(at(x, y), at(x, MIDDLE - dy), "up-down {what}");
+                        assert_eq!(at(x, y), at(MIDDLE + dy, MIDDLE + dx), "diagonal {what}");
+                    }
+                }
+                assert!(covered > 0, "{radius}");
+            }
+        }
+    }
+
     mod properties;
 }

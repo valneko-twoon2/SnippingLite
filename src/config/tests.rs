@@ -471,6 +471,22 @@ fn a_chosen_folder_wins_and_the_defaults_are_per_user() {
     assert!(known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Pictures).is_some());
 }
 
+#[test]
+fn a_known_folder_is_read_to_the_end_of_its_path() {
+    // 既定の保存先は、Windows が返すピクチャとビデオのフォルダーの中。パスを終端まで読まずに空や
+    // 途中までのパスにすると、保存先が相対パスになり、そのときの作業フォルダーに保存してしまう。
+    // 利用者のフォルダーは `%USERPROFILE%` とフォルダーの有無に左右され、環境変数を変えるほかの
+    // テストと重なると取れないことがある。どの PC にもあり、テストが変えない Windows のフォルダーで
+    // 確かめる。期待値は Windows が環境変数 `SystemRoot` に置く同じフォルダー。
+    let windows = known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Windows).unwrap();
+    let expected = std::env::var_os("SystemRoot").unwrap();
+    assert!(
+        windows.as_os_str().eq_ignore_ascii_case(&expected),
+        "{windows:?} for {expected:?}"
+    );
+    assert!(windows.is_absolute(), "{windows:?}");
+}
+
 mod compat;
 mod crash;
 mod damaged;
