@@ -5,7 +5,7 @@ use super::*;
 
 /// The keys each released layout added to the file, with values that differ from the defaults
 /// so that a lost value shows. Every layout contains the ones before it.
-const GENERATIONS: [(&str, &str); 8] = [
+const GENERATIONS: [(&str, &str); 10] = [
     ("first", "copy=0\r\nsave=1\r\nask=1\r\ndelay=3\r\n"),
     ("history", "history=0\r\n"),
     ("history size", "history_limit=50\r\n"),
@@ -26,6 +26,12 @@ const GENERATIONS: [(&str, &str); 8] = [
         "audio and kept toolbar",
         "mic=1\r\nsystem_audio=0\r\napp_audio=0\r\nkeep_toolbar=1\r\n",
     ),
+    (
+        "border",
+        "outline=1\r\noutline_color=1\r\noutline_width=2\r\n",
+    ),
+    // ask_video= の行は録画の保存先の設定に置き換わり、読み飛ばされる。
+    ("recording destinations", "copy_video=0\r\nsave_video=0\r\n"),
 ];
 
 /// The settings that the first `count` layouts describe on top of the defaults.
@@ -44,8 +50,10 @@ fn expected(count: usize) -> Settings {
             }
             4 => s.skip_title = false,
             5 => (s.record_cursor, s.record_fps) = (false, 30),
-            6 => (s.notify, s.theme, s.ask_video) = (false, AppTheme::Dark, true),
-            _ => (s.mic, s.system_audio, s.app_audio, s.keep_toolbar) = (true, false, false, true),
+            6 => (s.notify, s.theme) = (false, AppTheme::Dark),
+            7 => (s.mic, s.system_audio, s.app_audio, s.keep_toolbar) = (true, false, false, true),
+            8 => (s.outline, s.outline_color, s.outline_width) = (true, 1, 2),
+            _ => (s.copy_video, s.save_video) = (false, false),
         }
     }
     s

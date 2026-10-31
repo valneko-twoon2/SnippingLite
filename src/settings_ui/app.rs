@@ -24,11 +24,14 @@ pub(super) struct SettingsApp {
     mic: bool,
     system_audio: bool,
     app_audio: bool,
-    ask_video: bool,
+    copy_video: bool,
+    save_video: bool,
     screenshot_folder: String,
     video_folder: String,
     hotkey_ok: bool,
     notice: Option<Instant>,
+    /// 録画の保存先を両方オフにしようとした時刻。
+    video_notice: Option<Instant>,
     theme: config::AppTheme,
     framed: Option<bool>,
     mica: bool,
@@ -57,12 +60,14 @@ impl SettingsApp {
             mic: settings.mic,
             system_audio: settings.system_audio,
             app_audio: settings.app_audio,
-            ask_video: settings.ask_video,
+            copy_video: settings.copy_video,
+            save_video: settings.save_video,
             theme: settings.theme,
             screenshot_folder: settings.screenshot_folder,
             video_folder: settings.video_folder,
             hotkey_ok,
             notice: None,
+            video_notice: None,
             framed: None,
             mica,
         }
@@ -89,7 +94,8 @@ impl SettingsApp {
             mic: self.mic,
             system_audio: self.system_audio,
             app_audio: self.app_audio,
-            ask_video: self.ask_video,
+            copy_video: self.copy_video,
+            save_video: self.save_video,
             theme: self.theme,
             screenshot_folder: self.screenshot_folder.clone(),
             video_folder: self.video_folder.clone(),
@@ -166,15 +172,16 @@ impl eframe::App for SettingsApp {
         let ui = &mut body;
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         let before = self.settings();
-        let warning = self
-            .notice
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+        let recent =
+            |notice: Option<Instant>| notice.is_some_and(|t| t.elapsed() < Duration::from_secs(4));
+        let warning = recent(self.notice);
+        let video_warning = recent(self.video_notice);
         let folder_action = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
                 let width = ui.available_width() - 14.0;
-                self.sections(ui, &p, width, warning)
+                self.sections(ui, &p, width, (warning, video_warning))
             })
             .inner;
         if let Some((video, action)) = folder_action {
@@ -208,13 +215,21 @@ impl eframe::App for SettingsApp {
             }
             self.notice = Some(Instant::now());
         }
+        if !self.copy_video && !self.save_video {
+            // 録画も、コピーと保存のどちらかは残す。
+            (self.copy_video, self.save_video) = (before.copy_video, before.save_video);
+            if !before.copy_video && !before.save_video {
+                self.save_video = true;
+            }
+            self.video_notice = Some(Instant::now());
+        }
         if self.settings() != before {
             if self.theme != before.theme {
                 apply_theme(&ctx, self.theme);
             }
             self.commit();
         }
-        if warning {
+        if warning || video_warning {
             ctx.request_repaint_after(Duration::from_secs(4));
         }
     }

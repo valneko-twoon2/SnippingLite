@@ -74,6 +74,28 @@ pub fn video_folder() -> std::io::Result<PathBuf> {
     Ok(folder)
 }
 
+/// 保存しない録画を置く一時フォルダー。クリップボードから貼り付けられるよう 1 日は残し、
+/// それより古い録画は次の録画を始めるときに消す。
+pub fn temporary_folder() -> std::io::Result<PathBuf> {
+    let folder = std::env::temp_dir()
+        .join("Snipping Lite")
+        .join("Recordings");
+    std::fs::create_dir_all(&folder)?;
+    let day = std::time::Duration::from_secs(24 * 60 * 60);
+    for entry in std::fs::read_dir(&folder)?.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|time| time.elapsed().ok())
+            .is_some_and(|age| age > day);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(folder)
+}
+
 /// Starts recording `area` (screen coordinates); the size is rounded down to
 /// even numbers as H.264 requires. `points` is an optional freeform polygon
 /// relative to the top-left of `area`. A window target overrides `area` with

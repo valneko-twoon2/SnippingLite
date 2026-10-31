@@ -104,6 +104,19 @@ fn only_the_chosen_destinations_receive_the_picture() {
 
 #[test]
 #[ignore = "Covers the screen"]
+fn turning_the_history_on_while_running_records_the_next_snip() {
+    let desk = Desk::start_with(|settings| settings.history = false);
+    let mut settings = config::load_settings();
+    settings.history = true;
+    config::save_settings(&settings).unwrap();
+    desk.send(desk.main, TRAY_RELOAD, 0, 0);
+    begin(&desk);
+    desk.drag(s().overlay, (100, 100), &[], (180, 160));
+    assert_eq!(history::list().len(), 1);
+}
+
+#[test]
+#[ignore = "Covers the screen"]
 fn a_selection_without_area_keeps_the_overlay_open_until_escape() {
     let desk = Desk::start();
     begin(&desk);

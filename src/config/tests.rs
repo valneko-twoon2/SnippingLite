@@ -24,14 +24,15 @@ fn settings_fall_back_to_defaults() {
             mic: false,
             system_audio: true,
             app_audio: true,
-            ask_video: false,
+            copy_video: true,
+            save_video: true,
             theme: AppTheme::System,
             screenshot_folder: String::new(),
             video_folder: String::new()
         }
     );
     let parsed = parse_settings(
-        "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nkeep_toolbar=1\r\noutline=1\r\noutline_color=4\r\noutline_width=2\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\nask_video=1\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
+        "copy=0\r\nsave=1\r\nask=1\r\ndelay=5\r\nhistory=0\r\nhistory_limit=50\r\ncountdown=0\r\nskip_title=0\r\nrecord_cursor=0\r\nrecord_fps=30\r\nfreeze=1\r\nnotify=0\r\nkeep_toolbar=1\r\noutline=1\r\noutline_color=4\r\noutline_width=2\r\nmic=1\r\nsystem_audio=0\r\napp_audio=0\r\ncopy_video=0\r\nsave_video=0\r\ntheme=dark\r\nscreenshot_folder=D:\\Shots\r\n",
     );
     assert_eq!(
         parsed,
@@ -55,7 +56,8 @@ fn settings_fall_back_to_defaults() {
             mic: true,
             system_audio: false,
             app_audio: false,
-            ask_video: true,
+            copy_video: false,
+            save_video: false,
             theme: AppTheme::Dark,
             screenshot_folder: "D:\\Shots".to_owned(),
             video_folder: String::new()
@@ -145,7 +147,8 @@ fn saved_settings_read_back_unchanged() {
         |s: &mut Settings| s.mic ^= true,
         |s: &mut Settings| s.system_audio ^= true,
         |s: &mut Settings| s.app_audio ^= true,
-        |s: &mut Settings| s.ask_video ^= true,
+        |s: &mut Settings| s.copy_video ^= true,
+        |s: &mut Settings| s.save_video ^= true,
     ] {
         let mut settings = base.clone();
         flip(&mut settings);
@@ -245,7 +248,8 @@ fn the_settings_file_has_a_stable_layout() {
         "copy=1\r\nsave=0\r\nask=0\r\ndelay=0\r\nhistory=1\r\nhistory_limit=200\r\n\
          countdown=1\r\nskip_title=1\r\nrecord_cursor=1\r\nrecord_fps=60\r\nfreeze=0\r\n\
          notify=1\r\nkeep_toolbar=0\r\noutline=0\r\noutline_color=3\r\noutline_width=1\r\n\
-         mic=0\r\nsystem_audio=1\r\napp_audio=1\r\nask_video=0\r\ntheme=system\r\n\
+         mic=0\r\nsystem_audio=1\r\napp_audio=1\r\ncopy_video=1\r\nsave_video=1\r\n\
+         theme=system\r\n\
          screenshot_folder=D:\\Shots\r\nvideo_folder=\r\n"
     );
 }
@@ -285,8 +289,10 @@ type Switch = fn(&Settings) -> bool;
 #[test]
 fn switches_follow_their_defaults_and_only_flip_on_the_exact_line() {
     // On by default: only "=0" turns them off. Off by default: only "=1" turns them on.
-    let on_by_default: [(&str, Switch); 6] = [
+    let on_by_default: [(&str, Switch); 8] = [
         ("copy", |s| s.copy),
+        ("copy_video", |s| s.copy_video),
+        ("save_video", |s| s.save_video),
         ("history", |s| s.history),
         ("countdown", |s| s.countdown),
         ("skip_title", |s| s.skip_title),
@@ -299,12 +305,11 @@ fn switches_follow_their_defaults_and_only_flip_on_the_exact_line() {
         assert!(read(&parse_settings(&format!("{key}=1"))), "{key}=1");
         assert!(read(&parse_settings(&format!("{key}=00"))), "{key}=00");
     }
-    let off_by_default: [(&str, Switch); 5] = [
+    let off_by_default: [(&str, Switch); 4] = [
         ("save", |s| s.save),
         ("ask", |s| s.ask),
         ("freeze", |s| s.freeze),
         ("mic", |s| s.mic),
-        ("ask_video", |s| s.ask_video),
     ];
     for (key, read) in off_by_default {
         assert!(!read(&parse_settings("")), "{key}");

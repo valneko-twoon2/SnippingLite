@@ -350,6 +350,10 @@ pub(crate) unsafe extern "system" fn overlay_proc(
     wp: WPARAM,
     lp: LPARAM,
 ) -> LRESULT {
+    // 切り取った範囲に書き込んでいる間は、その操作が入力と描画を受け持つ。
+    if let Some(result) = markup::overlay_message(hwnd, msg, wp, lp) {
+        return result;
+    }
     match msg {
         WM_LBUTTONDOWN => {
             let p = point(lp);

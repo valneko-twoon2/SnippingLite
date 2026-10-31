@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{answer_dialog, answer_save_as, desk::Desk};
+use crate::test_support::{answer_dialog, clipboard_files, desk::Desk};
 use crate::window_capture::test_support::CoveredWindow;
 use std::time::Duration;
 
@@ -205,58 +205,34 @@ fn a_window_that_goes_away_ends_the_recording_with_a_warning() {
 }
 
 #[test]
-#[ignore = "Shows a dialog"]
-fn the_file_name_of_a_recording_can_be_chosen_at_the_end() {
-    let desk = Desk::start_with(|settings| {
-        settings.countdown = false;
-        settings.system_audio = false;
-        settings.ask_video = true;
-        settings.notify = false;
-    });
-    select(&desk, 200, 120);
-    wait_started(&desk);
-    // Cancelling the dialog leaves the file where it was recorded (accepting the same
-    // name would ask whether to overwrite the recording itself).
-    let answer = answer_dialog(2);
-    stop_at(&desk);
-    assert!(answer.join().unwrap());
-    assert_eq!(videos(&desk).len(), 1);
-}
-
-#[test]
-#[ignore = "Shows a dialog"]
-fn choosing_where_to_keep_a_recording_moves_it_or_leaves_it() {
-    let desk = Desk::start();
-    let folder = desk.sandbox.path().join("videos");
-    std::fs::create_dir_all(&folder).unwrap();
-    let path = folder.join("Snipping Lite 1.mp4");
-    std::fs::write(&path, b"video").unwrap();
-    // Cancelled: the recording stays.
-    let answer = answer_dialog(2);
-    // SAFETY: the windows belong to this test.
-    let kept = unsafe { choose_recording_path(path.clone()) };
-    assert!(answer.join().unwrap());
-    assert_eq!(kept, path);
-    // Accepted at the proposed place (which does not exist yet): the path is unchanged.
-    let proposed = folder.join("Snipping Lite 2.mp4");
-    let answer = answer_dialog(1);
-    assert_eq!(unsafe { choose_recording_path(proposed.clone()) }, proposed);
-    assert!(answer.join().unwrap());
-    // Another name moves the file there.
-    let renamed = folder.join("Renamed.mp4");
-    let answer = answer_save_as(renamed.clone());
-    assert_eq!(unsafe { choose_recording_path(path.clone()) }, renamed);
-    assert!(answer.join().unwrap());
-    assert!(renamed.is_file() && !path.exists());
-    // A path without a folder or a name cannot be asked about.
-    assert_eq!(
-        unsafe { choose_recording_path(PathBuf::from("/")) },
-        PathBuf::from("/")
-    );
-    assert_eq!(
-        unsafe { choose_recording_path(PathBuf::new()) },
-        PathBuf::new()
-    );
+#[ignore = "Records the screen"]
+fn a_recording_goes_to_the_clipboard_and_the_folder_as_chosen() {
+    // 判定表: (コピー, 保存) ごとに、録画の保存先とクリップボードを確かめる。
+    for (copy, save) in [(true, true), (true, false), (false, true)] {
+        let desk = Desk::start_with(|settings| {
+            settings.countdown = false;
+            settings.system_audio = false;
+            settings.notify = false;
+            settings.copy_video = copy;
+            settings.save_video = save;
+        });
+        // 前の録画が残っていないことを確かめるため、クリップボードを空にしておく。
+        assert!(imaging::copy_text(null_mut(), "-"));
+        select(&desk, 200, 120);
+        wait_started(&desk);
+        desk.pump(Duration::from_millis(300));
+        stop_at(&desk);
+        assert_eq!(videos(&desk).len(), save as usize, "{copy} {save}");
+        let files = clipboard_files();
+        assert_eq!(files.len(), copy as usize, "{copy} {save}");
+        if let Some(file) = files.first() {
+            assert!(file.is_file());
+            assert_eq!(
+                file.parent() == Some(desk.sandbox.path().join("videos").as_path()),
+                save
+            );
+        }
+    }
 }
 
 #[test]

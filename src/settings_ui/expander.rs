@@ -62,8 +62,8 @@ fn chevron(ui: &egui::Ui, center: egui::Pos2, open: bool, p: &Palette) {
 }
 
 /// A card that opens to show more rows below it. With `on` it also carries a switch.
-/// The expanded state is remembered while the window is open; it starts open when the
-/// switch is on.
+/// The expanded state is remembered while the window is open. Snipping Tool と同じく、
+/// 設定ウィンドウを開いたときはスイッチがオンでも閉じている。
 pub(super) fn expander(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -75,7 +75,7 @@ pub(super) fn expander(
 ) {
     let id = ui.make_persistent_id(("expander", key));
     let start = on.as_deref().copied().unwrap_or(false);
-    let mut open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(start);
+    let mut open = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
     // Turning the switch on opens the card, so its settings are in sight.
     let was_on = ui.data(|d| d.get_temp::<bool>(id.with("on")));
     if was_on == Some(false) && start {

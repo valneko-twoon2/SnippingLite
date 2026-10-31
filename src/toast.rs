@@ -65,16 +65,15 @@ pub unsafe fn show(pixels: &[u8], width: i32, height: i32, copied: bool, path: O
 }
 
 /// Shows a notification for a finished recording; `pixels` is its first frame.
-pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathBuf) {
+/// `saved` が false なら、録画は一時フォルダーにあり、クリップボードにだけ渡した。
+pub unsafe fn show_recording(pixels: &[u8], width: i32, height: i32, path: PathBuf, saved: bool) {
     let body = display_name(&path);
-    present(
-        pixels,
-        width,
-        height,
-        tr("Recording saved"),
-        body,
-        Some(path),
-    );
+    let title = if saved {
+        tr("Recording saved")
+    } else {
+        tr("Recording copied to clipboard")
+    };
+    present(pixels, width, height, title, body, Some(path));
 }
 
 unsafe fn present(
@@ -119,7 +118,11 @@ unsafe fn present(
         title,
         body,
         can_open: path.is_some() || state().history,
-        edit: title != tr("Recording saved") && state().history,
+        // 録画はエディターではなくプレイヤーで開く。
+        edit: !path
+            .as_ref()
+            .is_some_and(|p| p.extension().is_some_and(|e| e == "mp4"))
+            && state().history,
         action_hover: false,
         menu_hover: false,
         path,

@@ -233,6 +233,35 @@ pub fn copy_text(owner: HWND, text: &str) -> bool {
     }
 }
 
+/// ファイルをクリップボードに置く（CF_HDROP）。エクスプローラーやチャットに貼り付けると、
+/// エクスプローラーでコピーしたときと同じようにファイルが渡る。
+pub fn copy_file(owner: HWND, path: &Path) -> bool {
+    // DROPFILES の後ろにパスを並べ、空の文字列で終える。
+    const HEADER: usize = 20;
+    let mut list: Vec<u16> = path.as_os_str().encode_wide().collect();
+    list.extend([0, 0]);
+    let bytes = HEADER + list.len() * 2;
+    // SAFETY: the allocation holds the header and every UTF-16 unit copied into it.
+    unsafe {
+        let global = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if global.is_null() {
+            return false;
+        }
+        let data = GlobalLock(global).cast::<u8>();
+        if data.is_null() {
+            GlobalFree(global);
+            return false;
+        }
+        std::ptr::write_bytes(data, 0, HEADER);
+        // pFiles: パスの始まるオフセット。fWide: パスは UTF-16。
+        std::ptr::copy_nonoverlapping((HEADER as u32).to_le_bytes().as_ptr(), data, 4);
+        std::ptr::copy_nonoverlapping(1u32.to_le_bytes().as_ptr(), data.add(16), 4);
+        std::ptr::copy_nonoverlapping(list.as_ptr().cast::<u8>(), data.add(HEADER), list.len() * 2);
+        GlobalUnlock(global);
+        put_on_clipboard(owner, 15, global)
+    }
+}
+
 /// Replaces the clipboard content with `global` in `format`. On success the
 /// clipboard owns the memory; otherwise it is freed here.
 unsafe fn put_on_clipboard(owner: HWND, format: u32, global: *mut std::ffi::c_void) -> bool {
@@ -392,13 +421,6 @@ fn default_extension(path: PathBuf, extension: &str) -> PathBuf {
     } else {
         path
     }
-}
-
-/// Asks where to save a recording; `None` means the user cancelled.
-pub fn choose_video_path(owner: HWND, folder: &Path, name: &str) -> Option<PathBuf> {
-    let filter = format!("{}\0*.mp4\0\0", tr("MP4 video"));
-    let (path, _) = save_dialog(owner, folder, name, &filter, "mp4")?;
-    Some(default_extension(path, "mp4"))
 }
 
 /// Milliseconds since the Unix epoch, used for file names.

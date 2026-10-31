@@ -17,7 +17,10 @@ fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
 }
 
 fn start(desk: &Desk, freeze: bool) {
-    s().freeze = freeze;
+    // 撮影の開始時に設定ファイルを読み直すので、ファイルに書いて切り替える。
+    let mut settings = config::load_settings();
+    settings.freeze = freeze;
+    config::save_settings(&settings).unwrap();
     // SAFETY: the windows belong to this test.
     unsafe { begin_capture() };
     assert!(s().active);

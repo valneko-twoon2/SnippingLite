@@ -70,7 +70,12 @@ unsafe fn start_recording(rect: RECT, freeform: bool) {
 }
 unsafe fn begin_recording(area: RECT, points: Vec<POINT>, target: Option<window_capture::Target>) {
     DwmFlush();
-    let started = record::video_folder()
+    let folder = if state().save_video {
+        record::video_folder()
+    } else {
+        record::temporary_folder()
+    };
+    let started = folder
         .map_err(|_| tr("Could not create the recordings folder.").to_string())
         .and_then(|folder| {
             let name = imaging::timestamp().map_err(|e| e.to_string())?;
@@ -315,24 +320,6 @@ unsafe fn show_indicator(center: POINT) {
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, RECORD_TIMER, 500, None);
 }
-/// Asks where to keep a finished recording; cancelling leaves it in the recording folder.
-unsafe fn choose_recording_path(path: PathBuf) -> PathBuf {
-    let (Some(folder), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
-    else {
-        return path;
-    };
-    let Some(target) = imaging::choose_video_path(null_mut(), folder, name) else {
-        return path;
-    };
-    let moved = target == path
-        || std::fs::rename(&path, &target).is_ok()
-        || (std::fs::copy(&path, &target).is_ok() && std::fs::remove_file(&path).is_ok());
-    if moved {
-        target
-    } else {
-        path
-    }
-}
 /// Ends the recording, restores our windows and announces the file.
 pub(crate) unsafe fn stop_recording() {
     let Some(recording) = state().recording.take() else {
@@ -350,13 +337,16 @@ pub(crate) unsafe fn stop_recording() {
     restore_windows();
     match result {
         Ok((path, frame)) => {
-            let path = if state().ask_video {
-                choose_recording_path(path)
-            } else {
-                path
-            };
-            if state().notify {
-                toast::show_recording(&frame.pixels, frame.width, frame.height, path);
+            let copied = state().copy_video && imaging::copy_file(state().owner, &path);
+            if state().copy_video && !copied {
+                message(
+                    state().owner,
+                    tr("Could not copy the recording to the clipboard."),
+                );
+            } else if state().notify {
+                // 保存先に残さない録画は、クリップボードにコピーしたことを知らせる。
+                let saved = state().save_video || !copied;
+                toast::show_recording(&frame.pixels, frame.width, frame.height, path, saved);
             }
             if let Some(warning) = frame.warning {
                 let text = tr("Recording ended early; the video up to that point was saved.");

@@ -2,8 +2,9 @@
 //! OpenGL memory is released when the window closes and the tray process stays small.
 
 use eframe::egui::{
-    self, pos2, Align, Align2, Color32, CornerRadius, FontData, FontDefinitions, FontFamily,
-    FontId, FontTweak, Layout, RichText, Sense, Stroke, StrokeKind, Theme, UiBuilder, Vec2,
+    self, epaint::text::VariationCoords, pos2, Align, Align2, Color32, CornerRadius, FontData,
+    FontDefinitions, FontFamily, FontId, FontTweak, Layout, RichText, Sense, Stroke, StrokeKind,
+    Theme, UiBuilder, Vec2,
 };
 use std::{
     fs,
@@ -36,7 +37,9 @@ use widgets::*;
 
 const SEMIBOLD: &str = "semibold";
 /// Downward shift of Japanese glyphs as a fraction of the font size.
-const JAPANESE_Y_OFFSET: f32 = 0.2;
+/// Yu Gothic UI は行の寸法が Segoe UI と同じで、ずらさなくても WinUI と同じ高さに並ぶ。
+/// 游ゴシックのように行の上側が広いフォントに替えるときは、ここで下げて上下中央にそろえる。
+const JAPANESE_Y_OFFSET: f32 = 0.0;
 const WIDTH: f32 = 696.0;
 const HEIGHT: f32 = 760.0;
 const MARGIN: f32 = 56.0;
@@ -138,43 +141,63 @@ pub fn run(hotkey_ok: bool) {
     );
 }
 
-/// Loads Segoe UI, as in the Windows 11 settings app, falling back to other
-/// Windows fonts, plus a Japanese font. egui ships no fonts here, so returns false if none is found.
+/// Snipping Tool（WinUI）と同じ組み合わせのフォントを読み込む。英数字は Segoe UI Variable
+/// （Windows 10 では Segoe UI）、日本語は Yu Gothic UI で描く。egui ships no fonts here,
+/// so returns false if none is found.
 pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
     let mut fonts = FontDefinitions::empty();
     let folder = std::env::var_os("WINDIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
         .join("Fonts");
-    let mut load = |files: &[&str], name: &str, tweak: FontTweak| {
-        let bytes = files.iter().find_map(|f| fs::read(folder.join(f)).ok())?;
-        fonts.font_data.insert(
-            name.to_owned(),
-            Arc::new(FontData::from_owned(bytes).tweak(tweak)),
-        );
+    // (ファイル, フェイスの番号) の候補のうち、最初に読めたものを登録する。
+    let mut load = |faces: &[(&str, u32)], name: &str, tweak: FontTweak| {
+        let (bytes, index) = faces.iter().find_map(|&(file, index)| {
+            let bytes = fs::read(folder.join(file)).ok()?;
+            (index < face_count(&bytes)).then_some((bytes, index))
+        })?;
+        let mut data = FontData::from_owned(bytes).tweak(tweak.clone());
+        data.index = index;
+        fonts.font_data.insert(name.to_owned(), Arc::new(data));
         Some(name.to_owned())
     };
     let regular = load(
-        &["segoeui.ttf", "tahoma.ttf", "arial.ttf", "micross.ttf"],
+        &[
+            ("SegUIVar.ttf", 0),
+            ("segoeui.ttf", 0),
+            ("tahoma.ttf", 0),
+            ("arial.ttf", 0),
+            ("micross.ttf", 0),
+        ],
         "regular",
         FontTweak::default(),
     );
-    let semibold = load(&["seguisb.ttf"], "semibold", FontTweak::default());
-    // Mixing Segoe UI with a Japanese fallback misaligns the baselines, so the
-    // Japanese font leads and also draws the Latin text; Segoe UI is the fallback
-    // for systems without one.
-    // Yu Gothic sits high in its line box, so its glyphs are shifted down to look
-    // vertically centered in rows and buttons.
+    // 可変フォントでは太さの軸で Semibold にする。
+    let semibold = load(
+        &[("SegUIVar.ttf", 0), ("seguisb.ttf", 0)],
+        "semibold",
+        FontTweak {
+            coords: VariationCoords::new([(b"wght", 600.0)]),
+            ..FontTweak::default()
+        },
+    );
+    // Yu Gothic UI は YuGothM.ttc などの 2 番目以降のフェイスにある。かながプロポーショナル幅で、
+    // 行の寸法も Segoe UI と同じなので、英数字と混ぜても WinUI と同じ位置に並ぶ。
+    // 游ゴシック（全角幅のかな）や古い Windows のメイリオは使わない。
     let centered = || FontTweak {
         y_offset_factor: JAPANESE_Y_OFFSET,
         ..FontTweak::default()
     };
     let japanese = load(
-        &["YuGothR.ttc", "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc"],
+        &[("YuGothM.ttc", 1), ("meiryo.ttc", 2), ("msgothic.ttc", 1)],
         "japanese",
         centered(),
     );
-    let japanese_bold = load(&["YuGothB.ttc", "meiryob.ttc"], "japanese_bold", centered());
+    let japanese_bold = load(
+        &[("YuGothB.ttc", 2), ("meiryob.ttc", 2)],
+        "japanese_bold",
+        centered(),
+    );
     let Some(regular) = regular else {
         return false;
     };
@@ -188,15 +211,25 @@ pub(crate) fn install_fonts(ctx: &egui::Context) -> bool {
     fonts.families.insert(FontFamily::Monospace, body);
     fonts.families.insert(
         FontFamily::Name(SEMIBOLD.into()),
-        japanese_bold
-            .or(japanese)
+        semibold
             .into_iter()
-            .chain(semibold)
+            .chain(japanese_bold.or(japanese))
             .chain(Some(regular))
             .collect(),
     );
     ctx.set_fonts(fonts);
     true
+}
+
+/// フォントファイルに入っているフェイスの数。TrueType Collection（.ttc）は複数持つ。
+fn face_count(bytes: &[u8]) -> u32 {
+    match bytes.get(..12) {
+        Some(header) if header.starts_with(b"ttcf") => {
+            u32::from_be_bytes([header[8], header[9], header[10], header[11]])
+        }
+        Some(_) => 1,
+        None => 0,
+    }
 }
 
 /// Applies the chosen app theme to `ui::theme()` and to the egui context.

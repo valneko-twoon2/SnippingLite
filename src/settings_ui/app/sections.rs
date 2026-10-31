@@ -16,7 +16,7 @@ impl SettingsApp {
         ui: &mut egui::Ui,
         p: &Palette,
         width: f32,
-        warning: bool,
+        (warning, video_warning): (bool, bool),
     ) -> Folder {
         let mut folder = None;
         section(ui, p, tr("Snipping"), false);
@@ -24,7 +24,9 @@ impl SettingsApp {
             self.snipping(ui, p, warning, &mut folder)
         });
         section(ui, p, tr("Screen recording"), true);
-        card(ui, p, width, |ui| self.recording(ui, p, &mut folder));
+        card(ui, p, width, |ui| {
+            self.recording(ui, p, video_warning, &mut folder)
+        });
         section(ui, p, tr("History"), true);
         card(ui, p, width, |ui| self.history_cards(ui, p));
         section(ui, p, tr("Shortcuts"), true);
@@ -68,8 +70,9 @@ impl SettingsApp {
             None,
             Some(&mut self.save),
             |ui| {
-                *folder = folder_row(ui, p, tr("Screenshot folder"), &current, false)
-                    .map(|action| (false, action));
+                if let Some(action) = folder_row(ui, p, tr("Screenshot folder"), &current, false) {
+                    *folder = Some((false, action));
+                }
             },
         );
         divider(ui, p);
@@ -157,18 +160,40 @@ impl SettingsApp {
         (self.outline_color, self.outline_width) = picked;
     }
 
-    /// Snipping Tool と同じく、保存先、ファイル名の確認、マイク、システムオーディオの順に並べ、
-    /// このアプリ独自の項目をその後ろに置く。
-    fn recording(&mut self, ui: &mut egui::Ui, p: &Palette, folder: &mut Folder) {
-        let current = config::video_folder(&self.settings());
-        if let Some(action) = folder_row(ui, p, tr("Recording folder"), &current, true) {
-            *folder = Some((true, action));
-        }
-        divider(ui, p);
-        let title = tr("Ask for a file name when saving a recording");
-        row(ui, p, title, None, |ui| {
-            switch(ui, &mut self.ask_video, title, p);
+    /// Snipping Tool と同じく、コピー、保存（保存先は中に入れる）、マイク、システムオーディオの
+    /// 順に並べ、このアプリ独自の項目をその後ろに置く。
+    fn recording(&mut self, ui: &mut egui::Ui, p: &Palette, warning: bool, folder: &mut Folder) {
+        let note = if warning {
+            (
+                tr("Choose at least one destination for recordings."),
+                p.warning,
+            )
+        } else {
+            (
+                tr("Recordings are copied to the clipboard automatically"),
+                p.secondary,
+            )
+        };
+        let title = tr("Automatically copy recordings");
+        row(ui, p, title, Some(note), |ui| {
+            switch(ui, &mut self.copy_video, title, p);
         });
+        divider(ui, p);
+        let current = config::video_folder(&self.settings());
+        expander(
+            ui,
+            p,
+            "save_video",
+            tr("Automatically save recordings"),
+            None,
+            Some(&mut self.save_video),
+            |ui| {
+                // 両方のカードが開いていても、スクリーンショットの行の操作を上書きしない。
+                if let Some(action) = folder_row(ui, p, tr("Recording folder"), &current, false) {
+                    *folder = Some((true, action));
+                }
+            },
+        );
         divider(ui, p);
         let title = tr("Include microphone input in recordings");
         icon_row(ui, p, Icon::Microphone, title, |ui| {

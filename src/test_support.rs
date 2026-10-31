@@ -115,70 +115,6 @@ pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
     })
 }
 
-/// Types a file name into the next Save As dialog this process shows and accepts it.
-pub fn answer_save_as(path: std::path::PathBuf) -> std::thread::JoinHandle<bool> {
-    use windows_sys::Win32::{
-        Foundation::{BOOL, HWND, LPARAM},
-        UI::WindowsAndMessaging::{
-            EnumChildWindows, EnumWindows, GetClassNameW, GetWindowThreadProcessId,
-            IsWindowVisible, PostMessageW, SendMessageW, WM_COMMAND, WM_SETTEXT,
-        },
-    };
-    fn class_of(hwnd: HWND) -> String {
-        let mut class = [0u16; 32];
-        // SAFETY: the buffer and its length describe `class`.
-        let length = unsafe { GetClassNameW(hwnd, class.as_mut_ptr(), 32) } as usize;
-        String::from_utf16_lossy(&class[..length])
-    }
-    unsafe extern "system" fn dialog(hwnd: HWND, found: LPARAM) -> BOOL {
-        let mut process = 0;
-        GetWindowThreadProcessId(hwnd, &mut process);
-        if IsWindowVisible(hwnd) != 0 && process == std::process::id() && class_of(hwnd) == "#32770"
-        {
-            *(found as *mut usize) = hwnd as usize;
-            return 0;
-        }
-        1
-    }
-    unsafe extern "system" fn edit(hwnd: HWND, found: LPARAM) -> BOOL {
-        if class_of(hwnd) == "Edit" {
-            *(found as *mut usize) = hwnd as usize;
-            return 0;
-        }
-        1
-    }
-    std::thread::spawn(move || {
-        for _ in 0..300 {
-            let mut found = 0usize;
-            // SAFETY: `found` outlives the synchronous enumeration.
-            unsafe { EnumWindows(Some(dialog), &mut found as *mut usize as LPARAM) };
-            if found != 0 {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                let mut field = 0usize;
-                let text: Vec<u16> = path
-                    .to_string_lossy()
-                    .encode_utf16()
-                    .chain(Some(0))
-                    .collect();
-                // SAFETY: the buffers outlive the calls, which complete before returning.
-                unsafe {
-                    EnumChildWindows(
-                        found as HWND,
-                        Some(edit),
-                        &mut field as *mut usize as LPARAM,
-                    );
-                    if field != 0 {
-                        SendMessageW(field as HWND, WM_SETTEXT, 0, text.as_ptr() as LPARAM);
-                    }
-                    PostMessageW(found as HWND, WM_COMMAND, 1, 0);
-                }
-                return field != 0;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        false
-    })
-}
 /// A hidden window standing in for the settings or history window process, so that opening
 /// one finds it instead of starting another copy of the program.
 pub fn stub_window(identity: &str) -> windows_sys::Win32::Foundation::HWND {
@@ -338,6 +274,32 @@ pub fn clipboard_text() -> Option<String> {
         });
         CloseClipboard();
         text
+    }
+}
+/// クリップボードに置かれたファイル（CF_HDROP）の一覧。
+pub fn clipboard_files() -> Vec<PathBuf> {
+    use windows_sys::Win32::{
+        System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        UI::Shell::{DragQueryFileW, HDROP},
+    };
+    // SAFETY: the clipboard is opened and closed here, and the names are copied out meanwhile.
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return Vec::new();
+        }
+        let drop = GetClipboardData(15) as HDROP;
+        let mut files = Vec::new();
+        if !drop.is_null() {
+            for index in 0..DragQueryFileW(drop, u32::MAX, std::ptr::null_mut(), 0) {
+                let mut name = [0u16; 1024];
+                let length = DragQueryFileW(drop, index, name.as_mut_ptr(), name.len() as u32);
+                files.push(PathBuf::from(String::from_utf16_lossy(
+                    &name[..length as usize],
+                )));
+            }
+        }
+        CloseClipboard();
+        files
     }
 }
 /// An egui screen driven without a window: frames are run by hand, text is located

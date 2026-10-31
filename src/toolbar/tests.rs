@@ -277,14 +277,14 @@ fn the_close_button_hides_the_toolbar_for_good() {
 
 #[test]
 #[ignore = "Covers the screen"]
-fn settings_history_and_edit_open_their_windows_and_end_the_snip() {
+fn settings_and_history_open_their_windows_and_end_the_snip() {
     let desk = Desk::start();
     let settings = stub_window(crate::SETTINGS_WINDOW);
     let history = stub_window(crate::HISTORY_WINDOW);
+    // ペンのボタンは画面を開かず、オン・オフを切り替えるだけ（markup のテストで確かめる）。
     for (button, window, other) in [
         (SETTINGS_BUTTON, settings, history),
         (HISTORY_BUTTON, history, settings),
-        (EDIT_BUTTON, history, settings),
     ] {
         // SAFETY: the windows belong to this test.
         unsafe {

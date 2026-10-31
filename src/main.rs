@@ -10,6 +10,7 @@ mod imaging;
 mod launch;
 #[cfg(test)]
 mod leaks;
+mod markup;
 mod ocr;
 mod overlay;
 mod player;
@@ -20,6 +21,7 @@ mod settings_ui;
 mod test_support;
 mod toast;
 mod toolbar;
+mod tray;
 mod ui;
 mod video;
 mod window_capture;
@@ -33,6 +35,7 @@ use std::{
     ptr::{null, null_mut},
 };
 use toolbar::*;
+use tray::*;
 use video::*;
 use windows_sys::{
     core::PCWSTR,
@@ -127,7 +130,10 @@ struct State {
     mic: bool,
     system_audio: bool,
     app_audio: bool,
-    ask_video: bool,
+    /// 録画が終わったら、そのファイルをクリップボードに置く。
+    copy_video: bool,
+    /// 録画を一時フォルダーではなく録画の保存先に残す。
+    save_video: bool,
     countdown: bool,
     skip_title: bool,
     record_cursor: bool,
@@ -137,6 +143,11 @@ struct State {
     count_area: RECT,
     count_target: Option<window_capture::Target>,
     count_points: Vec<POINT>,
+    /// ツールバーのペンのボタン: 切り取った範囲にその場で書き込んでから確定する。
+    markup: bool,
+    /// 書き込み中の切り取り。
+    markup_session: Option<Box<markup::Session>>,
+    markup_bar: HWND,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -212,137 +223,6 @@ unsafe fn create_windows() -> bool {
     }
     !s.overlay.is_null() && !s.toolbar.is_null()
 }
-unsafe extern "system" fn main_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    match msg {
-        WM_CREATE => {
-            state().owner = hwnd;
-            ui::disable_transitions(hwnd);
-            tray(hwnd, NIM_ADD);
-            state().hotkey_ok = RegisterHotKey(
-                hwnd,
-                HOTKEY,
-                MOD_ALT | MOD_SHIFT | MOD_NOREPEAT,
-                b'S' as u32,
-            ) != 0;
-            0
-        }
-        TRAY_RELOAD => {
-            let settings = config::load_settings();
-            state().copy = settings.copy;
-            state().save = settings.save;
-            state().ask = settings.ask;
-            state().delay = 0; // 撮影の遅延は設定から外した
-            state().history = settings.history;
-            state().countdown = settings.countdown;
-            state().skip_title = settings.skip_title;
-            state().record_cursor = settings.record_cursor;
-            state().record_fps = 60; // フレームレートは 60 fps に固定
-            state().freeze = settings.freeze;
-            state().notify = settings.notify;
-            state().keep_toolbar = settings.keep_toolbar;
-            state().outline = settings.outline;
-            state().outline_color = settings.outline_color;
-            state().outline_width = settings.outline_width;
-            if !settings.keep_toolbar && state().toolbar_open {
-                state().toolbar_open = false;
-                if !state().active {
-                    ShowWindow(state().toolbar, SW_HIDE);
-                }
-            }
-            state().mic = settings.mic;
-            state().system_audio = settings.system_audio;
-            state().app_audio = settings.app_audio;
-            state().ask_video = settings.ask_video;
-            ui::set_theme_choice(settings.theme);
-            0
-        }
-        WM_COMMAND => {
-            match wp & 0xffff {
-                NEW => begin_capture(),
-                TRAY_SETTINGS => launch_settings(),
-                TRAY_HISTORY => launch_history(false),
-                TRAY_STOP => stop_recording(),
-                TRAY_ABOUT => {
-                    if about::show().is_err() {
-                        message(hwnd, tr("Could not open the About page."));
-                    }
-                }
-                TRAY_EXIT => {
-                    DestroyWindow(hwnd);
-                }
-                _ => {}
-            }
-            0
-        }
-        TRAY_MESSAGE => {
-            if lp as u32 == WM_LBUTTONUP {
-                begin_capture();
-            }
-            if lp as u32 == WM_RBUTTONUP {
-                let menu = CreatePopupMenu();
-                if state().recording.is_some() {
-                    AppendMenuW(menu, MF_STRING, TRAY_STOP, w(tr("Stop recording")).as_ptr());
-                }
-                // The first entry carries the icon's name and opens the app's window.
-                AppendMenuW(menu, MF_STRING, TRAY_SETTINGS, w("Snipping Lite").as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_ABOUT, w(tr("About")).as_ptr());
-                AppendMenuW(menu, MF_STRING, TRAY_EXIT, w(tr("Exit")).as_ptr());
-                SetMenuDefaultItem(menu, TRAY_SETTINGS as u32, 0);
-                let mut cursor: POINT = std::mem::zeroed();
-                GetCursorPos(&mut cursor);
-                SetForegroundWindow(hwnd);
-                TrackPopupMenu(menu, TPM_RIGHTBUTTON, cursor.x, cursor.y, 0, hwnd, null());
-                DestroyMenu(menu);
-            }
-            0
-        }
-        WM_CLOSE => {
-            ShowWindow(hwnd, SW_HIDE);
-            0
-        }
-        WM_TIMER if wp == DELAY_TIMER => {
-            KillTimer(hwnd, DELAY_TIMER);
-            state().pending = false;
-            capture(false);
-            0
-        }
-        WM_HOTKEY if wp == HOTKEY as usize => {
-            begin_capture();
-            0
-        }
-        WM_DESTROY => {
-            // Finish the video file so a recording is not lost when the app exits.
-            if let Some(recording) = state().recording.take() {
-                let _ = recording.stop();
-            }
-            toast::close();
-            tray(hwnd, NIM_DELETE);
-            UnregisterHotKey(hwnd, HOTKEY);
-            PostQuitMessage(0);
-            0
-        }
-        _ => DefWindowProcW(hwnd, msg, wp, lp),
-    }
-}
-unsafe fn tray(hwnd: HWND, operation: u32) {
-    let mut data: NOTIFYICONDATAW = std::mem::zeroed();
-    data.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-    data.hWnd = hwnd;
-    data.uID = 1;
-    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
-    data.uCallbackMessage = TRAY_MESSAGE;
-    if state().tray_icon.is_null() {
-        state().tray_icon = ui::app_icon(32);
-    }
-    data.hIcon = state().tray_icon;
-    let title = w("Snipping Lite");
-    data.szTip[..title.len()].copy_from_slice(&title);
-    Shell_NotifyIconW(operation, &data);
-    if operation == NIM_DELETE {
-        DestroyIcon(state().tray_icon);
-        state().tray_icon = null_mut();
-    }
-}
 unsafe fn register(name: &str, proc: WNDPROC, brush: HBRUSH, cursor: PCWSTR) {
     let class_name = w(name);
     let class = WNDCLASSW {
@@ -407,7 +287,8 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         mic: settings.mic,
         system_audio: settings.system_audio,
         app_audio: settings.app_audio,
-        ask_video: settings.ask_video,
+        copy_video: settings.copy_video,
+        save_video: settings.save_video,
         countdown: settings.countdown,
         skip_title: settings.skip_title,
         record_cursor: settings.record_cursor,
@@ -415,6 +296,9 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         count_window: null_mut(),
         count_left: 0,
         count_points: Vec::new(),
+        markup: config::load_markup(),
+        markup_session: None,
+        markup_bar: null_mut(),
         count_target: None,
         count_area: RECT {
             left: 0,
@@ -439,6 +323,7 @@ unsafe fn register_classes() {
         IDC_ARROW,
     );
     register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
+    register(markup::BAR, Some(markup::bar_proc), null_mut(), IDC_ARROW);
 }
 /// Creates the tray window, which is never shown; it receives the tray, hotkey and timer messages.
 unsafe fn create_main_window() -> HWND {
@@ -468,6 +353,9 @@ fn main() {
         return;
     }
     unsafe {
+        if hand_over_to_running_tray() {
+            return;
+        }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let settings = config::load_settings();
         ui::set_theme_choice(settings.theme);

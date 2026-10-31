@@ -21,6 +21,8 @@ const JAPANESE: &[(&str, &str)] = &[
         "Alt + Shift + S でスクリーンショットを撮影",
     ),
     ("New snip", "新規切り取り"),
+    // クイックマークアップのバー
+    ("Capture", "キャプチャ"),
     ("Snipping", "領域の切り取り"),
     ("Screen recording", "画面録画"),
     ("Shortcuts", "ショートカット"),
@@ -53,9 +55,6 @@ const JAPANESE: &[(&str, &str)] = &[
     ),
     ("History size", "履歴の保存件数"),
     ("{n} screenshots", "{n} 件"),
-    ("Capture delay", "撮影の遅延"),
-    ("None", "なし"),
-    ("{n} seconds", "{n} 秒"),
     ("Appearance", "外観"),
     ("App theme", "アプリ テーマ"),
     ("Use system setting", "システム設定を使用する"),
@@ -86,11 +85,19 @@ const JAPANESE: &[(&str, &str)] = &[
         "Turn off to record all system audio when recording a window",
         "オフにすると、ウィンドウ録画でもシステム全体の音を録音します",
     ),
+    ("Automatically copy recordings", "自動的に変更にコピー"),
     (
-        "Ask for a file name when saving a recording",
-        "録画の保存時にファイル名を指定する",
+        "Recordings are copied to the clipboard automatically",
+        "画面録画の編集内容は自動的にクリップボードにコピーされます",
     ),
-    ("MP4 video", "MP4 ビデオ"),
+    (
+        "Automatically save recordings",
+        "元の画面録画を自動的に保存する",
+    ),
+    (
+        "Choose at least one destination for recordings.",
+        "画面録画の保存先を少なくとも 1 つ選んでください。",
+    ),
     (
         "After a screenshot or recording is saved",
         "スクリーンショットや録画を保存したあとに表示します",
@@ -100,8 +107,6 @@ const JAPANESE: &[(&str, &str)] = &[
         "Include the mouse cursor in recordings",
         "録画にマウスカーソルを含める",
     ),
-    ("Recording frame rate", "録画のフレームレート"),
-    ("{n} fps", "{n} fps"),
     (
         "Unsupported recording frame rate.",
         "録画のフレームレートが無効です。",
@@ -275,6 +280,14 @@ const JAPANESE: &[(&str, &str)] = &[
     ),
     ("Snip saved", "切り取りを保存しました"),
     ("Recording saved", "録画を保存しました"),
+    (
+        "Recording copied to clipboard",
+        "録画をクリップボードにコピーしました",
+    ),
+    (
+        "Could not copy the recording to the clipboard.",
+        "録画をクリップボードにコピーできませんでした。",
+    ),
     // Tray menu, recording and capture messages
     ("Stop recording", "録画を停止"),
     ("Exit", "終了"),
@@ -386,6 +399,11 @@ mod tests {
             include_str!("config.rs"),
             include_str!("settings_ui.rs"),
             include_str!("settings_ui/app.rs"),
+            include_str!("settings_ui/app/sections.rs"),
+            include_str!("settings_ui/expander.rs"),
+            include_str!("tray.rs"),
+            include_str!("markup.rs"),
+            include_str!("markup/bar.rs"),
             include_str!("settings_ui/widgets.rs"),
             include_str!("history_ui.rs"),
             include_str!("history_ui/detail.rs"),

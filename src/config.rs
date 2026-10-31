@@ -87,8 +87,10 @@ pub struct Settings {
     pub system_audio: bool,
     /// A window recording keeps only the sound of that window's app.
     pub app_audio: bool,
-    /// Ask where to save a recording when it ends.
-    pub ask_video: bool,
+    /// 録画が終わったら、そのファイルをクリップボードに置く。
+    pub copy_video: bool,
+    /// 録画を録画の保存先に残す。オフなら一時フォルダーに置く。
+    pub save_video: bool,
     pub theme: AppTheme,
     /// Where screenshots are saved; empty means the default folder.
     pub screenshot_folder: String,
@@ -126,6 +128,27 @@ pub fn save_pen(color: usize, thickness: usize) {
             &dir.join("pen.ini"),
             format!("color={color}\r\nthickness={thickness}\r\n"),
         );
+    }
+}
+
+fn markup_path() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite").join("markup.ini"))
+}
+
+/// ツールバーのペンのボタン（撮影後にその場で書き込む）がオンか。Snipping Tool と同じく次回も
+/// 引き継ぐ。設定ウィンドウが開いたまま設定を書き戻しても消えないよう、別のファイルに置く。
+pub fn load_markup() -> bool {
+    markup_path()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .is_some_and(|text| text.lines().any(|line| line == "markup=1"))
+}
+
+pub fn save_markup(on: bool) {
+    if let Some(path) = markup_path() {
+        if let Some(dir) = path.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = write_atomic(&path, format!("markup={}\r\n", on as u8));
     }
 }
 
@@ -176,7 +199,8 @@ pub fn parse_settings(text: &str) -> Settings {
         mic: text.lines().any(|s| s == "mic=1"),
         system_audio: !text.lines().any(|s| s == "system_audio=0"),
         app_audio: !text.lines().any(|s| s == "app_audio=0"),
-        ask_video: text.lines().any(|s| s == "ask_video=1"),
+        copy_video: !text.lines().any(|s| s == "copy_video=0"),
+        save_video: !text.lines().any(|s| s == "save_video=0"),
         theme: AppTheme::parse(&value(text, "theme=")),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
@@ -274,7 +298,7 @@ pub fn save_settings(settings: &Settings) -> std::io::Result<()> {
 /// The settings file contents that `parse_settings` reads back.
 fn settings_text(settings: &Settings) -> String {
     format!(
-        "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\noutline={}\r\noutline_color={}\r\noutline_width={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\nask_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
+        "copy={}\r\nsave={}\r\nask={}\r\ndelay={}\r\nhistory={}\r\nhistory_limit={}\r\ncountdown={}\r\nskip_title={}\r\nrecord_cursor={}\r\nrecord_fps={}\r\nfreeze={}\r\nnotify={}\r\nkeep_toolbar={}\r\noutline={}\r\noutline_color={}\r\noutline_width={}\r\nmic={}\r\nsystem_audio={}\r\napp_audio={}\r\ncopy_video={}\r\nsave_video={}\r\ntheme={}\r\nscreenshot_folder={}\r\nvideo_folder={}\r\n",
         settings.copy as u8,
         settings.save as u8,
         settings.ask as u8,
@@ -294,7 +318,8 @@ fn settings_text(settings: &Settings) -> String {
         settings.mic as u8,
         settings.system_audio as u8,
         settings.app_audio as u8,
-        settings.ask_video as u8,
+        settings.copy_video as u8,
+        settings.save_video as u8,
         settings.theme.key(),
         settings.screenshot_folder,
         settings.video_folder

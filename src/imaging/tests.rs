@@ -166,9 +166,6 @@ fn the_save_dialogs_return_the_chosen_path_or_nothing() {
     let answer = answer_dialog(2);
     assert_eq!(choose_path(null_mut(), &folder, "a.png", true), None);
     assert!(answer.join().unwrap());
-    let answer = answer_dialog(2);
-    assert_eq!(choose_video_path(null_mut(), &folder, "a.mp4"), None);
-    assert!(answer.join().unwrap());
     // Accepting keeps the proposed name; a name without an extension gets the default one.
     let answer = answer_dialog(1);
     assert_eq!(
@@ -180,12 +177,6 @@ fn the_save_dialogs_return_the_chosen_path_or_nothing() {
     assert_eq!(
         choose_path(null_mut(), &folder, "b", true),
         Some(folder.join("b.png"))
-    );
-    assert!(answer.join().unwrap());
-    let answer = answer_dialog(1);
-    assert_eq!(
-        choose_video_path(null_mut(), &folder, "c"),
-        Some(folder.join("c.mp4"))
     );
     assert!(answer.join().unwrap());
 }
@@ -232,6 +223,17 @@ fn copied_text_reads_back_unchanged() {
     ] {
         assert!(copy_text(null_mut(), text), "{text:.20}");
         assert_eq!(clipboard_text().as_deref(), Some(text));
+    }
+}
+
+#[test]
+#[ignore = "Replaces the clipboard content"]
+fn a_file_goes_on_the_clipboard_as_a_file_list() {
+    // 日本語やスペースを含むパスも、そのまま貼り付けられる。
+    for name in ["clip.mp4", "画面録画 1.mp4"] {
+        let path = scratch(name);
+        assert!(copy_file(null_mut(), &path), "{name}");
+        assert_eq!(crate::test_support::clipboard_files(), vec![path]);
     }
 }
 

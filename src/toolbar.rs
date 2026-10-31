@@ -8,14 +8,14 @@ const BAR_WIDTH: f32 = 332.0;
 const CAMERA_BUTTON: i32 = 0;
 const VIDEO_BUTTON: i32 = 1;
 const AREA_BUTTON: i32 = 2;
-const EDIT_BUTTON: i32 = 3;
+pub(crate) const EDIT_BUTTON: i32 = 3;
 const HISTORY_BUTTON: i32 = 4;
 const SETTINGS_BUTTON: i32 = 5;
 const CLOSE_BUTTON: i32 = 6;
 const GLYPHS: [&str; 7] = [
     "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E70F}", "\u{E81C}", "\u{E713}", "\u{E711}",
 ];
-fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
+pub(crate) fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     let (left, width) = match index {
         CAMERA_BUTTON => (8.0, 36.0),
         VIDEO_BUTTON => (44.0, 36.0),
@@ -173,7 +173,17 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
         let i = i as i32;
         let r = toolbar_button(i, scale);
         let selected = (i == CAMERA_BUTTON && !s.video) || (i == VIDEO_BUTTON && s.video);
-        let fill = if i == s.pressed_button {
+        // ペンのボタンはオン・オフの切り替えで、オンのときはアクセントの色で塗る。
+        let toggled = i == EDIT_BUTTON && s.markup;
+        let fill = if toggled {
+            if i == s.pressed_button {
+                theme.accent & 0xccffffff
+            } else if i == s.hover_button {
+                theme.accent & 0xe6ffffff
+            } else {
+                theme.accent
+            }
+        } else if i == s.pressed_button {
             theme.pressed
         } else if i == s.hover_button {
             theme.hover
@@ -213,7 +223,16 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
             &icon,
             ui::rect(r[0], r[1], right, r[3]),
             DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-            theme.text,
+            if toggled {
+                // アクセントの上に置く文字の色。
+                if theme.dark {
+                    0xff000000
+                } else {
+                    0xffffffff
+                }
+            } else {
+                theme.text
+            },
         );
         if i == AREA_BUTTON {
             let chevron = ui::Font::new(ui::ICON_FONT, 8.0 * scale, FW_NORMAL as i32);
@@ -319,9 +338,18 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                         cancel();
                         launch_settings();
                     }
-                    EDIT_BUTTON | HISTORY_BUTTON => {
+                    // Snipping Tool と同じく、押しても画面は変わらない。オンにしておくと、
+                    // 切り取った範囲にその場で書き込んでから確定できる。
+                    EDIT_BUTTON => {
+                        state().markup = !state().markup;
+                        config::save_markup(state().markup);
+                        if state().active {
+                            SetForegroundWindow(state().overlay);
+                        }
+                    }
+                    HISTORY_BUTTON => {
                         cancel();
-                        launch_history(hit == EDIT_BUTTON);
+                        launch_history(false);
                     }
                     CAMERA_BUTTON | VIDEO_BUTTON => {
                         state().video = hit == VIDEO_BUTTON;

@@ -37,9 +37,18 @@ impl Window {
 
     /// Flips the switch of the row with this title.
     fn toggle(&mut self, title: &str) {
+        self.toggle_nth(title, 0);
+    }
+
+    /// 同じ見出しの行が複数あるとき（コピーの行は 2 つある）、上から `index` 番目のスイッチを切り替える。
+    fn toggle_nth(&mut self, title: &str, index: usize) {
         let row = self
             .screen
-            .find(title)
+            .texts()
+            .into_iter()
+            .filter(|(text, _)| text == title)
+            .nth(index)
+            .map(|(_, rect)| rect)
             .unwrap_or_else(|| panic!("no row {title:?}: {:?}", self.screen.texts()));
         let (on, off) = (tr("On"), tr("Off"));
         let (_, label) = self
@@ -108,8 +117,8 @@ fn the_page_lists_every_setting_under_its_section() {
         "Include system audio in recordings",
         "Record only the sound of the window's app",
         "Leave out the title bar when recording a window",
-        "Ask for a file name when saving a recording",
-        "Recording folder",
+        "Automatically copy recordings",
+        "Automatically save recordings",
         "History",
         "Keep a history of screenshots",
         "History size",
@@ -121,12 +130,22 @@ fn the_page_lists_every_setting_under_its_section() {
     ] {
         assert!(window.screen.has(tr(text)), "missing {text:?}");
     }
-    // 撮影の遅延とフレームレートは設定から外した。
-    for text in ["Capture delay", "Recording frame rate"] {
+    // 撮影の遅延、フレームレート、録画のファイル名の確認は設定から外した。
+    for text in [
+        "Capture delay",
+        "Recording frame rate",
+        "Ask for a file name when saving a recording",
+    ] {
         assert!(!window.screen.has(tr(text)), "{text:?} is still listed");
     }
     // Rows that only matter after another switch is on stay out of the way.
-    for text in ["Screenshot folder", "Border color", "Border thickness"] {
+    // 開閉できるカードは、スイッチがオンでも閉じた状態で始まる。
+    for text in [
+        "Screenshot folder",
+        "Recording folder",
+        "Border color",
+        "Border thickness",
+    ] {
         assert!(!window.screen.has(tr(text)), "{text:?} is shown too early");
     }
     assert!(!window
@@ -165,9 +184,7 @@ fn every_switch_stores_its_own_setting() {
         ("Leave out the title bar when recording a window", |s| {
             s.skip_title
         }),
-        ("Ask for a file name when saving a recording", |s| {
-            s.ask_video
-        }),
+        ("Automatically save recordings", |s| s.save_video),
         ("Keep a history of screenshots", |s| s.history),
     ];
     for (title, read) in rows {
@@ -213,6 +230,38 @@ fn the_last_destination_for_screenshots_cannot_be_switched_off() {
     assert!(!saved().copy && saved().save, "save stays on now");
     window.toggle(copy);
     assert!(saved().copy && saved().save);
+}
+
+#[test]
+fn the_last_destination_for_recordings_cannot_be_switched_off() {
+    let _sandbox = Sandbox::new();
+    config::save_settings(&config::Settings {
+        copy_video: false,
+        save_video: false,
+        ..config::parse_settings("")
+    })
+    .unwrap();
+    let mut window = Window::open(true, false);
+    // 保存先のないファイルは、開いたときに保存をオンにして直す。
+    assert!(!saved().copy_video && saved().save_video);
+    // 録画のコピーの行は、スクリーンショットのものと同じ見出しで 2 つ目にある。
+    let copy = tr("Automatically copy recordings");
+    let save = tr("Automatically save recordings");
+    window.toggle(save);
+    assert!(
+        saved().save_video,
+        "save stays on while it is the only destination"
+    );
+    assert!(window
+        .screen
+        .has(tr("Choose at least one destination for recordings.")));
+    window.toggle_nth(copy, 1);
+    window.toggle(save);
+    assert!(saved().copy_video && !saved().save_video);
+    window.toggle_nth(copy, 1);
+    assert!(saved().copy_video, "copy stays on now");
+    // スクリーンショットの設定は変わらない。
+    assert!(saved().copy && !saved().save);
 }
 
 #[test]
@@ -358,19 +407,36 @@ fn the_window_frame_follows_the_theme_and_the_backdrop() {
 fn the_folder_row_opens_the_folder() {
     let sandbox = Sandbox::new();
     let folder = folder_in(&sandbox, "opened-from-settings");
+    let videos = folder_in(&sandbox, "videos-from-settings");
     config::save_settings(&config::Settings {
         save: true,
         screenshot_folder: folder.clone(),
+        video_folder: videos.clone(),
         ..config::parse_settings("")
     })
     .unwrap();
     let mut window = Window::open(true, false);
-    crate::test_support::take_shell_opened();
-    window.click_text(tr("Open folder"));
-    assert_eq!(
-        crate::test_support::take_shell_opened(),
-        vec![(folder, None)]
-    );
+    // 保存先の行は、閉じた状態で始まるカードの中にある。
+    assert!(!window.screen.has(tr("Open folder")));
+    // 両方のカードを開いても、それぞれのボタンが自分のフォルダーを開く。
+    window.click_text(tr("Automatically save screenshots"));
+    window.click_text(tr("Automatically save recordings"));
+    let buttons: Vec<_> = window
+        .screen
+        .texts()
+        .into_iter()
+        .filter(|(text, _)| text == tr("Open folder"))
+        .map(|(_, rect)| rect.center())
+        .collect();
+    assert_eq!(buttons.len(), 2, "one button per folder row");
+    for (at, expected) in buttons.into_iter().zip([folder, videos]) {
+        crate::test_support::take_shell_opened();
+        window.act(|screen, show| screen.click(at, show));
+        assert_eq!(
+            crate::test_support::take_shell_opened(),
+            vec![(expected, None)]
+        );
+    }
 }
 
 #[test]
@@ -387,6 +453,8 @@ fn the_change_link_picks_a_folder_or_leaves_it_alone() {
     })
     .unwrap();
     let mut window = Window::open(true, false);
+    window.click_text(tr("Automatically save screenshots"));
+    window.click_text(tr("Automatically save recordings"));
     let changes: Vec<_> = window
         .screen
         .texts()

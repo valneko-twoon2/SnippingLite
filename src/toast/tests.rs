@@ -99,12 +99,15 @@ fn a_recording_notification_opens_the_file_and_a_new_one_replaces_the_old() {
     let path = desk.sandbox.path().join("Snipping Lite 1.mp4");
     // SAFETY: the windows belong to this test.
     unsafe {
-        show_recording(&[0; 4], 1, 1, path.clone());
+        show_recording(&[0; 4], 1, 1, path.clone(), true);
         let first = current().hwnd;
         assert_eq!(current().title, tr("Recording saved"));
         assert_eq!(current().body, "Snipping Lite 1.mp4");
         assert!(!current().edit && current().can_open);
-        show_recording(&[0; 4], 1, 1, path);
+        // 保存先に残さない録画は、クリップボードに渡したことを伝える。
+        show_recording(&[0; 4], 1, 1, path, false);
+        assert_eq!(current().title, tr("Recording copied to clipboard"));
+        assert!(!current().edit && current().can_open);
         assert_ne!(current().hwnd, first);
         assert_eq!(IsWindow(first), 0, "the old notification is gone");
         close();
@@ -328,7 +331,7 @@ fn clicking_the_notification_opens_the_editor_or_the_file_and_the_x_just_closes(
     unsafe { close() };
     // A recording notification opens the player on the file.
     let video = desk.sandbox.path().join("missing.mp4");
-    unsafe { show_recording(&[0; 4], 1, 1, video.clone()) };
+    unsafe { show_recording(&[0; 4], 1, 1, video.clone(), true) };
     let hwnd = current().hwnd;
     desk.mouse(hwnd, WM_MOUSEMOVE, in_text.0, in_text.1);
     crate::test_support::take_shell_opened();

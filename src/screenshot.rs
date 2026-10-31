@@ -16,6 +16,8 @@ pub(crate) unsafe fn begin_capture() {
     if state().active || state().pending {
         return;
     }
+    // 設定ウィンドウからの通知を受け取りそこねても、保存された設定で撮影する。
+    apply_settings(&config::load_settings());
     let owner = state().owner;
     // Our own windows must not appear in the capture; they come back afterwards.
     state().hidden.clear();
@@ -109,7 +111,7 @@ pub(crate) unsafe fn capture(flush: bool) {
     }
 }
 /// Copies the desktop into the capture bitmap and prepares the dim layer.
-unsafe fn freeze_screen(x: i32, y: i32, width: i32, height: i32) -> bool {
+pub(crate) unsafe fn freeze_screen(x: i32, y: i32, width: i32, height: i32) -> bool {
     let dc = GetDC(null_mut());
     let captured = !dc.is_null()
         && store_bitmap(dc, width, height)
@@ -188,6 +190,10 @@ unsafe fn cleanup() {
     s.hover_hwnd = null_mut();
     s.hover_button = -1;
     s.pressed_button = -1;
+    s.markup_session = None;
+    if !s.markup_bar.is_null() {
+        ShowWindow(s.markup_bar, SW_HIDE);
+    }
 }
 unsafe fn read_pixels(dc: HDC, bitmap: HBITMAP, width: i32, height: i32) -> Option<Vec<u8>> {
     let len = (width as usize)
@@ -269,13 +275,22 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
     if state().mode == MODE_WINDOW {
         let image =
             window_capture::snapshot(window_capture::Target::new(state().hover_hwnd, false));
-        cancel();
         match image {
-            Ok(image) => {
-                let pixels = with_outline(image.pixels, image.width, image.height);
-                deliver_capture(pixels, image.width, image.height);
+            Ok(image) if markup::wanted() => {
+                let at = POINT {
+                    x: rect.left,
+                    y: rect.top,
+                };
+                markup::begin(at, image.pixels, image.width, image.height, false);
             }
-            Err(_) => message(state().owner, tr("Could not capture the selected window.")),
+            Ok(image) => {
+                cancel();
+                deliver_snip(image.pixels, image.width, image.height, false);
+            }
+            Err(_) => {
+                cancel();
+                message(state().owner, tr("Could not capture the selected window."));
+            }
         }
         return;
     }
@@ -349,13 +364,29 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
         }
     }
     DeleteDC(mem);
-    // Close the overlay first so the Save As dialog is not covered by it.
-    cancel();
-    let Some(pixels) = pixels else {
-        message(state().owner, tr("Could not copy the selected pixels."));
-        return;
-    };
-    // A freeform shape has no straight edge to draw the border on.
+    match pixels {
+        Some(pixels) if markup::wanted() => {
+            let at = POINT {
+                x: rect.left,
+                y: rect.top,
+            };
+            markup::begin(at, pixels, width, height, shaped);
+        }
+        Some(pixels) => {
+            // Close the overlay first so the Save As dialog is not covered by it.
+            cancel();
+            deliver_snip(pixels, width, height, shaped);
+        }
+        None => {
+            cancel();
+            message(state().owner, tr("Could not copy the selected pixels."));
+        }
+    }
+}
+
+/// 切り取った画像に境界線を付けて届ける。
+/// A freeform shape has no straight edge to draw the border on.
+pub(crate) unsafe fn deliver_snip(pixels: Vec<u8>, width: i32, height: i32, shaped: bool) {
     let pixels = if shaped {
         pixels
     } else {

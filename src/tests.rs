@@ -108,16 +108,18 @@ fn new_settings_reach_the_running_tray_process() {
     settings.mic = true;
     settings.system_audio = false;
     settings.app_audio = false;
-    settings.ask_video = true;
+    settings.copy_video = false;
     config::save_settings(&settings).unwrap();
     desk.send(desk.main, TRAY_RELOAD, 0, 0);
     let state = s();
     assert!(!state.copy && state.save && state.ask && !state.history);
-    assert_eq!((state.delay, state.record_fps), (5, 30));
+    // 撮影の遅延とフレームレートは設定から外したので、ファイルにあっても使わない。
+    assert_eq!((state.delay, state.record_fps), (0, 60));
     assert!(!state.countdown && !state.skip_title && !state.record_cursor);
     assert!(state.freeze && !state.notify && state.keep_toolbar && state.outline);
     assert_eq!((state.outline_color, state.outline_width), (1, 2));
-    assert!(state.mic && !state.system_audio && !state.app_audio && state.ask_video);
+    assert!(state.mic && !state.system_audio && !state.app_audio);
+    assert!(!state.copy_video && state.save_video);
     // Switching "keep the toolbar" off closes an idle kept toolbar, but not one in use.
     state.toolbar_open = true;
     unsafe { ShowWindow(state.toolbar, SW_SHOWNOACTIVATE) };
