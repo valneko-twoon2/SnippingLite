@@ -237,4 +237,5 @@ fn a_file_goes_on_the_clipboard_as_a_file_list() {
     }
 }
 
+mod differential;
 mod inputs;

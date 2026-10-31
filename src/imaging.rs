@@ -99,6 +99,15 @@ pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::R
         data3: 0x11d3,
         data4: [0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e],
     };
+    // BMP には透明がなく、GDI+ はアルファを捨てて色だけを書く。README のとおり透明な部分を白にし、
+    // 半透明の画素（自由形式の外側に描いた線）も、PNG を白い背景で見たときと同じ色にする。
+    let flattened;
+    let pixels = if bmp {
+        flattened = on_white(pixels);
+        &flattened
+    } else {
+        pixels
+    };
     // SAFETY: `pixels` outlives the bitmap, which is disposed before returning.
     unsafe {
         let mut image = null_mut();
@@ -123,6 +132,20 @@ pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::R
             Err(std::io::Error::other("Could not encode the image"))
         }
     }
+}
+
+/// 白の上に重ねた、不透明な画素。`c * a + 255 * (255 - a)` を 255 で割って四捨五入する
+/// （255 は奇数なので、ちょうど半分にはならない）。
+fn on_white(pixels: &[u8]) -> Vec<u8> {
+    let mut opaque = pixels.to_vec();
+    for pixel in opaque.as_chunks_mut::<4>().0 {
+        let alpha = pixel[3] as u32;
+        for channel in &mut pixel[..3] {
+            *channel = ((*channel as u32 * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        }
+        pixel[3] = 255;
+    }
+    opaque
 }
 
 /// Decodes an image file into straight-alpha top-down BGRA pixels.
