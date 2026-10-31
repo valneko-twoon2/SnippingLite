@@ -67,6 +67,18 @@ pub(super) fn contract(
             .iter()
             .any(|(target, _)| target.ends_with("about.html"))
     };
+    // README: 録画を止めるのは、表示の停止のボタン、もう一度の開始（ショートカット、トレイの
+    // アイコン）、トレイのメニューの「録画を停止」（録画中だけ先頭に出る）だけ。
+    if before.recording {
+        let stops = matches!(
+            action,
+            Action::Start(_)
+                | Action::RecordStop
+                | Action::TrayMenu(Some(0))
+                | Action::Command(WM_COMMAND, TRAY_STOP)
+        );
+        assert_eq!(st.recording.is_none(), stops, "{action:?} while recording");
+    }
     // README: 残したツールバーは、× で閉じるまで移動した位置に出る（撮影を挟んでも）。
     if before.toolbar_open && st.toolbar_open && !matches!(action, Action::MoveToolbar(_)) {
         let was = (before.toolbar_rect.left, before.toolbar_rect.top);
@@ -77,6 +89,20 @@ pub(super) fn contract(
         );
     }
     match action {
+        Action::Start(_) if before.recording => {
+            assert!(
+                !st.active && st.count_window.is_null(),
+                "a start event that stops a recording starts nothing"
+            );
+        }
+        // 録画中のメニューは「録画を停止」（上で確かめた）、「Snipping Lite」、About、終了の順。
+        Action::TrayMenu(Some(0)) if before.recording => {}
+        Action::TrayMenu(Some(1)) if before.recording => {
+            assert!(
+                shown(scene.settings),
+                "Snipping Lite in the menu opens the settings while recording"
+            );
+        }
         Action::Start(_) if before.count.is_some() => {
             assert!(
                 st.count_window.is_null(),
@@ -139,6 +165,7 @@ pub(super) fn contract(
         }
         &Action::Command(WM_COMMAND, TRAY_ABOUT) => assert!(about(), "the About page opens"),
         &Action::Command(WM_COMMAND, TRAY_STOP) | &Action::Command(WM_CLOSE, _) => {
+            // 止めるのは録画だけ（上）。撮影とカウントダウンはそのまま、トレイは閉じない。
             assert_eq!(
                 st.active, before.active,
                 "nothing to stop, nothing to close"
@@ -260,6 +287,24 @@ pub(super) fn contract(
         Action::ToastClick(spot) if before.toast.is_some() => {
             toast_click(*spot, before, scene, opened)
         }
+        Action::ToastDismiss if before.toast.is_some() => {
+            assert!(
+                closing_or_gone(),
+                "the dismiss timer closes the notification"
+            );
+        }
+        // 閉じ始めた通知は、滑り終えたところで消える。出てくる通知は、滑り終えても残る。
+        &Action::ToastSlide(ms) if before.toast.is_some() => {
+            let closing = before.toast.as_ref().is_some_and(|look| look.closing);
+            let over = Duration::from_millis(ms) >= toast::probe::SLIDE;
+            // SAFETY: the state belongs to this thread.
+            let gone = unsafe { toast::probe::look() }.is_none();
+            assert_eq!(
+                gone,
+                closing && over,
+                "a notification goes away once it has slid out"
+            );
+        }
         Action::ToastMenu(choice) if before.toast.is_some() => {
             if *choice == Some(0) {
                 assert!(shown(scene.settings), "Settings in the menu opens them");
@@ -277,11 +322,14 @@ pub(super) fn contract(
                 );
             }
         }
-        Action::Tick => {
-            if let Some(left) = before.count.filter(|&left| left >= 2) {
-                assert_eq!(st.count_left, left - 1, "the countdown counts down");
-            }
-        }
+        Action::Tick => match before.count {
+            Some(1) => assert!(
+                st.count_window.is_null() && st.recording.is_some(),
+                "the countdown ends in a recording"
+            ),
+            Some(left) => assert_eq!(st.count_left, left - 1, "the countdown counts down"),
+            None => {}
+        },
         Action::CountClick if before.count.is_some() => {
             assert!(
                 st.count_window.is_null() && !st.active,
@@ -290,6 +338,11 @@ pub(super) fn contract(
         }
         Action::System(which) => {
             assert_eq!(st.active, before.active, "{which:?} keeps the snip");
+            assert_eq!(
+                st.recording.is_some(),
+                before.recording,
+                "{which:?} keeps the recording"
+            );
             assert_eq!(
                 session.is_some(),
                 before.session.is_some(),

@@ -8,16 +8,21 @@
 //! 4. ツールバーが見えているのは、書き込み中でない撮影中か、残す設定で開いたまま待機している
 //!    ときに限り、そのときは必ず見えている。開いたままなのは、残す設定のときだけ。
 //! 5. マウスをつかむのは、範囲を選んでいる・線を描いている・消しゴムでなぞっている間だけ。
-//!    ボタンを離した後には、どれも残らない。撮影していなければつかまない（`GetCapture`）。
+//!    書き込み中は、描いている途中の Ctrl+Z・Ctrl+Y で線を確定した後も、離すまではつかんだまま
+//!    でよい（その後は離すまで何もしない。markup/tests/keys.rs の表）。ボタンを離した後には、どれも
+//!    残らない。撮影していなければつかまない（`GetCapture`）。
 //! 6. 待機に戻った後は、選んでいる範囲、窓の強調、画面の写しが残らない。
-//! 7. 録画は始まらず、カウントダウンは 3 から 1 の間で、撮影と同時には出ない。
+//! 7. カウントダウンは 3 から 1 の間で、撮影と同時には出ない。録画はカウントダウンの最後の刻みで
+//!    だけ始まり、録画中は枠と表示が出て、どちらも画面の写しから外れている（recording.rs）。
 //! 8. 撮影中は通知を出さない。出ている通知のウィンドウは生きている。
-//! 9. 待機中は、撮影のために隠した自分のウィンドウをすべて戻している。
+//! 9. 待機中（撮影、カウントダウン、録画のどれでもない）は、撮影のために隠した自分のウィンドウを
+//!    すべて戻している。
 //! 10. モード、画像と録画、書き込みのオン・オフは、それを選ぶ操作でだけ変わり、書き込みの
 //!     オン・オフは保存してある。外した設定（遅延、フレームレート）は初期値のまま。
 //! 11. ダイアログ（失敗の知らせ）は出ず、メニューは選んだキーで閉じる。シェルに開かせるのは
 //!     テストのフォルダーの中のものだけ。
-//! 12. 届いた画像の数は確定の操作の数と合う（sinks.rs）。それ以外の手では何も届かない。
+//! 12. 届いた画像の数は確定の操作の数と合う（sinks.rs）。録画を止めた手では、仕上がった録画が
+//!     設定どおりに届く（recording.rs）。それ以外の手では何も届かない。
 //! 13. 待機に戻るたびの GDI と USER のオブジェクトは、上限を超えて増えない。ケースを重ねても
 //!     増え続けない（monkey.rs: どの状態と操作にも届いた後のケースが残す GDI の合計と、
 //!     片付けた後の USER の数）。
@@ -32,7 +37,7 @@ use super::*;
 mod contract;
 use contract::contract;
 
-/// 不変条件 1〜10。
+/// 不変条件 1〜10（7 の録画の部分は recording.rs）。
 pub(super) fn invariants(world: &World) {
     let st = s();
     // SAFETY: the state belongs to this thread.
@@ -66,8 +71,9 @@ pub(super) fn invariants(world: &World) {
     );
     let drawing = session.is_some_and(|look| look.drawing || look.erasing);
     if capture == st.overlay && !capture.is_null() {
+        let settled = session.is_some() && world.held;
         assert!(
-            st.active && (st.dragging || drawing),
+            st.active && (st.dragging || drawing || settled),
             "the overlay holds the mouse only while something is being dragged"
         );
     }
@@ -102,10 +108,7 @@ pub(super) fn invariants(world: &World) {
             "no copy of the screen is kept between snips"
         );
     }
-    assert!(
-        st.recording.is_none() && st.record_window.is_null() && st.record_frame.is_null(),
-        "no recording starts"
-    );
+    super::recording::invariants(world);
     if count {
         // SAFETY: plain window query.
         assert!(
@@ -140,7 +143,7 @@ pub(super) fn invariants(world: &World) {
             "the notification window is alive"
         );
     }
-    if !st.active && !count {
+    if !st.active && !count && st.recording.is_none() {
         assert!(
             st.hidden.is_empty(),
             "our hidden windows are back after the snip"
@@ -193,7 +196,10 @@ pub(super) fn after_step(world: &mut World, scene: &Scene, before: &Snapshot, ac
 fn objects(world: &mut World) {
     let st = s();
     // SAFETY: the state belongs to this thread.
-    let quiet = !st.active && st.count_window.is_null() && unsafe { !toast::visible() };
+    let quiet = !st.active
+        && st.count_window.is_null()
+        && st.recording.is_none()
+        && unsafe { !toast::visible() };
     if !quiet || world.held || world.delivered == 0 {
         return;
     }

@@ -31,13 +31,17 @@ pub(super) struct Scene {
     menu_filter: HHOOK,
 }
 
-/// メニューの中のループが読むメッセージのうち、本物のマウスとキーボードの入力を捨てる。
-/// トレイのメニューは本物のマウスの位置に開くので、マウスが動くと、テストが積んだキーより先に
-/// その下の項目が選ばれてしまう。テストが積んだキーは窓のないメッセージなので通る。
+/// メニューの中のループが読むメッセージのうち、本物のマウスとキーボードの入力と、本物の時計で
+/// 来るこのアプリのタイマーを捨てる（`drive::pump` と同じ）。トレイのメニューは本物のマウスの
+/// 位置に開くので、マウスが動くと、テストが積んだキーより先にその下の項目が選ばれてしまう。
+/// テストが積んだキーは窓のないメッセージなので通る。
 unsafe extern "system" fn filter_menu_input(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     const MSGF_MENU: i32 = 2;
-    if code == MSGF_MENU && lp != 0 && drive::device_input(&*(lp as *const MSG)) {
-        return 1;
+    if code == MSGF_MENU && lp != 0 {
+        let message = &*(lp as *const MSG);
+        if drive::device_input(message) || drive::real_timer(message) {
+            return 1;
+        }
     }
     CallNextHookEx(null_mut(), code, wp, lp)
 }
@@ -310,7 +314,8 @@ impl Drop for Sentry {
 }
 
 /// 設定ウィンドウが書くような、無作為な設定。届く操作のうち、テストの外に出るものだけは固定する:
-/// 名前を付けて保存のダイアログは開かず（ask）、録画はカウントダウンを経る（countdown）。
+/// 名前を付けて保存のダイアログは開かず（ask）、録画はカウントダウンを経て（countdown）、音は録らない
+/// （mic、system_audio。録音はマイクと出力の機器しだいで、別のテストが確かめる）。
 /// 保存先はサンドボックスのまま変えない。外した設定（遅延、フレームレート）も書き、使われない
 /// ことを確かめる。
 pub(super) fn randomize(rng: &mut Rng, settings: &mut Settings) {
@@ -331,8 +336,8 @@ pub(super) fn randomize(rng: &mut Rng, settings: &mut Settings) {
     settings.outline = rng.chance(0.3);
     settings.outline_color = rng.below(annotate::COLORS.len());
     settings.outline_width = rng.below(annotate::OUTLINE_WIDTHS.len());
-    settings.mic = rng.chance(0.5);
-    settings.system_audio = rng.chance(0.5);
+    settings.mic = false;
+    settings.system_audio = false;
     settings.app_audio = rng.chance(0.5);
     settings.copy_video = rng.chance(0.5);
     settings.save_video = rng.chance(0.5);

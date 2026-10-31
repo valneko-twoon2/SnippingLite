@@ -1,21 +1,29 @@
-//! モンキーテスト: トレイ、オーバーレイ、ツールバー、書き込みのバー、通知、カウントダウンに、
-//! 実際に届く操作を無作為な順で送り、1 手ごとに不変条件を確かめる。本物の状態とウィンドウを
-//! `Desk` で動かし、テストがメッセージループとマウスとキーボードの役をする（本物のマウスと
-//! キーボードには触れない）。
+//! モンキーテスト: トレイ、オーバーレイ、ツールバー、書き込みのバー、通知、カウントダウン、
+//! 録画中の表示に、実際に届く操作を無作為な順で送り、1 手ごとに不変条件を確かめる。本物の状態と
+//! ウィンドウを `Desk` で動かし、テストがメッセージループとマウスとキーボードと時計の役をする
+//! （本物のマウスのボタンとキーボードには触れない）。
 //!
 //! 操作と重みは `actions.rs`、送り方は `drive.rs`、不変条件と操作ごとの結果は `oracle.rs`、
-//! 届いた画像の数え方は `sinks.rs`、的のウィンドウ・設定と履歴の代わり・ダイアログの見張りは
-//! `scene.rs` にある。
+//! 届いた画像の数え方は `sinks.rs`、録画の確かめは `recording.rs`、的のウィンドウ・設定と履歴の
+//! 代わり・ダイアログの見張りは `scene.rs` にある。
+//!
+//! 同じシードからは同じ手順になるように、手の速さや本物の時計と画面で決まるものを除く:
+//! - 本物の時計で来るこのアプリのタイマー（通知を滑らせる・閉じる、ツールバーを上げ直す、
+//!   カウントダウン、録画の表示）は流さず（`drive::real_timer`）、テストが WM_TIMER を送る。
+//!   通知の滑りは、滑り始めてからたった時間をテストが決めてから送る（`toast::probe::age_slide`）。
+//! - カーソルの位置（ツールバーを出すモニター、画面の倍率、窓の強調が決まる）は、ケースの初めに
+//!   プライマリモニターの真ん中へ置き、テストの終わりに元へ戻す。
 //!
 //! 送らない操作、無害にしてから送る操作:
-//! - 本物の録画: 設定のカウントダウンを常にオンで書き、出てきたカウントダウンの 1 秒のタイマーは
-//!   すぐ止める。テストが送る刻みは残りが 2 以上のときだけなので、録画は始まらない。
+//! - 本物の録画: 設定のカウントダウンを常にオンで書く。カウントダウンの 1 秒のタイマーはすぐ止め、
+//!   テストが刻みを送る。最後の刻みで本物の録画が始まる（音声は録らない設定にする）。
 //! - 名前を付けて保存のダイアログ: 「保存時にファイル名を指定する」を常にオフで書く。
 //! - 別のプロセス: 設定と履歴は、隠れた代わりのウィンドウ（`stub_window`）を見つけて前に出すだけ
 //!   になる。About、通知から開くファイル、プレイヤーは、テストではシェルに頼まず記録だけする
 //!   （`imaging::shell_open` と `launch_player` の継ぎ目）。About のページは一時フォルダーに書くので、
 //!   TMP と TEMP をサンドボックスに向ける。
 //! - 終了（TRAY_EXIT）: プロセスごと終わり、続きの手がなくなる（既存のテストが確かめる）。
+//!   録画中にケースが終わるときだけ、最後に送って、終了が録画をファイルに仕上げることを確かめる。
 //! - ツールバーの本物のドラッグ: DefWindowProc の移動のループは本物のマウスを待つので、
 //!   ヒットテストと、ループが送る WM_ENTERSIZEMOVE・位置の変更・WM_EXITSIZEMOVE を送る。
 //! - ほかのアプリのウィンドウ: ウィンドウを選ぶ点は、テストが出した的の中だけにする。
@@ -39,6 +47,7 @@ use std::{
 mod actions;
 mod drive;
 mod oracle;
+mod recording;
 mod scene;
 mod sinks;
 mod tally;
@@ -94,6 +103,10 @@ struct World {
     pub last: Sinks,
     /// 届いた画像の数。
     pub delivered: usize,
+    /// 録画中なら、カウントダウンの最後の刻みで決まったこと。
+    pub recording: Option<recording::Started>,
+    /// 仕上がった録画の数。
+    pub recorded: usize,
     /// タイマーを止めたカウントダウンのウィンドウ。
     pub countdown: HWND,
     /// 最初の待機の GDI と USER のオブジェクトの数。
@@ -117,6 +130,7 @@ struct Snapshot {
     pub toast: Option<toast::probe::Look>,
     /// カウントダウンの残り。
     pub count: Option<i32>,
+    pub recording: bool,
     pub held: bool,
     pub last: actions::P,
     pub dragging: bool,
@@ -147,6 +161,7 @@ impl Snapshot {
             session,
             toast,
             count: (!st.count_window.is_null()).then_some(st.count_left),
+            recording: st.recording.is_some(),
             held: world.held,
             last: world.last_point,
             dragging: st.dragging,
@@ -165,6 +180,8 @@ impl Snapshot {
     fn describe(&self) -> String {
         let state = if let Some(left) = self.count {
             format!("countdown {left}")
+        } else if self.recording {
+            "recording".into()
         } else if self.session.is_some() {
             "marking up".into()
         } else if self.active {
@@ -190,7 +207,9 @@ impl Snapshot {
     fn states(&self) -> Vec<&'static str> {
         let st = s();
         let mut states = Vec::new();
-        if !self.active && self.count.is_none() {
+        if self.recording {
+            states.push("recording");
+        } else if !self.active && self.count.is_none() {
             states.push(if self.toolbar.is_some() {
                 "idle with the kept toolbar"
             } else {
@@ -236,6 +255,9 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
     // ケースごとに Desk を作り直すが、番は初めに 1 度だけ取って持ち続ける。並べて走るほかの
     // テストがケースの間に割り込まず、その錠を待つ時間がケースの時間（`rng::CASE_LIMIT`）に入らない。
     let mut turn = Some(Turn::take());
+    let cursor = Cursor::pin();
+    // 仕上がった録画の数と、いちばん長くかかったケースの時間（上限は `rng::CASE_LIMIT`）。
+    let (mut recordings, mut slowest) = (0, Duration::ZERO);
     let started = Instant::now();
     let cases = rng::check(NAME, CASES, |rng| {
         let seed = rng::seed().wrapping_add(case);
@@ -246,9 +268,18 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
         );
         case += 1;
         let warmed = tally.warmed();
-        let (count, delivered, left) = run_case(rng, &mut tally, &mut turn);
+        cursor.center();
+        let begun = Instant::now();
+        let (count, delivered, recorded, left) = run_case(rng, &mut tally, &mut turn);
+        slowest = slowest.max(begun.elapsed());
         steps += count;
         images += delivered;
+        // プロセスで初めての録画は、1 度だけ作るオブジェクトを残す（recording.rs）。片付けた後の
+        // USER のオブジェクトは、そのケースから数え直す。
+        if recordings == 0 && recorded > 0 {
+            user_after = None;
+        }
+        recordings += recorded;
         // ケースを重ねても、オブジェクトは増え続けない。1 ケースの撮影は数回なので、1 回に 1 つの
         // 漏れは 1 ケースでは見えにくい。ケースが残した GDI のオブジェクトを足して、全体で上限を
         // 見る。プロセスで 1 度だけ作るものがそろうまで（どの状態と操作にも届くまで）は数えない。
@@ -269,19 +300,57 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
             "USER objects after a case went from {first} to {user}"
         );
     });
+    drop(cursor);
     eprintln!(
-        "{NAME}: {cases} cases, {steps} steps, {images} images delivered in {:?}; \
-         the last {counted} cases left {gdi} GDI objects",
+        "{NAME}: {cases} cases, {steps} steps, {images} images delivered, {recordings} recordings \
+         finished in {:?} (the slowest case {slowest:?}); the last {counted} cases left {gdi} GDI \
+         objects",
         started.elapsed()
     );
     tally.finish(steps);
 }
 
-/// 1 ケース: 新しいトレイを無作為な設定で始め、手を送り、最後に待機へ戻す。
-/// (手数, 届いた画像の数, 始めから終わりまでに増えた GDI のオブジェクト) を返す。
+/// カーソルの位置。ツールバーを出すモニター、画面の倍率、撮影を始めたときの窓の強調はカーソルの
+/// 位置で決まるので、ケースの初めに決まった所（プライマリモニターの真ん中）へ置く。テストの前の
+/// 位置を覚えておき、終わりに戻す。
+struct Cursor(POINT);
+
+impl Cursor {
+    fn pin() -> Cursor {
+        let mut was = POINT { x: 0, y: 0 };
+        // SAFETY: a plain cursor query.
+        unsafe { GetCursorPos(&mut was) };
+        Cursor(was)
+    }
+
+    fn center(&self) {
+        // SAFETY: plain metric queries and a cursor move.
+        unsafe {
+            SetCursorPos(
+                GetSystemMetrics(SM_CXSCREEN) / 2,
+                GetSystemMetrics(SM_CYSCREEN) / 2,
+            )
+        };
+    }
+}
+
+impl Drop for Cursor {
+    fn drop(&mut self) {
+        // SAFETY: a plain cursor move.
+        unsafe { SetCursorPos(self.0.x, self.0.y) };
+    }
+}
+
+/// 1 ケース: 新しいトレイを無作為な設定で始め、手を送り、最後に待機へ戻す。録画中に終わるときは、
+/// 終了させて録画が仕上がることを確かめる。
+/// (手数, 届いた画像の数, 仕上がった録画の数, 始めから終わりまでに増えた GDI のオブジェクト) を返す。
 /// 始めはトレイと舞台を作る前、終わりは片付けた後に数える。トレイの起動と片付けが返さない
 /// もの（起動のたびの窓のクラスの登録など）も、ケースが残したものに入る。
-fn run_case(rng: &mut Rng, tally: &mut Tally, turn: &mut Option<Turn>) -> (usize, usize, i64) {
+fn run_case(
+    rng: &mut Rng,
+    tally: &mut Tally,
+    turn: &mut Option<Turn>,
+) -> (usize, usize, usize, i64) {
     let first = gui_objects();
     let held = turn.take().expect("the turn comes back after each case");
     let mut desk = Desk::start_in(held, |settings| {
@@ -302,6 +371,8 @@ fn run_case(rng: &mut Rng, tally: &mut Tally, turn: &mut Option<Turn>) -> (usize
         markup: st.markup,
         last: Sinks::observe(&shots),
         delivered: 0,
+        recording: None,
+        recorded: 0,
         countdown: null_mut(),
         objects: None,
         sandbox: desk.sandbox.path().to_path_buf(),
@@ -328,14 +399,26 @@ fn run_case(rng: &mut Rng, tally: &mut Tally, turn: &mut Option<Turn>) -> (usize
         scene: &scene,
     };
     drive::settle(&mut hands);
-    rng.note("settled");
     let before = Snapshot::take(&world);
     oracle::after_step(&mut world, &scene, &before, &Action::Wait(0));
     assert!(!s().active, "the case ends idle");
-    let delivered = world.delivered;
+    if s().recording.is_some() {
+        // 終了は、プロセスごと終わる前に録画をファイルに仕上げる（README）。終わったトレイには
+        // もう手を送らない。
+        let mut hands = drive::Hands {
+            desk: &desk,
+            world: &mut world,
+            scene: &scene,
+        };
+        drive::exit(&mut hands);
+    }
+    rng.note(format!(
+        "settled: {} images, {} recordings",
+        world.delivered, world.recorded
+    ));
     crate::ui::set_theme_choice(config::AppTheme::System);
     drop(scene);
     *turn = Some(desk.into_turn());
     let left = gui_objects().0 as i64 - first.0 as i64;
-    (count, delivered, left)
+    (count, world.delivered, world.recorded, left)
 }

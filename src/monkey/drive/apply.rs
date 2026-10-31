@@ -3,7 +3,21 @@
 use super::*;
 
 /// 操作を送り、送り終えたらたまったメッセージ（描画、メニューのコマンド、マウスが離れた知らせ）を流す。
+/// 録画中に送った操作で録画が終わったら、届いたものを確かめる（どの操作で終わるべきかは contract.rs）。
 pub(in crate::monkey) fn apply(hands: &mut Hands, action: &Action) {
+    let recording = s().recording.is_some();
+    let flags = recording::Flags::now();
+    send(hands, action);
+    hands.after_send();
+    pump(Duration::ZERO);
+    hands.after_send();
+    if recording && s().recording.is_none() {
+        let what = format!("{action:?} while recording");
+        recording::verify_stop(hands.world, flags, false, &what);
+    }
+}
+
+fn send(hands: &mut Hands, action: &Action) {
     let st = s();
     let main = hands.desk.main;
     match action {
@@ -157,17 +171,21 @@ pub(in crate::monkey) fn apply(hands: &mut Hands, action: &Action) {
             }
         }
         &Action::ToastMenu(choice) => hands.toast_click(Spot::Menu, Some(choice)),
-        &Action::ToastTimer(timer) => {
+        Action::ToastDismiss => {
             // SAFETY: as above.
             if let Some(look) = unsafe { toast::probe::look() } {
-                hands.send(look.hwnd, WM_TIMER, timer, 0);
+                hands.send(look.hwnd, WM_TIMER, toast::probe::DISMISS_TIMER, 0);
             }
         }
-        Action::Tick => {
-            if !st.count_window.is_null() && st.count_left >= 2 {
-                hands.send(st.count_window, WM_TIMER, COUNT_TIMER, 0);
+        &Action::ToastSlide(ms) => {
+            // SAFETY: as above.
+            if let Some(look) = unsafe { toast::probe::look() } {
+                // SAFETY: as above.
+                unsafe { toast::probe::age_slide(Duration::from_millis(ms)) };
+                hands.send(look.hwnd, WM_TIMER, toast::probe::ANIMATION_TIMER, 0);
             }
         }
+        Action::Tick => hands.tick(),
         Action::CountPaint => {
             if !st.count_window.is_null() {
                 // SAFETY: the countdown window belongs to this thread.
@@ -185,12 +203,25 @@ pub(in crate::monkey) fn apply(hands: &mut Hands, action: &Action) {
                 hands.send(window, WM_LBUTTONUP, 0, lparam((10, 10)));
             }
         }
+        Action::RecordStop => hands.record_click(None),
+        &Action::RecordClick(x) => hands.record_click(Some(x)),
+        Action::RecordTick => {
+            if !st.record_window.is_null() {
+                hands.send(st.record_window, WM_TIMER, RECORD_TIMER, 0);
+            }
+        }
         &Action::System(which) => hands.system(which),
         &Action::Wait(ms) => pump(Duration::from_millis(ms)),
     }
-    hands.after_send();
+}
+
+/// 録画中にケースを終えるとき: トレイを終了させ、終了が録画を仕上げたことを確かめる。
+/// 終わったトレイには、もう手を送らない（片付けは Desk がする）。
+pub(in crate::monkey) fn exit(hands: &mut Hands) {
+    let flags = recording::Flags::now();
+    hands.send(hands.desk.main, WM_COMMAND, TRAY_EXIT, 0);
     pump(Duration::ZERO);
-    hands.after_send();
+    recording::verify_stop(hands.world, flags, true, "exiting while recording");
 }
 
 /// ケースの終わりに待機へ戻す: 押したままなら離し、撮影中なら Escape、カウントダウンは
