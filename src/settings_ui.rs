@@ -234,11 +234,21 @@ fn face_count(bytes: &[u8]) -> u32 {
     }
 }
 
+/// 文字を描くのに要るテーブル。epaint（skrifa）はこれらが欠けても panic しないが、文字の対応
+/// （cmap）がなければどの文字も見つからず、寸法（head、hhea、hmtx、maxp）がなければ文字の幅や
+/// 大きさ、字形の数が 0 になり、文字が欠ける。
+const DRAWING_TABLES: [&[u8; 4]; 5] = [b"cmap", b"head", b"hhea", b"hmtx", b"maxp"];
+/// 字形の輪郭のテーブルの組。TrueType の glyf と loca の両方、CFF、CFF2 のどれか 1 組がそろえば
+/// よい（skrifa はこの 3 つから輪郭を読む。フェイスの印とは結びつけない）。
+const OUTLINE_TABLES: [&[&[u8; 4]]; 3] = [&[b"glyf", b"loca"], &[b"CFF "], &[b"CFF2"]];
+
 /// フェイス `index` を epaint に渡してよいか。epaint は読めないフォントで最初のフレームに panic
 /// するので、ヘッダーの数（`face_count`）を信じずに、途中で切れたファイルや壊れたファイルを
 /// 渡す前に除く。TTC は位置の表がすべてファイルに収まり（読み手は表を丸ごと読み、収まらなければ
 /// 空として扱う）、その番号の位置にフェイスの始まりがある。フェイスは TrueType か CFF の印で
-/// 始まり、テーブルの一覧と、一覧が示す各テーブル（位置と長さ）がファイルに収まる。
+/// 始まり、テーブルの一覧と、一覧が示す各テーブル（位置と長さ）がファイルに収まる。そのうえで、
+/// 描くのに要るテーブル（`DRAWING_TABLES` と `OUTLINE_TABLES` の 1 組）がそろっていないフェイスも、
+/// 文字が欠けるので壊れたものと同じに扱い、次の候補へ進む。
 fn face_fits(bytes: &[u8], index: u32) -> bool {
     face_tables_fit(bytes, index).is_some()
 }
@@ -273,15 +283,31 @@ fn face_tables_fit(bytes: &[u8], index: u32) -> Option<()> {
         return None;
     }
     let tables = number(start.checked_add(4)?, 2)?;
+    // 一覧の各行の（タグ, 位置, 長さ）。
+    let mut records = Vec::with_capacity(tables);
     for table in 0..tables {
         let record = start.checked_add(12 + 16 * table)?;
+        let tag = bytes.get(record..record.checked_add(4)?)?;
         let offset = number(record.checked_add(8)?, 4)?;
         let length = number(record.checked_add(12)?, 4)?;
         if offset.checked_add(length)? > bytes.len() {
             return None;
         }
+        records.push((tag, offset, length));
     }
-    Some(())
+    // 読み手（read-fonts）は同じタグの最初の行を使い、位置が 0 の行は無いものとして扱う。
+    // 長さが 0 のテーブルも中身を読めないので、無いものとみなす。
+    let has = |name: &[u8; 4]| {
+        records
+            .iter()
+            .find(|(tag, _, _)| *tag == name.as_slice())
+            .is_some_and(|&(_, offset, length)| offset != 0 && length != 0)
+    };
+    let drawn = DRAWING_TABLES.iter().all(|name| has(name));
+    let outlined = OUTLINE_TABLES
+        .iter()
+        .any(|set| set.iter().all(|name| has(name)));
+    (drawn && outlined).then_some(())
 }
 
 /// Applies the chosen app theme to `ui::theme()` and to the egui context.
