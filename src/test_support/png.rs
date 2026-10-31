@@ -1,5 +1,9 @@
-//! 壊れた画像を作るための PNG の部品。チャンクの分解と組み立て、検査値（CRC-32 と Adler-32）、
-//! 無圧縮（stored）の deflate で包んだ 8 ビット RGBA の PNG の書き出し。
+//! 壊れた画像のファジングのための PNG の部品。チャンクの分解と組み立て、検査値（CRC-32 と
+//! Adler-32）、無圧縮（stored）の deflate で包んだ 8 ビット RGBA の PNG の書き出し、そして PNG の
+//! 仕様（ISO/IEC 15948）に沿った参照の読み取り。参照の読み取りは GDI+ とは別の実装で、変異した
+//! 入力がどの段（ヘッダー、チャンク、展開、画素）まで正しいかと、正しいときの画素を決める。
+
+use super::rng::Rng;
 
 /// PNG の署名。
 pub const SIGNATURE: [u8; 8] = *b"\x89PNG\r\n\x1a\n";
@@ -55,11 +59,21 @@ impl Chunk {
     pub fn seal(&mut self) {
         self.crc = crc32(&[&self.kind[..], &self.data].concat());
     }
+
+    pub fn sealed(&self) -> bool {
+        self.crc == crc32(&[&self.kind[..], &self.data].concat())
+    }
+
+    /// 種類の 1 文字目が大文字なら必須のチャンク、小文字なら補助のチャンク（仕様 5.4）。
+    pub fn critical(&self) -> bool {
+        self.kind[0] & 0x20 == 0
+    }
 }
 
-/// 署名の後ろを分けたチャンク。
+/// 署名の後ろを分けたチャンクと、どのチャンクにもならずに残ったバイト数。
 pub struct Parsed {
     pub chunks: Vec<Chunk>,
+    pub leftover: usize,
 }
 
 /// 署名を確かめ、長さの欄に従ってチャンクを順に取り出す。長さがファイルの外を指したら、そこで止める。
@@ -78,7 +92,10 @@ pub fn parse(bytes: &[u8]) -> Option<Parsed> {
         });
         rest = &rest[12 + length..];
     }
-    Some(Parsed { chunks })
+    Some(Parsed {
+        chunks,
+        leftover: rest.len(),
+    })
 }
 
 /// 署名とチャンクを並べてファイルにする（検査値は各チャンクが持つ値のまま）。
@@ -118,6 +135,19 @@ impl Header {
         }
     }
 
+    pub fn read(data: &[u8]) -> Option<Header> {
+        let data: &[u8; 13] = data.try_into().ok()?;
+        Some(Header {
+            width: u32::from_be_bytes(data[0..4].try_into().unwrap()),
+            height: u32::from_be_bytes(data[4..8].try_into().unwrap()),
+            depth: data[8],
+            color: data[9],
+            compression: data[10],
+            filter: data[11],
+            interlace: data[12],
+        })
+    }
+
     pub fn bytes(&self) -> Vec<u8> {
         let mut out = self.width.to_be_bytes().to_vec();
         out.extend(self.height.to_be_bytes());
@@ -129,6 +159,23 @@ impl Header {
             self.interlace,
         ]);
         out
+    }
+
+    /// 仕様が許す値か。幅と高さは 1 〜 2^31 - 1、色の種類とビット深度は表 11.1 の組、
+    /// 圧縮とフィルターの方式は 0 だけ、インターレースは 0 か 1。
+    pub fn valid(&self) -> bool {
+        let depths: &[u8] = match self.color {
+            0 => &[1, 2, 4, 8, 16],
+            3 => &[1, 2, 4, 8],
+            2 | 4 | 6 => &[8, 16],
+            _ => &[],
+        };
+        (1..=i32::MAX as u32).contains(&self.width)
+            && (1..=i32::MAX as u32).contains(&self.height)
+            && depths.contains(&self.depth)
+            && self.compression == 0
+            && self.filter == 0
+            && self.interlace <= 1
     }
 }
 
@@ -143,6 +190,24 @@ pub struct Picture {
 }
 
 impl Picture {
+    /// 1 〜 6 画素四方の絵。アルファは透明、不透明、その間を混ぜる。
+    pub fn random(rng: &mut Rng) -> Picture {
+        let (width, height) = (rng.range(1u32..=6), rng.range(1u32..=6));
+        let mut rgba = Vec::new();
+        for _ in 0..width * height {
+            rgba.extend(rng.bytes(3));
+            let any = rng.next_u64() as u8;
+            rgba.push(*rng.pick(&[0, 255, 255, 1, 128, any]));
+        }
+        let filters = (0..height).map(|_| rng.range(0u8..=4)).collect();
+        Picture {
+            width,
+            height,
+            rgba,
+            filters,
+        }
+    }
+
     /// フィルターをかけた走査線（各行の先頭にフィルターの種類のバイト）。
     pub fn raw(&self) -> Vec<u8> {
         let row = self.width as usize * 4;
@@ -217,3 +282,77 @@ pub fn stored(raw: &[u8], block: usize) -> Vec<u8> {
     out.extend(adler32(raw).to_be_bytes());
     out
 }
+
+/// stored ブロックだけでできた zlib ストリームを展開する。ヘッダー、ブロックの長さとその補数、
+/// 最後のブロックの印、Adler-32、余りのバイトのどれかが仕様に合わなければ `None`。圧縮された
+/// ブロックも、参照では展開しないので `None`。
+pub fn unstore(stream: &[u8]) -> Option<Vec<u8>> {
+    let (&cmf, &flg) = (stream.first()?, stream.get(1)?);
+    if cmf & 0x0f != 8
+        || cmf >> 4 > 7
+        || !(cmf as u16 * 256 + flg as u16).is_multiple_of(31)
+        || flg & 0x20 != 0
+    {
+        return None;
+    }
+    let mut at = 2;
+    let mut out = Vec::new();
+    for _ in 0..stream.len() {
+        let head = *stream.get(at)?;
+        if head & 0b110 != 0 {
+            return None;
+        }
+        let length = u16::from_le_bytes(stream.get(at + 1..at + 3)?.try_into().unwrap());
+        let complement = u16::from_le_bytes(stream.get(at + 3..at + 5)?.try_into().unwrap());
+        if length != !complement {
+            return None;
+        }
+        out.extend(stream.get(at + 5..at + 5 + length as usize)?);
+        at += 5 + length as usize;
+        if head & 1 == 1 {
+            let check = u32::from_be_bytes(stream.get(at..at + 4)?.try_into().unwrap());
+            return (check == adler32(&out) && at + 4 == stream.len()).then_some(out);
+        }
+    }
+    None
+}
+
+/// 8 ビット RGBA の走査線からフィルターを外す。長さが幅と高さに合わないか、種類が 0 〜 4 の外なら `None`。
+pub fn unfilter(raw: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let row = (width as usize).checked_mul(4)?;
+    if (row + 1).checked_mul(height as usize)? != raw.len() {
+        return None;
+    }
+    let mut out: Vec<u8> = Vec::with_capacity(row * height as usize);
+    for (y, line) in raw.chunks_exact(row + 1).enumerate() {
+        if line[0] > 4 {
+            return None;
+        }
+        for x in 0..row {
+            let a = if x >= 4 { out[y * row + x - 4] } else { 0 };
+            let b = if y > 0 { out[(y - 1) * row + x] } else { 0 };
+            let c = if x >= 4 && y > 0 {
+                out[(y - 1) * row + x - 4]
+            } else {
+                0
+            };
+            out.push(line[1 + x].wrapping_add(predict(line[0], a, b, c)));
+        }
+    }
+    Some(out)
+}
+
+/// RGBA と BGRA を入れ替える（どちらの向きにも使える）。
+pub fn swap_red_blue(pixels: &[u8]) -> Vec<u8> {
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .flat_map(|p| [p[2], p[1], p[0], p[3]])
+        .collect()
+}
+
+mod judge;
+mod mutate;
+pub use judge::*;
+pub use mutate::*;

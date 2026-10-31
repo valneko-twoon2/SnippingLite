@@ -126,6 +126,7 @@ fn june_15(hour: u16, minute: u16) -> u128 {
 }
 
 mod browse;
+mod damaged;
 mod edit;
 mod gallery;
 mod window;

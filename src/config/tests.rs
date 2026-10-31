@@ -435,4 +435,5 @@ fn a_chosen_folder_wins_and_the_defaults_are_per_user() {
 }
 
 mod compat;
+mod damaged;
 mod properties;
