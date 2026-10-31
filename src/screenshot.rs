@@ -273,14 +273,23 @@ unsafe fn save_image(
 }
 pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
     if state().mode == MODE_WINDOW {
-        let image =
-            window_capture::snapshot(window_capture::Target::new(state().hover_hwnd, false));
+        let target = window_capture::Target::new(state().hover_hwnd, false);
+        let image = window_capture::snapshot(target);
         match image {
             Ok(image) if markup::wanted() => {
-                let at = POINT {
-                    x: rect.left,
-                    y: rect.top,
-                };
+                // 切り取った窓は、窓のあった所に残す。強調の枠（`rect`）は画面の端で切り詰めて
+                // あるが、画像ははみ出した分も含むので、窓の左上に置く。
+                let origin = state().origin;
+                let at = target.bounds().map_or(
+                    POINT {
+                        x: rect.left,
+                        y: rect.top,
+                    },
+                    |bounds| POINT {
+                        x: bounds.left - origin.x,
+                        y: bounds.top - origin.y,
+                    },
+                );
                 markup::begin(at, image.pixels, image.width, image.height, false);
             }
             Ok(image) => {

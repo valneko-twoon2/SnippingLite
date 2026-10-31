@@ -77,9 +77,13 @@ pub fn video_folder() -> std::io::Result<PathBuf> {
 /// 保存しない録画を置く一時フォルダー。クリップボードから貼り付けられるよう 1 日は残し、
 /// それより古い録画は次の録画を始めるときに消す。
 pub fn temporary_folder() -> std::io::Result<PathBuf> {
-    let folder = std::env::temp_dir()
-        .join("Snipping Lite")
-        .join("Recordings");
+    temporary_folder_in(&std::env::temp_dir(), std::time::SystemTime::now())
+}
+
+/// `base` の中の録画用の一時フォルダーを作り、`now` の時点で 1 日より古いファイルを消す。
+/// テストが本物の一時フォルダーと時計に触れずに済むよう、場所と時刻を受け取る。
+fn temporary_folder_in(base: &Path, now: std::time::SystemTime) -> std::io::Result<PathBuf> {
+    let folder = base.join("Snipping Lite").join("Recordings");
     std::fs::create_dir_all(&folder)?;
     let day = std::time::Duration::from_secs(24 * 60 * 60);
     for entry in std::fs::read_dir(&folder)?.flatten() {
@@ -87,7 +91,7 @@ pub fn temporary_folder() -> std::io::Result<PathBuf> {
             .metadata()
             .and_then(|m| m.modified())
             .ok()
-            .and_then(|time| time.elapsed().ok())
+            .and_then(|time| now.duration_since(time).ok())
             .is_some_and(|age| age > day);
         if stale {
             let _ = std::fs::remove_file(entry.path());
