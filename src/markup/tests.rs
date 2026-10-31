@@ -130,6 +130,38 @@ fn the_bar_goes_below_the_area_then_above_then_inside() {
 }
 
 #[test]
+fn the_bar_stays_off_the_taskbar_when_the_area_is_on_it() {
+    // 上のタスクバー（高さ 48）: 作業領域は (0, 48)-(1920, 1080)。タスクバーの上だけを切り取ると、
+    // 範囲の下（30 + 12 = 42）はタスクバーにかかるので、作業領域の上端から間隔だけ下（48 + 12）。
+    let top = rect(0, 48, 1920, 1080);
+    assert_eq!(place(rect(500, 0, 900, 30), top, 1.0).y, 60);
+    // 範囲の下端がちょうど作業領域の上端（下端は含まない）でも同じ。
+    assert_eq!(place(rect(500, 0, 900, 48), top, 1.0).y, 60);
+    // 下のタスクバー: 作業領域は (0, 0)-(1920, 1032)。時計のあたり（1050〜1075）を切り取ると、
+    // 範囲の上（1050 - 12 - 48 = 990、下端 1038）はタスクバーにかかるので、1032 - 12 - 48。
+    let bottom = rect(0, 0, 1920, 1032);
+    assert_eq!(place(rect(1700, 1050, 1900, 1075), bottom, 1.0).y, 972);
+    // 範囲が作業領域の中から始まってタスクバーにかかるときは、今までどおり範囲の上。
+    assert_eq!(
+        place(rect(500, 900, 900, 1075), bottom, 1.0).y,
+        900 - 12 - 48
+    );
+    // 左のタスクバー（幅 48）: 中央に置くと左へはみ出すので、作業領域の左端から間隔だけ右。
+    let left = rect(48, 0, 1920, 1080);
+    let at = place(rect(0, 500, 40, 600), left, 1.0);
+    assert_eq!((at.x, at.y), (60, 612));
+    // 右のタスクバー: 作業領域の右端（1872）から間隔とバーの幅だけ左。
+    let right = rect(0, 0, 1872, 1080);
+    assert_eq!(
+        place(rect(1880, 500, 1920, 600), right, 1.0).x,
+        1872 - 12 - 432
+    );
+    // 拡大率 2: 間隔 24、高さ 96。上のタスクバー（96）の上の範囲は、96 + 24 から。
+    let top = rect(0, 96, 3840, 2160);
+    assert_eq!(place(rect(1000, 0, 1800, 60), top, 2.0).y, 120);
+}
+
+#[test]
 fn the_toggle_survives_a_restart_and_ignores_recordings() {
     let _sandbox = Sandbox::new();
     assert!(!config::load_markup(), "off until it is turned on");
