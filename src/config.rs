@@ -216,11 +216,13 @@ fn index(text: &str, key: &str, len: usize, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+/// 手で書き足した前後の空白を落とす。落とすのは ASCII の空白（半角の空白、タブ、CR など）だけにする。
+/// Windows は名前の末尾の全角空白や NBSP を残すので、それで終わるフォルダーも選べる。
 fn value(text: &str, key: &str) -> String {
     text.lines()
         .find_map(|s| s.strip_prefix(key))
         .unwrap_or_default()
-        .trim()
+        .trim_ascii()
         .to_owned()
 }
 
