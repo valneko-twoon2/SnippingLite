@@ -6,6 +6,7 @@
 //! |---|---|---|---|
 //! | 四角形 | 選んだ範囲 | 付く | 既存 `a_marked_up_snip_is_drawn_on_undone_erased_and_captured` |
 //! | ウィンドウ | 対象のウィンドウの範囲。上に重なった窓は入らない | 付く | `a_window_snip_is_marked_up_over_the_window_alone` |
+//! | ウィンドウ（画面の左からはみ出す） | はみ出した分も含めて、窓のあった所 | - | `a_window_hanging_off_the_left_of_the_screen_is_marked_up_where_it_is` |
 //! | 全画面 | 画面全体。バーは画面の内側 | 付く | `a_full_screen_snip_is_marked_up_over_the_whole_screen` |
 //! | 自由形式 | 形を囲む範囲。形の外は透明 | 付かない | `a_freeform_snip_is_marked_up_as_a_shape_without_a_border` |
 //! | 録画（どのモードでも） | 書き込まない | - | `a_recording_selection_is_not_marked_up` |
@@ -112,6 +113,68 @@ fn a_window_snip_is_marked_up_over_the_window_alone() {
         (bounds.right - bounds.left, bounds.bottom - bounds.top)
     );
     assert_eq!(pixel(&pixels, width, 0, 0), border(), "the border is drawn");
+    drop(fixture);
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn a_window_hanging_off_the_left_of_the_screen_is_marked_up_where_it_is() {
+    let desk = Desk::start_with(|settings| {
+        settings.copy = false;
+        settings.notify = false;
+    });
+    let fixture = CoveredWindow::new();
+    // SAFETY: the windows belong to this test; plain monitor queries.
+    unsafe {
+        // いちばん左の画面の左端から 100 ピクセルはみ出させる。
+        let left = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let edge = POINT {
+            x: left,
+            y: GetSystemMetrics(SM_YVIRTUALSCREEN),
+        };
+        GetMonitorInfoW(MonitorFromPoint(edge, MONITOR_DEFAULTTONEAREST), &mut info);
+        let top = info.rcMonitor.top + 100;
+        SetWindowPos(
+            fixture.target,
+            HWND_TOP,
+            left - 100,
+            top,
+            320,
+            240,
+            SWP_NOACTIVATE,
+        );
+        DwmFlush();
+    }
+    begin(&desk);
+    unsafe { set_mode(MODE_WINDOW) };
+    let bounds = Target::new(fixture.target, false).bounds().unwrap();
+    let origin = s().origin;
+    assert!(bounds.left < origin.x, "the window hangs off the screen");
+    // ポインターの下の窓は机の上の様子で変わるので、窓を選んだことにする。強調の枠は、
+    // ポインターで選んだときと同じく、画面の端で切り詰めたもの。
+    s().hover_hwnd = fixture.target;
+    s().hover_window = Some(rect(
+        0,
+        bounds.top - origin.y,
+        bounds.right - origin.x,
+        bounds.bottom - origin.y,
+    ));
+    desk.mouse(s().overlay, WM_LBUTTONDOWN, 10, bounds.top - origin.y + 10);
+    assert_marking_up();
+    // 切り取った窓は、はみ出した分も含めて、窓のあった所に残る（左上を画面の端に詰めない）。
+    let session = session();
+    assert_eq!(
+        edges(session.area),
+        (
+            bounds.left - origin.x,
+            bounds.top - origin.y,
+            bounds.right - origin.x,
+            bounds.bottom - origin.y
+        ),
+        "the snip stays where the window is"
+    );
     drop(fixture);
 }
 
