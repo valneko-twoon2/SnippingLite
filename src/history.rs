@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{config, imaging, ui};
+use crate::{config, imaging, staging, ui};
 
 const THUMB_WIDTH: i32 = 320;
 const THUMB_HEIGHT: i32 = 200;
@@ -59,14 +59,22 @@ fn prune_in(folder: &Path, limit: usize) {
     }
 }
 
+/// 画像を先に消すので、その時点で項目は一覧から消える。縮小画像を消す前に止まっても、
+/// 残った縮小画像は次の `tidy` が消す。
 pub fn remove_entry(entry: &Entry) {
     let _ = fs::remove_file(&entry.image);
+    staging::step("picture removed", &entry.image);
     let _ = fs::remove_file(&entry.thumbnail);
+    staging::step("thumbnail removed", &entry.thumbnail);
 }
 
+/// 履歴をすべて消す。前に止まったプロセスが残した書きかけや縮小画像も消す。
 pub fn clear() {
     for entry in list() {
         remove_entry(&entry);
+    }
+    if let Some(folder) = folder() {
+        tidy(&folder);
     }
 }
 
@@ -81,7 +89,32 @@ pub fn add(pixels: &[u8], width: i32, height: i32, png: Option<&Path>) -> std::i
         return Err(error);
     }
     prune_in(&folder, config::load_settings().history_limit);
+    tidy(&folder);
     Ok(())
+}
+
+/// 前に止まったプロセスが残したものを片付ける。書きかけのファイルと、画像のない縮小画像
+/// （追加や削除の途中で止まった）を消し、縮小画像のない項目には作り直す。別のプロセス（履歴の
+/// ウィンドウの消去）がちょうど追加している項目の縮小画像を消しても、次の `tidy` が作り直す。
+fn tidy(folder: &Path) {
+    staging::remove_leftovers(folder);
+    for file in fs::read_dir(folder).into_iter().flatten().flatten() {
+        let name = file.file_name();
+        let id = name
+            .to_str()
+            .and_then(|n| n.strip_suffix(".thumb.png")?.parse().ok());
+        if id.is_some_and(|id| !entry(folder, id).image.exists()) {
+            let _ = fs::remove_file(file.path());
+        }
+    }
+    for entry in list_in(folder) {
+        if !entry.thumbnail.exists() {
+            if let Some((width, height, pixels)) = imaging::decode(&entry.image) {
+                let (tw, th, small) = thumbnail(&pixels, width, height);
+                let _ = imaging::encode(&entry.thumbnail, &small, tw, th);
+            }
+        }
+    }
 }
 
 /// Replaces the pictures of an existing entry, for example after annotating it.
@@ -89,17 +122,8 @@ pub fn replace(entry: &Entry, pixels: &[u8], width: i32, height: i32) -> std::io
     store(entry, pixels, width, height, None)
 }
 
-/// Writes the full-size image and its thumbnail.
-fn store(
-    new: &Entry,
-    pixels: &[u8],
-    width: i32,
-    height: i32,
-    png: Option<&Path>,
-) -> std::io::Result<()> {
-    if !imaging::fits(pixels, width, height) {
-        return Err(imaging::bad_size());
-    }
+/// The thumbnail of a picture: its size and straight-alpha pixels, never larger than the picture.
+fn thumbnail(pixels: &[u8], width: i32, height: i32) -> (i32, i32, Vec<u8>) {
     let scale = (THUMB_WIDTH as f32 / width as f32).min(THUMB_HEIGHT as f32 / height as f32);
     let (tw, th) = if scale < 1.0 {
         (
@@ -111,12 +135,60 @@ fn store(
     };
     let mut thumbnail = ui::thumbnail(pixels, width, height, tw, th);
     unpremultiply(&mut thumbnail);
-    imaging::encode(&new.thumbnail, &thumbnail, tw, th)?;
-    // PNG encoding is the slowest step of a capture, so reuse the saved file.
-    if png.is_some_and(|png| fs::copy(png, &new.image).is_ok()) {
-        return Ok(());
+    (tw, th, thumbnail)
+}
+
+/// Writes the full-size image and its thumbnail. 両方を一時名で書き終えてから、縮小画像、画像の順に
+/// 置く。画像を置いた時点で項目になる（一覧に並ぶときには縮小画像もある）ので、途中で止まっても
+/// 壊れた項目は並ばない。置く前に止まって残った縮小画像は、次の `tidy` が消す。
+fn store(
+    new: &Entry,
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    png: Option<&Path>,
+) -> std::io::Result<()> {
+    if !imaging::fits(pixels, width, height) {
+        return Err(imaging::bad_size());
     }
-    imaging::encode(&new.image, pixels, width, height)
+    let (tw, th, small) = thumbnail(pixels, width, height);
+    let small = imaging::encode_partial(&new.thumbnail, &small, tw, th)?;
+    staging::step("thumbnail written", &new.thumbnail);
+    let picture = match write_picture(new, pixels, width, height, png) {
+        Ok(picture) => picture,
+        Err(error) => {
+            let _ = fs::remove_file(&small);
+            return Err(error);
+        }
+    };
+    staging::step("picture written", &new.image);
+    if let Err(error) = staging::commit(&small, &new.thumbnail) {
+        let _ = fs::remove_file(&picture);
+        return Err(error);
+    }
+    staging::step("thumbnail in place", &new.thumbnail);
+    staging::commit(&picture, &new.image)?;
+    staging::step("picture in place", &new.image);
+    Ok(())
+}
+
+/// 画像を一時名で書き、その名前を返す。
+fn write_picture(
+    new: &Entry,
+    pixels: &[u8],
+    width: i32,
+    height: i32,
+    png: Option<&Path>,
+) -> std::io::Result<PathBuf> {
+    // PNG encoding is the slowest step of a capture, so reuse the saved file.
+    if let Some(png) = png {
+        let copy = staging::partial(&new.image);
+        if fs::copy(png, &copy).is_ok() {
+            return Ok(copy);
+        }
+        let _ = fs::remove_file(&copy);
+    }
+    imaging::encode_partial(&new.image, pixels, width, height)
 }
 
 /// Converts premultiplied BGRA to straight alpha in place.
@@ -158,6 +230,9 @@ pub fn local_time(id: u128) -> (u16, u16, u16, u16, u16) {
         )
     }
 }
+
+#[cfg(test)]
+mod crash;
 
 #[cfg(test)]
 mod tests {
