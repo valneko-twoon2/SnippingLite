@@ -26,7 +26,7 @@
 
 use super::*;
 use crate::test_support::{
-    desk::Desk,
+    desk::{Desk, Turn},
     gui_objects,
     rng::{self, Reach, Rng},
 };
@@ -233,6 +233,9 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
     let (mut gdi, mut counted) = (0i64, 0);
     // 最初のケースを片付けた後の USER のオブジェクトの数。
     let mut user_after: Option<u32> = None;
+    // ケースごとに Desk を作り直すが、番は初めに 1 度だけ取って持ち続ける。並べて走るほかの
+    // テストがケースの間に割り込まず、その錠を待つ時間がケースの時間（`rng::CASE_LIMIT`）に入らない。
+    let mut turn = Some(Turn::take());
     let started = Instant::now();
     let cases = rng::check(NAME, CASES, |rng| {
         let seed = rng::seed().wrapping_add(case);
@@ -243,7 +246,7 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
         );
         case += 1;
         let warmed = tally.warmed();
-        let (count, delivered, left) = run_case(rng, &mut tally);
+        let (count, delivered, left) = run_case(rng, &mut tally, &mut turn);
         steps += count;
         images += delivered;
         // ケースを重ねても、オブジェクトは増え続けない。1 ケースの撮影は数回なので、1 回に 1 つの
@@ -278,9 +281,10 @@ fn random_input_keeps_the_tray_and_its_windows_consistent() {
 /// (手数, 届いた画像の数, 始めから終わりまでに増えた GDI のオブジェクト) を返す。
 /// 始めはトレイと舞台を作る前、終わりは片付けた後に数える。トレイの起動と片付けが返さない
 /// もの（起動のたびの窓のクラスの登録など）も、ケースが残したものに入る。
-fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
+fn run_case(rng: &mut Rng, tally: &mut Tally, turn: &mut Option<Turn>) -> (usize, usize, i64) {
     let first = gui_objects();
-    let mut desk = Desk::start_with(|settings| {
+    let held = turn.take().expect("the turn comes back after each case");
+    let mut desk = Desk::start_in(held, |settings| {
         scene::randomize(rng, settings);
         config::save_markup(rng.chance(0.6));
     });
@@ -331,7 +335,7 @@ fn run_case(rng: &mut Rng, tally: &mut Tally) -> (usize, usize, i64) {
     let delivered = world.delivered;
     crate::ui::set_theme_choice(config::AppTheme::System);
     drop(scene);
-    drop(desk);
+    *turn = Some(desk.into_turn());
     let left = gui_objects().0 as i64 - first.0 as i64;
     (count, delivered, left)
 }
