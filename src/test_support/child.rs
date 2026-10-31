@@ -61,6 +61,10 @@ impl Child {
     pub fn said(&self) -> String {
         std::fs::read_to_string(&self.log).unwrap_or_default()
     }
+
+    pub fn id(&self) -> u32 {
+        self.process.id()
+    }
 }
 
 impl Drop for Child {

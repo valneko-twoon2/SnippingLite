@@ -56,6 +56,29 @@ impl App {
         command
     }
 
+    /// テストするアプリのトレイの窓（なければ null）。同じクラスのほかのプロセスの窓（ユニット
+    /// テストのトレイや、動いている Snipping Lite）は数えない。
+    pub fn tray(&self) -> HWND {
+        let class = wide("SnippingLiteMain");
+        let mut previous = null_mut();
+        // 同じクラスの最上位の窓はわずかなので、上限で打ち切っても取りこぼさない。
+        for _ in 0..1000 {
+            // SAFETY: plain window queries; the class name is nul-terminated.
+            let window = unsafe { FindWindowExW(null_mut(), previous, class.as_ptr(), null()) };
+            if window.is_null() {
+                return window;
+            }
+            let mut process = 0;
+            // SAFETY: as above.
+            unsafe { GetWindowThreadProcessId(window, &mut process) };
+            if process == self.child.id() {
+                return window;
+            }
+            previous = window;
+        }
+        null_mut()
+    }
+
     /// Opens the history window on the newest screenshot.
     pub fn history(&self) -> Process {
         Process(

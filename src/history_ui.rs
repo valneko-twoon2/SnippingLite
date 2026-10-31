@@ -283,9 +283,10 @@ fn load_texture(ctx: &egui::Context, path: &Path) -> Option<(TextureHandle, i32,
     ))
 }
 
+/// この履歴のプロセスの窓（ダイアログとクリップボードの持ち主）。ほかのプロセスの履歴の窓は数えない。
 fn window() -> HWND {
     // SAFETY: this only queries the tagged document window.
-    unsafe { ui::find_app_window(HISTORY_WINDOW) }
+    unsafe { ui::find_app_window(HISTORY_WINDOW, Some(std::process::id())) }
 }
 
 fn show_in_folder(path: &Path) {

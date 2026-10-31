@@ -32,8 +32,18 @@ pub use canvas::*;
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
 pub const TEXT_FONT: &str = "Yu Gothic UI";
 
+/// `window` が `process` のプロセスの窓か。`process` がなければ、どのプロセスの窓でもよい。
+unsafe fn in_process(window: HWND, process: Option<u32>) -> bool {
+    process.is_none_or(|id| {
+        let mut owner = 0;
+        GetWindowThreadProcessId(window, &mut owner);
+        owner == id
+    })
+}
+
 /// Finds a document by role even when settings and history share a caption.
-pub unsafe fn find_app_window(identity: &str) -> HWND {
+/// `process` があれば、そのプロセスの窓だけを探す。なければ、すべてのプロセスの窓から探す。
+pub unsafe fn find_app_window(identity: &str, process: Option<u32>) -> HWND {
     let mut previous = null_mut();
     loop {
         let window = FindWindowExW(
@@ -42,7 +52,21 @@ pub unsafe fn find_app_window(identity: &str) -> HWND {
             null(),
             w(crate::SETTINGS_TITLE).as_ptr(),
         );
-        if window.is_null() || !GetPropW(window, w(identity).as_ptr()).is_null() {
+        if window.is_null()
+            || (!GetPropW(window, w(identity).as_ptr()).is_null() && in_process(window, process))
+        {
+            return window;
+        }
+        previous = window;
+    }
+}
+
+/// クラスが `class` の最上位の窓。`process` は `find_app_window` と同じ。
+pub unsafe fn find_class_window(class: &str, process: Option<u32>) -> HWND {
+    let mut previous = null_mut();
+    loop {
+        let window = FindWindowExW(null_mut(), previous, w(class).as_ptr(), null());
+        if window.is_null() || in_process(window, process) {
             return window;
         }
         previous = window;
@@ -62,9 +86,7 @@ pub unsafe fn identify_app_window(identity: &str) -> HWND {
         if window.is_null() {
             return window;
         }
-        let mut process = 0;
-        GetWindowThreadProcessId(window, &mut process);
-        if process == std::process::id() {
+        if in_process(window, Some(std::process::id())) {
             SetPropW(window, w(identity).as_ptr(), 1usize as HANDLE);
             return window;
         }

@@ -392,7 +392,7 @@ fn a_border_chosen_in_the_settings_applies_to_the_next_screenshot_without_a_rest
     let file = app.root.join("roaming/Snipping Lite/settings.ini");
     let text = std::fs::read_to_string(&file).unwrap();
     std::fs::write(&file, text.replace("outline=0", "outline=1")).unwrap();
-    let tray = unsafe { FindWindowW(wide("SnippingLiteMain").as_ptr(), std::ptr::null()) };
+    let tray = app.tray();
     assert!(!tray.is_null(), "the tray window is found by its class");
     unsafe { PostMessageW(tray, WM_APP + 2, 0, 0) };
     settle(500);

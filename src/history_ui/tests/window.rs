@@ -113,3 +113,13 @@ fn the_history_window_is_not_found_when_it_is_not_open() {
     let _captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
     assert!(window().is_null());
 }
+
+#[test]
+#[ignore = "Creates windows in another process"]
+fn the_history_window_of_another_process_is_not_taken_for_this_ones() {
+    let _captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+    let sandbox = Sandbox::new();
+    let _others = crate::test_support::others::Others::open(&sandbox);
+    // ほかのプロセスに履歴の印の窓があっても、この履歴の窓（ダイアログの持ち主）ではない。
+    assert!(window().is_null());
+}
