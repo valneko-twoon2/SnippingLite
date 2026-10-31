@@ -140,7 +140,7 @@ fn markup_path() -> Option<PathBuf> {
 pub fn load_markup() -> bool {
     markup_path()
         .and_then(|p| fs::read_to_string(p).ok())
-        .is_some_and(|text| text.lines().any(|line| line == "markup=1"))
+        .is_some_and(|text| switch(&text, "markup=", false))
 }
 
 pub fn save_markup(on: bool) {
@@ -156,39 +156,48 @@ fn settings_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|x| PathBuf::from(x).join("Snipping Lite").join("settings.ini"))
 }
 
+/// 同じキーの行が何行あっても、そのキーで始まる最初の行だけを読む。手で書き足した行や、
+/// 古い版が残した行があっても、どの設定も同じ規則で決まる（最初の行の値が使えなければ既定値）。
+fn first<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|s| s.strip_prefix(key))
+}
+
+/// オン・オフの設定。最初の行がちょうど 0 か 1 のときだけ従い、それ以外は既定値。
+fn switch(text: &str, key: &str, default: bool) -> bool {
+    match first(text, key) {
+        Some("0") => false,
+        Some("1") => true,
+        _ => default,
+    }
+}
+
 pub fn parse_settings(text: &str) -> Settings {
-    let delay = text
-        .lines()
-        .find_map(|s| s.strip_prefix("delay="))
+    let delay = first(text, "delay=")
         .and_then(|v| v.parse().ok())
         .filter(|d| DELAYS.contains(d))
         .unwrap_or(0);
-    let history_limit = text
-        .lines()
-        .find_map(|s| s.strip_prefix("history_limit="))
+    let history_limit = first(text, "history_limit=")
         .and_then(|v| v.parse().ok())
         .filter(|l| HISTORY_LIMITS.contains(l))
         .unwrap_or(HISTORY_LIMITS[2]);
     Settings {
-        copy: !text.lines().any(|s| s == "copy=0"),
-        save: text.lines().any(|s| s == "save=1"),
-        ask: text.lines().any(|s| s == "ask=1"),
+        copy: switch(text, "copy=", true),
+        save: switch(text, "save=", false),
+        ask: switch(text, "ask=", false),
         delay,
-        history: !text.lines().any(|s| s == "history=0"),
+        history: switch(text, "history=", true),
         history_limit,
-        countdown: !text.lines().any(|s| s == "countdown=0"),
-        skip_title: !text.lines().any(|s| s == "skip_title=0"),
-        record_cursor: !text.lines().any(|s| s == "record_cursor=0"),
-        record_fps: text
-            .lines()
-            .find_map(|s| s.strip_prefix("record_fps="))
+        countdown: switch(text, "countdown=", true),
+        skip_title: switch(text, "skip_title=", true),
+        record_cursor: switch(text, "record_cursor=", true),
+        record_fps: first(text, "record_fps=")
             .and_then(|v| v.parse().ok())
             .filter(|fps| FRAME_RATES.contains(fps))
             .unwrap_or(DEFAULT_FRAME_RATE),
-        freeze: text.lines().any(|s| s == "freeze=1"),
-        notify: !text.lines().any(|s| s == "notify=0"),
-        keep_toolbar: text.lines().any(|s| s == "keep_toolbar=1"),
-        outline: text.lines().any(|s| s == "outline=1"),
+        freeze: switch(text, "freeze=", false),
+        notify: switch(text, "notify=", true),
+        keep_toolbar: switch(text, "keep_toolbar=", false),
+        outline: switch(text, "outline=", false),
         outline_color: index(text, "outline_color=", crate::annotate::COLORS.len(), 3),
         outline_width: index(
             text,
@@ -196,11 +205,11 @@ pub fn parse_settings(text: &str) -> Settings {
             crate::annotate::OUTLINE_WIDTHS.len(),
             1,
         ),
-        mic: text.lines().any(|s| s == "mic=1"),
-        system_audio: !text.lines().any(|s| s == "system_audio=0"),
-        app_audio: !text.lines().any(|s| s == "app_audio=0"),
-        copy_video: !text.lines().any(|s| s == "copy_video=0"),
-        save_video: !text.lines().any(|s| s == "save_video=0"),
+        mic: switch(text, "mic=", false),
+        system_audio: switch(text, "system_audio=", true),
+        app_audio: switch(text, "app_audio=", true),
+        copy_video: switch(text, "copy_video=", true),
+        save_video: switch(text, "save_video=", true),
         theme: AppTheme::parse(&value(text, "theme=")),
         screenshot_folder: value(text, "screenshot_folder="),
         video_folder: value(text, "video_folder="),
@@ -209,8 +218,7 @@ pub fn parse_settings(text: &str) -> Settings {
 
 /// A list index stored as a number; anything out of range gives `default`.
 fn index(text: &str, key: &str, len: usize, default: usize) -> usize {
-    text.lines()
-        .find_map(|s| s.strip_prefix(key))
+    first(text, key)
         .and_then(|v| v.parse().ok())
         .filter(|&i| i < len)
         .unwrap_or(default)
@@ -219,11 +227,7 @@ fn index(text: &str, key: &str, len: usize, default: usize) -> usize {
 /// 手で書き足した前後の空白を落とす。落とすのは ASCII の空白（半角の空白、タブ、CR など）だけにする。
 /// Windows は名前の末尾の全角空白や NBSP を残すので、それで終わるフォルダーも選べる。
 fn value(text: &str, key: &str) -> String {
-    text.lines()
-        .find_map(|s| s.strip_prefix(key))
-        .unwrap_or_default()
-        .trim_ascii()
-        .to_owned()
+    first(text, key).unwrap_or_default().trim_ascii().to_owned()
 }
 
 /// A Windows known folder such as the (possibly OneDrive-redirected) Pictures folder.

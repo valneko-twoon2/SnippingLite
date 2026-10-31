@@ -103,6 +103,49 @@ fn a_kept_toolbar_returns_after_a_cancelled_countdown_unless_switched_off_meanwh
 }
 
 #[test]
+#[ignore = "Covers the screen"]
+fn settings_or_history_asked_for_during_the_countdown_open_nothing() {
+    let desk = Desk::start_with(|settings| {
+        settings.countdown = true;
+        settings.system_audio = false;
+        settings.notify = false;
+    });
+    let windows = closed_windows();
+    select_video(&desk);
+    let countdown = s().count_window;
+    assert!(!countdown.is_null(), "the countdown runs");
+    // カウントダウンはキーボードを受け取らないので、キーボードは確かめない。
+    assert_nothing_opens(&desk, &windows, null_mut(), || {
+        s().count_window == countdown && shown(countdown) && s().recording.is_none()
+    });
+    // これまでどおり、クリックで取り消せる。
+    desk.mouse(countdown, WM_LBUTTONUP, 10, 10);
+    assert!(s().count_window.is_null() && s().recording.is_none());
+}
+
+#[test]
+#[ignore = "Records the screen"]
+fn settings_and_history_open_while_recording() {
+    // 録画中に開いた画面は、録画に写ってよい（README）。
+    let desk = Desk::start_with(|settings| {
+        settings.countdown = false;
+        settings.system_audio = false;
+        settings.notify = false;
+        settings.copy_video = false;
+    });
+    let windows = closed_windows();
+    record(&desk);
+    for ((name, command), window) in OPENS.into_iter().zip(windows.0) {
+        desk.send(desk.main, WM_COMMAND, command, 0);
+        assert!(shown(window), "{name} opens");
+        assert!(s().recording.is_some(), "{name} leaves the recording going");
+    }
+    desk.send(desk.main, WM_COMMAND, TRAY_STOP, 0);
+    assert!(s().recording.is_none());
+    assert_eq!(videos(&desk).len(), 1, "the recording is finished");
+}
+
+#[test]
 #[ignore = "Records the screen"]
 fn starting_events_stop_a_recording_and_start_nothing() {
     let desk = Desk::start_with(|settings| {

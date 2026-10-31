@@ -5,7 +5,11 @@ use super::*;
 use crate::annotate::{self, Mark};
 
 mod bar;
+mod eraser;
 pub(crate) use bar::{bar_proc, BAR};
+use eraser::{erase, Erasing};
+#[cfg(test)]
+use eraser::{touches, ERASER_REACH};
 
 /// 書き込みの道具。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,9 +18,6 @@ pub(crate) enum Tool {
     Highlighter,
     Eraser,
 }
-
-/// 消しゴムが線に届く距離（DIP）。
-const ERASER_REACH: f32 = 8.0;
 
 pub(crate) struct Session {
     /// 切り取った画像を置く位置（オーバーレイの座標）。画像と同じ大きさ。
@@ -34,8 +35,8 @@ pub(crate) struct Session {
     tool: Tool,
     /// 描いている途中の線。
     stroke: Option<Mark>,
-    /// 消しゴムでなぞっている途中。なぞり始める前の書き込みを持つ。
-    erasing: Option<Vec<Mark>>,
+    /// 消しゴムでなぞっている途中。
+    erasing: Option<Erasing>,
     /// 確定した書き込みを重ねた画像。
     base: Vec<u8>,
     /// 画面に出す画像。透明な部分は暗くした背景と重ねてある。
@@ -64,13 +65,13 @@ pub(crate) unsafe fn begin(at: POINT, pixels: Vec<u8>, width: i32, height: i32, 
         set_layered(s.overlay, false);
         if !frozen {
             cancel();
-            deliver_snip(pixels, width, height, shaped);
+            deliver_snip(pixels, width, height, shaped, state().copy);
             return;
         }
     }
     let Some(view) = ui::Canvas::new(width, height) else {
         cancel();
-        deliver_snip(pixels, width, height, shaped);
+        deliver_snip(pixels, width, height, shaped, state().copy);
         return;
     };
     s.markup_session = Some(Box::new(Session {
@@ -105,8 +106,10 @@ pub(crate) unsafe fn begin(at: POINT, pixels: Vec<u8>, width: i32, height: i32, 
     SetFocus(s.overlay);
 }
 
-/// 書き込みを重ねた画像を届けて、切り取りを終える。
-pub(crate) unsafe fn capture() {
+/// 書き込みを重ねた画像を届けて、切り取りを終える。`copy_anyway`（Ctrl+C）なら、自動コピーの
+/// 設定にかかわらずクリップボードにも置く。Enter とキャプチャのボタンは設定に従う。保存と履歴は
+/// いつも設定に従い、どれも確定したときの設定が効く。
+pub(crate) unsafe fn capture(copy_anyway: bool) {
     let Some(session) = state().markup_session.take() else {
         return;
     };
@@ -118,7 +121,7 @@ pub(crate) unsafe fn capture() {
         ..
     } = *session;
     cancel();
-    deliver_snip(base, width, height, shaped);
+    deliver_snip(base, width, height, shaped, copy_anyway || state().copy);
 }
 
 pub(crate) unsafe fn set_tool(tool: Tool) {
@@ -139,7 +142,30 @@ unsafe fn change(marks: Vec<Mark>) {
     render_all();
 }
 
+/// 描いている途中の線や、消しゴムでなぞっている途中の操作を確定する。離したときのほか、途中で
+/// 元に戻す・やり直すときにも先に呼ぶ。こうすると、元に戻す・やり直すの一覧は確定した書き込み
+/// だけを持ち、途中の操作も 1 回分として元に戻せ、やり直せる（確定せずに元に戻すと、離したときに
+/// なぞる前の一覧が積まれ、やり直しが消えたり、見た目の変わらない「元に戻す」が残ったりする）。
+unsafe fn settle() {
+    let Some(session) = state().markup_session.as_mut() else {
+        return;
+    };
+    if let Some(stroke) = session.stroke.take() {
+        let mut marks = session.marks.clone();
+        marks.push(stroke);
+        change(marks);
+    } else if let Some(Erasing { before, .. }) = session.erasing.take() {
+        // なぞった間に消した線は、まとめて 1 回で元に戻せる。
+        if before.len() != session.marks.len() {
+            session.undo.push(before);
+            session.redo.clear();
+            InvalidateRect(state().markup_bar, null(), 0);
+        }
+    }
+}
+
 pub(crate) unsafe fn undo() {
+    settle();
     let Some(session) = state().markup_session.as_mut() else {
         return;
     };
@@ -151,6 +177,7 @@ pub(crate) unsafe fn undo() {
 }
 
 pub(crate) unsafe fn redo() {
+    settle();
     let Some(session) = state().markup_session.as_mut() else {
         return;
     };
@@ -169,26 +196,6 @@ pub(crate) unsafe fn clear() {
         .is_some_and(|s| !s.marks.is_empty())
     {
         change(Vec::new());
-    }
-}
-
-/// 画像の座標で、線 `mark` が `(x, y)` から `reach` 以内を通るか。
-fn touches(mark: &Mark, (x, y): (f32, f32), reach: f32) -> bool {
-    let limit = (mark.radius + reach).powi(2);
-    let near = |(ax, ay): (f32, f32), (bx, by): (f32, f32)| {
-        let (dx, dy) = (bx - ax, by - ay);
-        let length = dx * dx + dy * dy;
-        let t = if length == 0.0 {
-            0.0
-        } else {
-            (((x - ax) * dx + (y - ay) * dy) / length).clamp(0.0, 1.0)
-        };
-        (ax + dx * t - x).powi(2) + (ay + dy * t - y).powi(2) <= limit
-    };
-    match mark.points.as_slice() {
-        [] => false,
-        [only] => near(*only, *only),
-        points => points.windows(2).any(|pair| near(pair[0], pair[1])),
     }
 }
 
@@ -376,7 +383,10 @@ pub(crate) unsafe fn overlay_message(
                 SetCapture(hwnd);
                 let at = image_point(session.area, p);
                 if session.tool == Tool::Eraser {
-                    session.erasing = Some(session.marks.clone());
+                    session.erasing = Some(Erasing {
+                        before: session.marks.clone(),
+                        last: at,
+                    });
                     erase(at);
                 } else {
                     let (color, thickness) = config::load_pen();
@@ -413,26 +423,15 @@ pub(crate) unsafe fn overlay_message(
         }
         WM_LBUTTONUP => {
             ReleaseCapture();
-            if let Some(stroke) = session.stroke.take() {
-                let mut marks = session.marks.clone();
-                marks.push(stroke);
-                change(marks);
-            } else if let Some(before) = session.erasing.take() {
-                // なぞった間に消した線は、まとめて 1 回で元に戻せる。
-                if before.len() != session.marks.len() {
-                    session.undo.push(before);
-                    session.redo.clear();
-                    InvalidateRect(state().markup_bar, null(), 0);
-                }
-            }
+            settle();
             Some(0)
         }
         WM_KEYDOWN => {
             let control = GetKeyState(VK_CONTROL as i32) < 0;
             match wp as u16 {
                 VK_ESCAPE => cancel(),
-                VK_RETURN => capture(),
-                key if control && key == b'C' as u16 => capture(),
+                VK_RETURN => capture(false),
+                key if control && key == b'C' as u16 => capture(true),
                 key if control && key == b'Z' as u16 => undo(),
                 key if control && key == b'Y' as u16 => redo(),
                 _ => {}
@@ -447,19 +446,6 @@ pub(crate) unsafe fn overlay_message(
             Some(0)
         }
         _ => None,
-    }
-}
-
-/// 消しゴムが触れた線を消す。
-unsafe fn erase(at: (f32, f32)) {
-    let reach = ERASER_REACH * state().scale;
-    let Some(session) = state().markup_session.as_mut() else {
-        return;
-    };
-    let before = session.marks.len();
-    session.marks.retain(|mark| !touches(mark, at, reach));
-    if session.marks.len() != before {
-        render_all();
     }
 }
 

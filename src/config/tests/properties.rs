@@ -342,6 +342,67 @@ fn damaging_one_line_changes_only_its_own_setting() {
 }
 
 #[test]
+fn a_repeated_key_reads_as_if_only_its_first_line_were_there() {
+    let keys = keys();
+    let mut reach = Reach::new(&["the order matters", "the order does not matter"]);
+    let cases = rng::check(
+        "a_repeated_key_reads_as_if_only_its_first_line_were_there",
+        300,
+        |rng| {
+            // 正しい設定 2 つ分の行と、壊れた値の行を混ぜる。どのキーも 2 行以上になる。
+            let first = settings(rng);
+            let second = if rng.chance(0.25) {
+                first.clone()
+            } else {
+                settings(rng)
+            };
+            let mut lines: Vec<String> = [settings_text(&first), settings_text(&second)]
+                .iter()
+                .flat_map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
+                .collect();
+            let odd = if rng.chance(0.25) {
+                0
+            } else {
+                rng.range(1..=10)
+            };
+            for _ in 0..odd {
+                lines.push(format!("{}{}", rng.pick(&keys), rng.pick(ODD_VALUES)));
+            }
+            if rng.chance(0.3) {
+                lines.push(junk(rng));
+            }
+            rng.shuffle(&mut lines);
+            // 各キーの最初の行だけを残す。どのキーでもない行はそのまま。
+            let mut seen: Vec<&str> = Vec::new();
+            let firsts: Vec<&str> = lines
+                .iter()
+                .map(String::as_str)
+                .filter(
+                    |line| match keys.iter().find(|key| line.starts_with(key.as_str())) {
+                        Some(key) if seen.contains(&key.as_str()) => false,
+                        Some(key) => {
+                            seen.push(key);
+                            true
+                        }
+                        None => true,
+                    },
+                )
+                .collect();
+            let text = lines.join("\r\n");
+            let parsed = parse_settings(&text);
+            assert_eq!(parsed, parse_settings(&firsts.join("\r\n")), "{text:?}");
+            let reversed: Vec<&str> = lines.iter().rev().map(String::as_str).collect();
+            reach.hit(if parse_settings(&reversed.join("\r\n")) == parsed {
+                "the order does not matter"
+            } else {
+                "the order matters"
+            });
+        },
+    );
+    reach.finish("a_repeated_key_reads_as_if_only_its_first_line", cases);
+}
+
+#[test]
 fn pen_and_markup_choices_read_back_and_fall_back_one_by_one() {
     let _sandbox = Sandbox::new();
     let mut reach = Reach::new(&["both kept", "color fell back", "thickness fell back"]);

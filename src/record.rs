@@ -82,6 +82,11 @@ pub fn temporary_folder() -> std::io::Result<PathBuf> {
 
 /// `base` の中の録画用の一時フォルダーを作り、`now` の時点で 1 日より古いファイルを消す。
 /// テストが本物の一時フォルダーと時計に触れずに済むよう、場所と時刻を受け取る。
+///
+/// このフォルダー（`Snipping Lite\Recordings`）はこのアプリの録画専用なので、名前を問わず、
+/// 1 日より古いファイルはすべて消す（書きかけで残った名前の違うファイルも消える）。中のフォルダーは
+/// 消さずに残す。このアプリはフォルダーを作らないので、あれば誰かが置いたもので、中身ごと消すと
+/// 取り返せない（`remove_file` はフォルダーを消さない）。
 fn temporary_folder_in(base: &Path, now: std::time::SystemTime) -> std::io::Result<PathBuf> {
     let folder = base.join("Snipping Lite").join("Recordings");
     std::fs::create_dir_all(&folder)?;

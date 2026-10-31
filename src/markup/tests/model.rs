@@ -1,94 +1,22 @@
-//! 書き込みのモデルベーステスト。線を描く、消しゴムで消す・なぞる、元に戻す、やり直す、
-//! すべて消去、道具とペンの切り替えを無作為な順に本物のオーバーレイへ送り、同じ操作を小さな
+//! 書き込みのモデルベーステスト。線を描く、消しゴムで消す・なぞる、元に戻す、やり直す（描いたり
+//! なぞったりしている途中の Ctrl+Z と Ctrl+Y も）、すべて消去、道具とペンの切り替えを無作為な順に
+//! 本物のオーバーレイへ送り、同じ操作を小さな
 //! モデル（書き込みの一覧と、元に戻す・やり直すのスタック）にも当てて、1 手ごとに一致を確かめる。
 //! ウィンドウは表示しないままメッセージを直接送るので、画面は覆わない。
 
 use super::*;
 use crate::test_support::rng::{self, Reach, Rng};
 
-/// 書き込みの仕様を数行で書いたもの。線が消しゴムに触れるかどうかは、本物の `touches` で
-/// 決める（`touches` 自体は properties.rs で、別の方法で求めた距離と比べてある）。
-struct Model {
-    marks: Vec<Mark>,
-    undo: Vec<Vec<Mark>>,
-    redo: Vec<Vec<Mark>>,
-    tool: Tool,
-    /// 保存してあるペンの色と太さ（番号）。
-    pen: (usize, usize),
-}
-
-impl Model {
-    fn change(&mut self, marks: Vec<Mark>) {
-        let before = std::mem::replace(&mut self.marks, marks);
-        self.undo.push(before);
-        self.redo.clear();
-    }
-
-    /// 線を描き終えると、それが書き込みの最後に加わり、1 回で元に戻せる。
-    fn draw(&mut self, points: Vec<(f32, f32)>) {
-        let highlight = self.tool == Tool::Highlighter;
-        let (radii, color) = if highlight {
-            (annotate::HIGHLIGHTER_RADII, annotate::COLORS[1])
-        } else {
-            (annotate::PEN_RADII, annotate::COLORS[self.pen.0])
-        };
-        let mut marks = self.marks.clone();
-        marks.push(Mark {
-            highlight,
-            color,
-            radius: radii[self.pen.1] * s().scale,
-            points,
-        });
-        self.change(marks);
-    }
-
-    /// なぞった点のどれかから届く線が消える。消えた線があれば、まとめて 1 回で元に戻せる。
-    fn erase(&mut self, points: &[(f32, f32)]) -> bool {
-        let reach = ERASER_REACH * s().scale;
-        let kept: Vec<Mark> = self
-            .marks
-            .iter()
-            .filter(|mark| !points.iter().any(|&p| touches(mark, p, reach)))
-            .cloned()
-            .collect();
-        let erased = kept.len() != self.marks.len();
-        if erased {
-            self.change(kept);
-        }
-        erased
-    }
-
-    fn undo(&mut self) -> bool {
-        let Some(marks) = self.undo.pop() else {
-            return false;
-        };
-        let current = std::mem::replace(&mut self.marks, marks);
-        self.redo.push(current);
-        true
-    }
-
-    fn redo(&mut self) -> bool {
-        let Some(marks) = self.redo.pop() else {
-            return false;
-        };
-        let current = std::mem::replace(&mut self.marks, marks);
-        self.undo.push(current);
-        true
-    }
-
-    fn clear(&mut self) -> bool {
-        let any = !self.marks.is_empty();
-        if any {
-            self.change(Vec::new());
-        }
-        any
-    }
-}
+mod spec;
+use spec::Model;
 
 #[derive(Debug)]
 enum Action {
     /// 最初の点で押し、残りの点へ動かし、最後の点で離す。1 点だけならクリック。
     Drag(Vec<(i32, i32)>),
+    /// `Drag` と同じだが、最初の `n` 点（押した点を含む）まで動かしたところで、Ctrl を押したまま
+    /// Z（元に戻す）か Y（やり直す）を押す。残りの点へ動かしてから離す。
+    DragWithKey(Vec<(i32, i32)>, usize, u8),
     /// ボタンを押さずに動かしてから離す（押していないので何も起きない）。
     Hover((i32, i32)),
     /// バーのボタン。
@@ -128,25 +56,48 @@ fn spot(rng: &mut Rng, area: RECT, model: &Model) -> (i32, i32) {
     }
 }
 
+/// なぞる点: 押す点と、そこから少しずつ動いた 0〜6 個の点。
+fn drag(rng: &mut Rng, area: RECT, model: &Model) -> Vec<(i32, i32)> {
+    let mut points = vec![spot(rng, area, model)];
+    for _ in 0..rng.range(0..=6) {
+        let (x, y) = points[points.len() - 1];
+        points.push((x + rng.range(-16..=16), y + rng.range(-16..=16)));
+    }
+    points
+}
+
 fn action(rng: &mut Rng, area: RECT, model: &Model) -> Action {
-    match rng.weighted(&[40, 4, 12, 14, 10, 4, 4]) {
-        0 => {
-            let mut points = vec![spot(rng, area, model)];
-            for _ in 0..rng.range(0..=6) {
-                let (x, y) = points[points.len() - 1];
-                points.push((x + rng.range(-16..=16), y + rng.range(-16..=16)));
-            }
-            Action::Drag(points)
-        }
+    match rng.weighted(&[40, 4, 12, 14, 10, 4, 4, 8]) {
+        0 => Action::Drag(drag(rng, area, model)),
         1 => Action::Hover(spot(rng, area, model)),
         2 => Action::Press(*rng.pick(&[PEN, HIGHLIGHTER, ERASER])),
         3 => Action::Press(UNDO),
         4 => Action::Press(REDO),
         5 => Action::Press(CLEAR),
-        _ => Action::Pen(
+        6 => Action::Pen(
             rng.below(annotate::COLORS.len()),
             rng.below(annotate::PEN_RADII.len()),
         ),
+        _ => {
+            let points = drag(rng, area, model);
+            let n = rng.range(1..=points.len());
+            Action::DragWithKey(points, n, *rng.pick(b"ZY"))
+        }
+    }
+}
+
+/// Ctrl を押したまま `key` を押す。オーバーレイが読む GetKeyState はこのスレッドのキーの状態
+/// なので、本物のキーボードには触れずに済む。
+fn control_key(desk: &Desk, key: u8) {
+    let mut keys = [0u8; 256];
+    // SAFETY: both calls read or write the 256 key states of this thread.
+    unsafe {
+        GetKeyboardState(keys.as_mut_ptr());
+        let saved = keys;
+        keys[VK_CONTROL as usize] = 0x80;
+        SetKeyboardState(keys.as_ptr());
+        desk.key(s().overlay, key as u16);
+        SetKeyboardState(saved.as_ptr());
     }
 }
 
@@ -286,6 +237,43 @@ fn apply(desk: &Desk, action: &Action, model: &mut Model, area: RECT, reach: &mu
                 reach.hit("pressed outside");
             }
         }
+        Action::DragWithKey(points, n, key) => {
+            let (first, last) = (points[0], points[points.len() - 1]);
+            desk.mouse(overlay, WM_MOUSEMOVE, first.0, first.1);
+            desk.mouse(overlay, WM_LBUTTONDOWN, first.0, first.1);
+            for &(x, y) in &points[1..*n] {
+                desk.mouse(overlay, WM_MOUSEMOVE, x, y);
+            }
+            // 途中の線やなぞった分を先に確定してから、元に戻す・やり直す。確定した後に押したまま
+            // 動かしても、離しても、何も起きない。
+            control_key(desk, *key);
+            assert!(
+                session().stroke.is_none() && session().erasing.is_none(),
+                "the drag is settled first"
+            );
+            for &(x, y) in &points[*n..] {
+                desk.mouse(overlay, WM_MOUSEMOVE, x, y);
+            }
+            desk.mouse(overlay, WM_LBUTTONUP, last.0, last.1);
+            let centers: Vec<(f32, f32)> = points[..*n]
+                .iter()
+                .map(|&p| pixel_center(area, p))
+                .collect();
+            if inside(area, first) {
+                if model.tool == Tool::Eraser {
+                    model.erase(&centers);
+                } else {
+                    model.draw(centers);
+                }
+            }
+            if *key == b'Z' {
+                model.undo();
+                reach.hit("Ctrl+Z mid-drag");
+            } else {
+                model.redo();
+                reach.hit("Ctrl+Y mid-drag");
+            }
+        }
         Action::Hover((x, y)) => {
             desk.mouse(overlay, WM_MOUSEMOVE, *x, *y);
             desk.mouse(overlay, WM_LBUTTONUP, *x, *y);
@@ -375,6 +363,8 @@ fn random_markup_edits_match_a_model_of_the_marks_and_their_history() {
         "switched tools",
         "changed the pen",
         "hovered",
+        "Ctrl+Z mid-drag",
+        "Ctrl+Y mid-drag",
     ]);
     let cases = rng::check(
         "random_markup_edits_match_a_model_of_the_marks_and_their_history",

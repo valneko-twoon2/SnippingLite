@@ -1,4 +1,5 @@
-//! 消しゴムが線に届くかの判定（`touches`）と、バーの置き場所（`place`）の性質。
+//! 消しゴムが線に届くかの判定（`touches`）と、バーの置き場所（`place`）の性質。消しゴムは、
+//! 前の点から今の点までの道筋（線分）で判定する。押しただけのときは道筋が 1 点になる。
 
 use super::*;
 use crate::test_support::{
@@ -8,6 +9,8 @@ use crate::test_support::{
 
 /// 判定の境目からこれより近い点は、浮動小数点の丸めでどちらにも転びうるので比べない。
 const BORDER: f64 = 1e-2;
+/// 道筋を歩く回数の上限。境目に沿って長く進む道筋は、どちらとも言わずに飛ばす。
+const WALK: usize = 100_000;
 
 /// 線: 点は 0〜6 個。同じ点が続くこと（長さ 0 の線分）もある。半分はマウスから来る画素の中心。
 fn mark(rng: &mut Rng) -> Mark {
@@ -55,13 +58,49 @@ fn probe(rng: &mut Rng, mark: &Mark, reach: f32) -> (f32, f32) {
     )
 }
 
-/// 別の方法で求めた答え。境目に近すぎるときは `None`。
-fn expected(mark: &Mark, p: (f32, f32), reach: f32) -> Option<bool> {
-    let Some(distance) = distance_to_line(&mark.points, p) else {
-        return Some(false);
-    };
+/// 消しゴムの道筋（始まり, 終わり）。4 割は押しただけの 1 点。残りは線のそばの点を通って横切る
+/// 線分で、両端が線から離れていても間で線に触れる（速くなぞって飛び越える）ことが多い。
+fn path(rng: &mut Rng, mark: &Mark, reach: f32) -> ((f32, f32), (f32, f32)) {
+    let p = probe(rng, mark, reach);
+    if rng.chance(0.4) {
+        return (p, p);
+    }
+    let angle = rng.float(0.0, std::f32::consts::TAU);
+    let half = (mark.radius + reach) * rng.float(0.5, 3.0) + rng.float(0.0, 10.0);
+    let (dx, dy) = (half * angle.cos(), half * angle.sin());
+    let back = rng.float(0.5, 1.5);
+    ((p.0 + dx, p.1 + dy), (p.0 - dx * back, p.1 - dy * back))
+}
+
+/// 別の方法で求めた答え: 道筋の上を、点から線までの距離（`distance_to_line`）だけを使って歩く。
+/// 線までの距離は、道筋に沿って進んだ長さより速くは変わらない。そのため、今の距離が境目
+/// （太さ + 届く距離）より `BORDER` 以上遠ければ、その差から `BORDER` の半分を引いた分だけ
+/// 進んでも、その間で境目の内側には入らない。境目より `BORDER` 以上内側の点に来たら触れる。
+/// 境目から `BORDER` より近い点を通り、その先でも内側に入らなければ、どちらとも言わず `None`。
+fn expected(mark: &Mark, from: (f32, f32), to: (f32, f32), reach: f32) -> Option<bool> {
     let limit = (mark.radius + reach) as f64;
-    ((distance - limit).abs() > BORDER).then_some(distance <= limit)
+    let (dx, dy) = ((to.0 - from.0) as f64, (to.1 - from.1) as f64);
+    let length = dx.hypot(dy);
+    let (mut walked, mut near) = (0.0, false);
+    for _ in 0..WALK {
+        let t = if length > 0.0 { walked / length } else { 0.0 };
+        let at = (
+            (from.0 as f64 + dx * t) as f32,
+            (from.1 as f64 + dy * t) as f32,
+        );
+        let Some(distance) = distance_to_line(&mark.points, at) else {
+            return Some(false);
+        };
+        if distance <= limit - BORDER {
+            return Some(true);
+        }
+        near |= distance < limit + BORDER;
+        if walked >= length {
+            return (!near).then_some(false);
+        }
+        walked = (walked + (distance - limit - BORDER / 2.0).max(BORDER / 2.0)).min(length);
+    }
+    None
 }
 
 /// 比べずに飛ばした、境目に近すぎるケースは少ない（多ければ、何も確かめていない）。
@@ -75,7 +114,14 @@ fn assert_few_borderline(borderline: usize, cases: usize) {
 
 #[test]
 fn touches_agrees_with_the_distance_to_the_line_found_another_way() {
-    let mut reach = Reach::new(&["touches", "misses", "no points", "one point"]);
+    let mut reach = Reach::new(&[
+        "touches",
+        "misses",
+        "no points",
+        "one point",
+        "pressed only",
+        "jumped over",
+    ]);
     let mut borderline = 0;
     let cases = rng::check(
         "touches_agrees_with_the_distance_to_the_line_found_another_way",
@@ -83,17 +129,26 @@ fn touches_agrees_with_the_distance_to_the_line_found_another_way() {
         |rng| {
             let mark = mark(rng);
             let eraser = rng.float(0.0, 20.0);
-            let p = probe(rng, &mark, eraser);
+            let (from, to) = path(rng, &mark, eraser);
             match mark.points.len() {
                 0 => reach.hit("no points"),
                 1 => reach.hit("one point"),
                 _ => {}
             }
-            match expected(&mark, p, eraser) {
+            if from == to {
+                reach.hit("pressed only");
+            }
+            match expected(&mark, from, to, eraser) {
                 None => borderline += 1,
                 Some(touch) => {
-                    assert_eq!(touches(&mark, p, eraser), touch, "{mark:?} {p:?} {eraser}");
+                    let what = format!("{mark:?} {from:?}-{to:?} {eraser}");
+                    assert_eq!(touches(&mark, from, to, eraser), touch, "{what}");
                     reach.hit(if touch { "touches" } else { "misses" });
+                    // 両端は届かないのに、間の道筋が線に触れる（速くなぞって飛び越える）。
+                    let ends = [from, to].map(|p| expected(&mark, p, p, eraser));
+                    if touch && ends == [Some(false), Some(false)] {
+                        reach.hit("jumped over");
+                    }
                 }
             }
         },
@@ -103,22 +158,23 @@ fn touches_agrees_with_the_distance_to_the_line_found_another_way() {
 }
 
 #[test]
-fn touches_ignores_where_the_line_is_and_which_way_it_was_drawn() {
-    let mut reach = Reach::new(&["moved", "reversed"]);
+fn touches_ignores_where_the_line_is_and_which_way_either_was_drawn() {
+    let mut reach = Reach::new(&["moved", "reversed", "erased backwards"]);
     let mut borderline = 0;
     let cases = rng::check(
-        "touches_ignores_where_the_line_is_and_which_way_it_was_drawn",
+        "touches_ignores_where_the_line_is_and_which_way_either_was_drawn",
         2000,
         |rng| {
             let mark = mark(rng);
             let eraser = rng.float(0.0, 20.0);
-            let p = probe(rng, &mark, eraser);
+            let (from, to) = path(rng, &mark, eraser);
             // 境目のそばでは、どちらの答えも正しいので比べない。
-            if expected(&mark, p, eraser).is_none() {
+            if expected(&mark, from, to, eraser).is_none() {
                 borderline += 1;
                 return;
             }
-            let touch = touches(&mark, p, eraser);
+            let what = format!("{mark:?} {from:?}-{to:?} {eraser}");
+            let touch = touches(&mark, from, to, eraser);
             let (dx, dy) = (
                 rng.range(-1000..=1000) as f32,
                 rng.range(-1000..=1000) as f32,
@@ -127,10 +183,11 @@ fn touches_ignores_where_the_line_is_and_which_way_it_was_drawn() {
                 points: mark.points.iter().map(|&(x, y)| (x + dx, y + dy)).collect(),
                 ..mark.clone()
             };
+            let shift = |(x, y): (f32, f32)| (x + dx, y + dy);
             assert_eq!(
-                touches(&moved, (p.0 + dx, p.1 + dy), eraser),
+                touches(&moved, shift(from), shift(to), eraser),
                 touch,
-                "moved by {dx},{dy}: {mark:?} {p:?} {eraser}"
+                "moved by {dx},{dy}: {what}"
             );
             reach.hit("moved");
             let reversed = Mark {
@@ -138,11 +195,13 @@ fn touches_ignores_where_the_line_is_and_which_way_it_was_drawn() {
                 ..mark.clone()
             };
             assert_eq!(
-                touches(&reversed, p, eraser),
+                touches(&reversed, from, to, eraser),
                 touch,
-                "reversed: {mark:?} {p:?} {eraser}"
+                "reversed: {what}"
             );
             reach.hit("reversed");
+            assert_eq!(touches(&mark, to, from, eraser), touch, "backwards: {what}");
+            reach.hit("erased backwards");
         },
     );
     reach.finish("touches_ignores_where_the_line_is", cases);
@@ -150,34 +209,49 @@ fn touches_ignores_where_the_line_is_and_which_way_it_was_drawn() {
 }
 
 #[test]
-fn a_longer_reach_or_a_thicker_line_never_misses_what_a_shorter_one_touches() {
-    let mut reach = Reach::new(&["touched both", "touched only the longer", "touched neither"]);
+fn a_longer_reach_a_thicker_line_or_a_longer_path_never_misses_what_a_shorter_one_touches() {
+    let mut reach = Reach::new(&[
+        "touched both",
+        "touched only the longer",
+        "touched neither",
+        "only the path touched",
+    ]);
     let cases = rng::check(
-        "a_longer_reach_or_a_thicker_line_never_misses_what_a_shorter_one_touches",
+        "a_longer_reach_a_thicker_line_or_a_longer_path_never_misses_what_a_shorter_one_touches",
         2000,
         |rng| {
             let mark = mark(rng);
             let short = rng.float(0.0, 20.0);
             let long = short + rng.float(0.0, 10.0);
-            let p = probe(rng, &mark, short);
-            let (near, far) = (touches(&mark, p, short), touches(&mark, p, long));
-            assert!(
-                !near || far,
-                "{short} touches but {long} does not: {mark:?} {p:?}"
+            let (from, to) = path(rng, &mark, short);
+            let what = format!("{mark:?} {from:?}-{to:?}");
+            let (near, far) = (
+                touches(&mark, from, to, short),
+                touches(&mark, from, to, long),
             );
+            assert!(!near || far, "{short} touches but {long} does not: {what}");
             let thicker = Mark {
                 radius: mark.radius + (long - short),
                 ..mark.clone()
             };
             assert!(
-                !near || touches(&thicker, p, short),
-                "a thicker line is missed: {mark:?} {p:?}"
+                !near || touches(&thicker, from, to, short),
+                "a thicker line is missed: {what}"
+            );
+            // 道筋はその両端を含むので、どちらかの端で触れれば道筋でも触れる。
+            let ends = [from, to].map(|p| touches(&mark, p, p, short));
+            assert!(
+                !ends.contains(&true) || near,
+                "an end touches but the path does not: {what}"
             );
             reach.hit(match (near, far) {
                 (true, _) => "touched both",
                 (false, true) => "touched only the longer",
                 (false, false) => "touched neither",
             });
+            if near && ends == [false, false] {
+                reach.hit("only the path touched");
+            }
         },
     );
     reach.finish("a_longer_reach_never_misses", cases);
@@ -305,11 +379,19 @@ fn the_bar_goes_under_the_area_then_above_then_over_it_and_stays_centered() {
                 assert_eq!(at.y + height, area.top - gap, "above: {what}");
                 reach.hit("above");
             } else {
-                // 下にも上にも入らなければ、範囲に重ねる。
+                // 下にも上にも入らなければ、範囲の中の下端に重ねる。範囲がバーより低くても重なる。
                 assert!(
                     at.y < area.bottom && at.y + height > area.top,
                     "over: {what}"
                 );
+                // バーが入る高さの範囲（モニターの中の部分）なら、バーは範囲からはみ出さない。
+                let top = area.top.max(monitor.top);
+                if area.bottom - top >= height + 2 * gap {
+                    assert!(
+                        at.y >= top && at.y + height <= area.bottom,
+                        "inside: {what}"
+                    );
+                }
                 reach.hit("over");
             }
             // 横は範囲の中央。モニターの端（間隔の内側）からはみ出すときだけ、内側へ寄せる。
