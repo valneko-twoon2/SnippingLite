@@ -208,7 +208,7 @@ impl HistoryApp {
     }
 
     fn open(&mut self, ctx: &egui::Context, entry: Entry) {
-        let Some((width, height, pixels)) = imaging::decode(&entry.image) else {
+        let Some((width, height, pixels)) = decode_shown(ctx, &entry.image) else {
             self.notice = Some((Instant::now(), tr("Could not open the image.")));
             return;
         };
@@ -258,8 +258,15 @@ fn texture_from(
     ctx.load_texture(name, image, TextureOptions::LINEAR)
 }
 
+/// 画像を読み、テクスチャにできる大きさ（どちらの辺もテクスチャの辺の上限まで）なら返す。上限を
+/// 超える絵をテクスチャにすると egui とその描画が panic し、履歴のウィンドウごと落ちる。
+fn decode_shown(ctx: &egui::Context, path: &Path) -> Option<(i32, i32, Vec<u8>)> {
+    let side = ctx.input(|i| i.max_texture_side);
+    imaging::decode(path).filter(|(width, height, _)| (*width).max(*height) as usize <= side)
+}
+
 fn load_texture(ctx: &egui::Context, path: &Path) -> Option<(TextureHandle, i32, i32)> {
-    let (width, height, pixels) = imaging::decode(path)?;
+    let (width, height, pixels) = decode_shown(ctx, path)?;
     Some((
         texture_from(ctx, &path.to_string_lossy(), width, height, &pixels),
         width,
