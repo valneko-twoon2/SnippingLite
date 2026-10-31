@@ -344,7 +344,7 @@ fn a_picture_that_cannot_be_saved_or_copied_is_reported() {
     config::save_settings(&settings).unwrap();
     let answer = answer_dialog(2);
     // SAFETY: the windows belong to this test.
-    unsafe { deliver_capture(pixels.clone(), 2, 2) };
+    unsafe { deliver_capture(pixels.clone(), 2, 2, s().copy) };
     assert!(answer.join().unwrap(), "the save error is shown");
     assert!(!unsafe { toast::visible() });
     // The clipboard is held by someone else for longer than the retries last.
@@ -357,7 +357,7 @@ fn a_picture_that_cannot_be_saved_or_copied_is_reported() {
     config::save_settings(&settings).unwrap();
     let holder = hold_clipboard(Duration::from_millis(1500));
     let answer = answer_dialog(2);
-    unsafe { deliver_capture(pixels, 2, 2) };
+    unsafe { deliver_capture(pixels, 2, 2, s().copy) };
     assert!(answer.join().unwrap(), "the copy error is shown");
     holder.join().unwrap();
     assert_eq!(shots(&desk).len(), 1, "the file was saved all the same");
@@ -374,11 +374,11 @@ fn save_as_lets_the_user_pick_the_file_or_cancel() {
     let pixels = [10, 20, 30, 255].repeat(4);
     let answer = answer_dialog(2);
     // SAFETY: the windows belong to this test.
-    unsafe { deliver_capture(pixels.clone(), 2, 2) };
+    unsafe { deliver_capture(pixels.clone(), 2, 2, s().copy) };
     assert!(answer.join().unwrap());
     assert!(shots(&desk).is_empty(), "cancelling saves nothing");
     let answer = answer_dialog(1);
-    unsafe { deliver_capture(pixels, 2, 2) };
+    unsafe { deliver_capture(pixels, 2, 2, s().copy) };
     assert!(answer.join().unwrap());
     let files = shots(&desk);
     assert_eq!(files.len(), 1);

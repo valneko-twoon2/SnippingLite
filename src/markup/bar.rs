@@ -237,7 +237,7 @@ unsafe fn paint_bar(hwnd: HWND, dc: HDC) {
 /// ボタンを押したときの動作。
 pub(super) unsafe fn press(index: i32) {
     match index {
-        CAPTURE => capture(),
+        CAPTURE => capture(false),
         PEN => set_tool(Tool::Pen),
         HIGHLIGHTER => set_tool(Tool::Highlighter),
         ERASER => set_tool(Tool::Eraser),

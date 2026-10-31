@@ -31,7 +31,8 @@
 //!   （`markup::tests::tray::switching_the_kept_toolbar_off_while_marking_up_keeps_it_closed_afterwards`）
 //! - 隠した自分のウィンドウ → 書き込みの間は隠れたまま、終えた後に戻る
 //!   （`markup::tests::tray::our_windows_stay_hidden_while_marking_up_and_return_after_it`）
-//! - Enter、Ctrl+C、キャプチャのボタン → 書き込みを重ねて確定する。Escape、× → 捨てる。
+//! - Enter、Ctrl+C、キャプチャのボタン → 書き込みを重ねて確定する（Ctrl+C は自動コピーの設定に
+//!   かかわらずコピーもする）。Escape、× → 捨てる。
 //!   Ctrl+Z、Ctrl+Y → 元に戻す、やり直す（`markup::tests::keys`、既存の `markup::tests`）
 //! - TRAY_SETTINGS、TRAY_HISTORY → 切り取り中と同じ。書き込みは続き、Enter で確定できる
 //!   （`settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead`）

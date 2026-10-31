@@ -294,7 +294,7 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
             }
             Ok(image) => {
                 cancel();
-                deliver_snip(image.pixels, image.width, image.height, false);
+                deliver_snip(image.pixels, image.width, image.height, false, state().copy);
             }
             Err(_) => {
                 cancel();
@@ -384,7 +384,7 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
         Some(pixels) => {
             // Close the overlay first so the Save As dialog is not covered by it.
             cancel();
-            deliver_snip(pixels, width, height, shaped);
+            deliver_snip(pixels, width, height, shaped, state().copy);
         }
         None => {
             cancel();
@@ -393,15 +393,22 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
     }
 }
 
-/// 切り取った画像に境界線を付けて届ける。
+/// 切り取った画像に境界線を付けて届ける。`copy` はクリップボードに置くか（ふつうは自動コピーの
+/// 設定。書き込み中の Ctrl+C は設定にかかわらず置く）。保存と履歴は設定に従う。
 /// A freeform shape has no straight edge to draw the border on.
-pub(crate) unsafe fn deliver_snip(pixels: Vec<u8>, width: i32, height: i32, shaped: bool) {
+pub(crate) unsafe fn deliver_snip(
+    pixels: Vec<u8>,
+    width: i32,
+    height: i32,
+    shaped: bool,
+    copy: bool,
+) {
     let pixels = if shaped {
         pixels
     } else {
         with_outline(pixels, width, height)
     };
-    deliver_capture(pixels, width, height);
+    deliver_capture(pixels, width, height, copy);
 }
 
 /// Draws the border chosen in the settings.
@@ -418,7 +425,7 @@ unsafe fn with_outline(mut pixels: Vec<u8>, width: i32, height: i32) -> Vec<u8> 
     pixels
 }
 
-unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
+unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32, copy: bool) {
     let mut errors = Vec::new();
     let mut saved = None;
     if state().save {
@@ -427,8 +434,8 @@ unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32) {
             Err(_) => errors.push(tr("Could not save the image.")),
         }
     }
-    let copied = state().copy && imaging::copy_to_clipboard(state().owner, &pixels, width, height);
-    if state().copy && !copied {
+    let copied = copy && imaging::copy_to_clipboard(state().owner, &pixels, width, height);
+    if copy && !copied {
         errors.push(tr("Could not copy the image to the clipboard."));
     }
     let png = saved.clone().filter(|path| {

@@ -65,13 +65,13 @@ pub(crate) unsafe fn begin(at: POINT, pixels: Vec<u8>, width: i32, height: i32, 
         set_layered(s.overlay, false);
         if !frozen {
             cancel();
-            deliver_snip(pixels, width, height, shaped);
+            deliver_snip(pixels, width, height, shaped, state().copy);
             return;
         }
     }
     let Some(view) = ui::Canvas::new(width, height) else {
         cancel();
-        deliver_snip(pixels, width, height, shaped);
+        deliver_snip(pixels, width, height, shaped, state().copy);
         return;
     };
     s.markup_session = Some(Box::new(Session {
@@ -106,8 +106,10 @@ pub(crate) unsafe fn begin(at: POINT, pixels: Vec<u8>, width: i32, height: i32, 
     SetFocus(s.overlay);
 }
 
-/// 書き込みを重ねた画像を届けて、切り取りを終える。
-pub(crate) unsafe fn capture() {
+/// 書き込みを重ねた画像を届けて、切り取りを終える。`copy_anyway`（Ctrl+C）なら、自動コピーの
+/// 設定にかかわらずクリップボードにも置く。Enter とキャプチャのボタンは設定に従う。保存と履歴は
+/// いつも設定に従い、どれも確定したときの設定が効く。
+pub(crate) unsafe fn capture(copy_anyway: bool) {
     let Some(session) = state().markup_session.take() else {
         return;
     };
@@ -119,7 +121,7 @@ pub(crate) unsafe fn capture() {
         ..
     } = *session;
     cancel();
-    deliver_snip(base, width, height, shaped);
+    deliver_snip(base, width, height, shaped, copy_anyway || state().copy);
 }
 
 pub(crate) unsafe fn set_tool(tool: Tool) {
@@ -428,8 +430,8 @@ pub(crate) unsafe fn overlay_message(
             let control = GetKeyState(VK_CONTROL as i32) < 0;
             match wp as u16 {
                 VK_ESCAPE => cancel(),
-                VK_RETURN => capture(),
-                key if control && key == b'C' as u16 => capture(),
+                VK_RETURN => capture(false),
+                key if control && key == b'C' as u16 => capture(true),
                 key if control && key == b'Z' as u16 => undo(),
                 key if control && key == b'Y' as u16 => redo(),
                 _ => {}
