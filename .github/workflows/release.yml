@@ -1,16 +1,19 @@
 name: release
 
-# Pushing a tag such as v0.1.0 builds the release and publishes artifacts/ as a GitHub release.
+# v0.1.0 のようなタグを push すると、まずタグとバージョンの一致を確かめ、次に test.yml のテストをすべて
+# 通し、そのあとで artifacts/ のファイルを GitHub のリリースとして公開する。テストが 1 つでも
+# 落ちれば、リリースは作られない（タグだけが残るので、直して、タグを付け直す）。
 on:
   push:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
-    runs-on: windows-latest
+  version:
+    runs-on: windows-2025
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag matches the crate version
@@ -18,6 +21,25 @@ jobs:
         run: |
           $version = (Select-String -Path src/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match version $version." }
+
+  test:
+    needs: version
+    uses: ./.github/workflows/test.yml
+    permissions:
+      contents: read
+
+  release:
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
       - name: Build and collect the release files
         shell: pwsh
         run: scripts/publish.ps1
