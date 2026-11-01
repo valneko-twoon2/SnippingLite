@@ -28,13 +28,10 @@ pub(crate) unsafe fn begin_capture() {
             state().hidden.push(identity);
         }
     }
-    // A kept toolbar must not appear in the capture either; it comes back with the overlay.
-    let kept = IsWindowVisible(state().toolbar) != 0;
-    if kept {
-        ShowWindow(state().toolbar, SW_HIDE);
-    }
+    // 残したツールバーは撮影から除いてある（`create_windows`）ので、隠さずそのまま出しておく。
+    // 隠して出し直すと、カメラや動画のボタンを押すたびにちらつく。
     // Only wait for the compositor when one of our windows has to leave the screen first.
-    let flush = kept || !state().hidden.is_empty() || toast::visible();
+    let flush = !state().hidden.is_empty() || toast::visible();
     toast::close();
     if state().delay > 0 && SetTimer(owner, DELAY_TIMER, state().delay * 1000, None) != 0 {
         state().pending = true;
@@ -333,8 +330,8 @@ pub(crate) unsafe fn finish(rect: RECT, freeform: bool) {
     let old = SelectObject(mem, bitmap);
     let live = state().screen_dc.is_null();
     let (source, left, top, operation) = if live {
-        // Our own overlay and toolbar must be off the screen before it is copied.
-        ShowWindow(state().toolbar, SW_HIDE);
+        // Our own overlay must be off the screen before it is copied. The toolbar is left out of
+        // the capture already.
         ShowWindow(state().overlay, SW_HIDE);
         DwmFlush();
         (
@@ -468,7 +465,10 @@ unsafe fn deliver_capture(pixels: Vec<u8>, width: i32, height: i32, copy: bool) 
 pub(crate) unsafe fn cancel() {
     if state().active {
         ReleaseCapture();
-        ShowWindow(state().toolbar, SW_HIDE);
+        // 残したツールバーは隠さない。隠して出し直すと、履歴や設定のボタンを押すたびにちらつく。
+        if !state().toolbar_open {
+            ShowWindow(state().toolbar, SW_HIDE);
+        }
         ShowWindow(state().overlay, SW_HIDE);
     }
     cleanup();

@@ -226,6 +226,10 @@ unsafe fn create_windows() -> bool {
             GetModuleHandleW(null()),
             null(),
         );
+        // 残したツールバーを、撮影のたびに隠して出し直さなくても写らないようにする。
+        if !s.toolbar.is_null() {
+            SetWindowDisplayAffinity(s.toolbar, WDA_EXCLUDEFROMCAPTURE);
+        }
     }
     !s.overlay.is_null() && !s.toolbar.is_null()
 }

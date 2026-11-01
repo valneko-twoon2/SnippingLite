@@ -26,7 +26,7 @@ pub const TEXT: &str = "Hello World 123";
 pub const CAMERA: f32 = 26.0;
 pub const VIDEO: f32 = 62.0;
 pub const AREA: f32 = 116.0;
-pub const CLOSE: f32 = 306.0;
+pub const CLOSE: f32 = 350.0;
 /// The space between the capture types and the area button, which moves the toolbar.
 pub const GAP: f32 = 86.0;
 /// Recording indicator positions in DIPs, as in `video.rs`.

@@ -206,7 +206,7 @@ impl Backdrop {
 
     /// The toolbar where a newly opened snip places it: the top center of the monitor.
     pub fn toolbar(&self) -> RECT {
-        let width = (332.0 * self.scale).round() as i32;
+        let width = (376.0 * self.scale).round() as i32;
         let left = (self.monitor.left + self.monitor.right - width) / 2;
         let top = self.monitor.top + (12.0 * self.scale).round() as i32;
         RECT {

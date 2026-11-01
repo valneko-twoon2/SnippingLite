@@ -407,3 +407,25 @@ fn the_text_button_and_the_pen_button_exclude_each_other() {
     s().extract = false;
     config::save_markup(false);
 }
+
+#[test]
+#[ignore = "Covers the screen"]
+fn a_kept_toolbar_stays_on_the_screen_while_a_snip_starts_and_ends() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowDisplayAffinity;
+    let desk = Desk::start_with(|settings| settings.keep_toolbar = true);
+    let mut affinity = 0;
+    // SAFETY: plain query of the toolbar window.
+    unsafe { GetWindowDisplayAffinity(s().toolbar, &mut affinity) };
+    assert_eq!(
+        affinity, WDA_EXCLUDEFROMCAPTURE,
+        "left out of every capture"
+    );
+    start(&desk);
+    assert!(shown(s().toolbar));
+    // Pressing the camera again and ending the snip never hide it: that made it flicker.
+    press(&desk, CAMERA_BUTTON);
+    assert!(s().active && shown(s().toolbar));
+    desk.key(s().overlay, 0x1b);
+    desk.pump(Duration::from_millis(50));
+    assert!(!s().active && shown(s().toolbar));
+}

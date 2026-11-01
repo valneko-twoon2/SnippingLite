@@ -1,5 +1,5 @@
 //! 合成した WM_DPICHANGED を本物の窓に送り、新しい倍率で作り直すかを確かめる。この PC の拡大率は
-//! 変えない。期待する大きさは DIP の寸法（ツールバー 332x48、バー 432x48、カウントダウン 120、
+//! 変えない。期待する大きさは DIP の寸法（ツールバー 376x48、バー 432x48、カウントダウン 120、
 //! 録画中の表示 168x48、通知 364x136）に倍率を掛けて手で求める。
 //!
 //! | 窓 | 期待 | テスト |
@@ -80,21 +80,21 @@ fn the_toolbar_is_rebuilt_at_the_new_scale_in_the_suggested_place() {
         assert_eq!(s().scale, scale, "{dpi}");
         assert_eq!(
             edges(bounds(toolbar)),
-            edges(rect(left, top, dip(332.0, scale), dip(48.0, scale))),
+            edges(rect(left, top, dip(376.0, scale), dip(48.0, scale))),
             "{dpi}"
         );
-        // ボタンも新しい倍率の所にある: × の真ん中（306, 24 DIP）はボタン、区切りの隙間
+        // ボタンも新しい倍率の所にある: × の真ん中（350, 24 DIP）はボタン、区切りの隙間
         // （86 DIP）はつかんで動かす所。
         let screen = |x: f32| lparam(left + dip(x, scale), top + dip(24.0, scale));
         assert_eq!(
-            desk.send(toolbar, WM_NCHITTEST, 0, screen(306.0)),
+            desk.send(toolbar, WM_NCHITTEST, 0, screen(350.0)),
             HTCLIENT as LRESULT
         );
         assert_eq!(
             desk.send(toolbar, WM_NCHITTEST, 0, screen(86.0)),
             HTCAPTION as LRESULT
         );
-        desk.mouse(toolbar, WM_MOUSEMOVE, dip(306.0, scale), dip(24.0, scale));
+        desk.mouse(toolbar, WM_MOUSEMOVE, dip(350.0, scale), dip(24.0, scale));
         assert_eq!(s().hover_button, CLOSE_BUTTON, "{dpi}");
         desk.send(toolbar, WM_MOUSELEAVE, 0, 0);
         desk.send(toolbar, WM_PAINT, 0, 0);

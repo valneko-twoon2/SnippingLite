@@ -35,8 +35,8 @@ fn assert_toolbar_placed(before: &Snapshot) {
         );
         info.rcMonitor
     };
-    // README: 次に開くと上部中央に戻る（幅 332 DIP、上から 12 DIP）。
-    let width = (332.0 * st.scale).round() as i32;
+    // README: 次に開くと上部中央に戻る（幅 376 DIP、上から 12 DIP）。
+    let width = (376.0 * st.scale).round() as i32;
     let expected = (
         (monitor.left + monitor.right - width) / 2,
         monitor.top + (12.0 * st.scale).round() as i32,
