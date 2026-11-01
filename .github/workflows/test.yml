@@ -62,7 +62,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name screen
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screen-logs
           path: ci-logs
@@ -88,7 +88,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name leaks
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: leaks-logs
           path: ci-logs
@@ -114,7 +114,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name e2e
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-logs
           path: ci-logs
