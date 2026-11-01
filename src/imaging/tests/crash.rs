@@ -6,6 +6,9 @@
 //! 書きかけは、次にそのフォルダーへ保存する `encode` が消す。利用者のファイル、書き終えた録画の
 //! 別名（`staging::keep` の `(2).mp4`）、一時名に似ているが規則に合わない名前、動いているプロセスが
 //! 書いている途中の書きかけには触れない。
+//!
+//! 利用者がほかの形式の拡張子（`chosen.jpg`）を打っても、保存する名前は選んだ種類の拡張子で終わる
+//! （`chosen.jpg.png`）。書きかけ（`chosen.jpg.png.<ID>.partial`）も掃除の規則に合い、次の保存で消える。
 
 use super::*;
 use crate::test_support::{crash, Sandbox};
@@ -61,40 +64,72 @@ fn mine_untouched() {
     }
 }
 
+/// 名前を付けて保存で `typed` を打って保存する（ダイアログの代わりに、出された場所に打った名前で
+/// 答える。PNG を選んだまま）。
+fn save_as(typed: &str) {
+    let path = settle(&chosen(), "Snipping Lite 1.png", |folder, _, _| {
+        Some((folder.join(typed), 1))
+    })
+    .unwrap();
+    encode(&path, &picture(), 4, 3).unwrap();
+}
+
 #[test]
 #[ignore = "Runs only as the child process of a crash test"]
 fn child_saves_a_picture_where_the_save_dialog_points() {
     if !crash::is_child() {
         return;
     }
-    encode(&chosen().join("chosen.png"), &picture(), 4, 3).unwrap();
+    save_as("chosen.png");
 }
 
 #[test]
-fn a_picture_saved_as_and_killed_part_way_is_tidied_by_the_next_save_there() {
-    let child = crash::test_name(
-        module_path!(),
-        "child_saves_a_picture_where_the_save_dialog_points",
-    );
+#[ignore = "Runs only as the child process of a crash test"]
+fn child_saves_a_picture_typed_with_another_extension() {
+    if !crash::is_child() {
+        return;
+    }
+    save_as("chosen.jpg");
+}
+
+/// 子が `saved`（保存する名前）へ書いたところで殺し、残ったものと次の保存の片付けを確かめる。
+fn killed_and_tidied(child: &str, saved: &'static str) {
+    let child = crash::test_name(module_path!(), child);
     let check = |_: &Sandbox, crashed: &crash::Crash| {
         if crashed.stopped.is_some() {
-            let partial = format!("chosen.png.{}.partial", crashed.id());
+            let partial = format!("{saved}.{}.partial", crashed.id());
             assert_eq!(names(), expected(&[&partial]), "only the half-written one");
             // 次に同じフォルダーへ保存すると、止まったプロセスの書きかけだけが消える。
             encode(&chosen().join("next.png"), &picture(), 4, 3).unwrap();
             assert_eq!(names(), expected(&["next.png"]));
             assert_eq!(decode(&chosen().join("next.png")), Some((4, 3, picture())));
         } else {
-            assert_eq!(names(), expected(&["chosen.png"]));
-            assert_eq!(
-                decode(&chosen().join("chosen.png")),
-                Some((4, 3, picture()))
-            );
+            assert_eq!(names(), expected(&[saved]));
+            assert_eq!(decode(&chosen().join(saved)), Some((4, 3, picture())));
+            // 名前のとおり PNG で書いてある。
+            let bytes = fs::read(chosen().join(saved)).unwrap();
+            assert!(bytes.starts_with(b"\x89PNG"), "{saved} is a PNG");
         }
         mine_untouched();
     };
     let stages = crash::sweep(&child, 5, prepare, check);
-    assert_eq!(stages, ["picture written: chosen.png"]);
+    assert_eq!(stages, [format!("picture written: {saved}")]);
+}
+
+#[test]
+fn a_picture_saved_as_and_killed_part_way_is_tidied_by_the_next_save_there() {
+    killed_and_tidied(
+        "child_saves_a_picture_where_the_save_dialog_points",
+        "chosen.png",
+    );
+}
+
+#[test]
+fn a_picture_typed_as_chosen_jpg_is_saved_as_png_and_tidied_by_the_next_save() {
+    killed_and_tidied(
+        "child_saves_a_picture_typed_with_another_extension",
+        "chosen.jpg.png",
+    );
 }
 
 #[test]

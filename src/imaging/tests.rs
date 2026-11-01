@@ -132,30 +132,6 @@ fn encoding_and_decoding_report_failures() {
 }
 
 #[test]
-fn a_name_without_an_extension_gets_the_chosen_one() {
-    let bare = PathBuf::from("D:\\Shots\\shot");
-    assert_eq!(
-        default_extension(bare.clone(), "png"),
-        PathBuf::from("D:\\Shots\\shot.png")
-    );
-    assert_eq!(
-        default_extension(bare, "mp4"),
-        PathBuf::from("D:\\Shots\\shot.mp4")
-    );
-    let named = PathBuf::from("D:\\Shots\\shot.bmp");
-    assert_eq!(default_extension(named.clone(), "png"), named);
-}
-
-#[test]
-fn without_asking_the_path_is_the_folder_and_name() {
-    let folder = Path::new("D:\\Shots");
-    assert_eq!(
-        choose_path(null_mut(), folder, "a.png", false),
-        Some(PathBuf::from("D:\\Shots\\a.png"))
-    );
-}
-
-#[test]
 fn timestamps_never_go_backwards() {
     let first = timestamp().unwrap();
     let second = timestamp().unwrap();
@@ -342,49 +318,6 @@ fn clipboard_bitmap() -> Option<Vec<u8>> {
     }
 }
 
-use crate::test_support::answer_dialog;
-
-#[test]
-#[ignore = "Shows dialogs"]
-fn the_save_dialogs_return_the_chosen_path_or_nothing() {
-    let folder = scratch("dialogs");
-    fs::create_dir_all(&folder).unwrap();
-    // Cancelling gives nothing.
-    let answer = answer_dialog(2);
-    assert_eq!(choose_path(null_mut(), &folder, "a.png", true), None);
-    assert!(answer.join().unwrap());
-    // Accepting keeps the proposed name; a name without an extension gets the default one.
-    let answer = answer_dialog(1);
-    assert_eq!(
-        choose_path(null_mut(), &folder, "a.png", true),
-        Some(folder.join("a.png"))
-    );
-    assert!(answer.join().unwrap());
-    let answer = answer_dialog(1);
-    assert_eq!(
-        choose_path(null_mut(), &folder, "b", true),
-        Some(folder.join("b.png"))
-    );
-    assert!(answer.join().unwrap());
-}
-
-#[test]
-#[ignore = "Shows a dialog"]
-fn the_folder_dialog_returns_the_current_folder_or_nothing() {
-    let folder = scratch("folders");
-    fs::create_dir_all(&folder).unwrap();
-    let answer = answer_dialog(2);
-    assert_eq!(choose_folder(null_mut(), &folder), None);
-    assert!(answer.join().unwrap());
-    let answer = answer_dialog(1);
-    assert_eq!(choose_folder(null_mut(), &folder), Some(folder.clone()));
-    assert!(answer.join().unwrap());
-    // A folder that does not exist still opens the dialog.
-    let answer = answer_dialog(2);
-    assert_eq!(choose_folder(null_mut(), &folder.join("missing")), None);
-    assert!(answer.join().unwrap());
-}
-
 #[test]
 fn opening_a_folder_creates_it_and_asks_the_shell_to_open_it() {
     let folder = scratch("opened");
@@ -425,6 +358,7 @@ fn a_file_goes_on_the_clipboard_as_a_file_list() {
 }
 
 mod crash;
+mod dialogs;
 mod differential;
 mod fuzz;
 mod inputs;
