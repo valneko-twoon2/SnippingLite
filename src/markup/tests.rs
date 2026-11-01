@@ -24,6 +24,29 @@ fn line(points: &[(f32, f32)], radius: f32) -> Mark {
     }
 }
 
+/// `control` なら Ctrl を押したまま、でなければ離したままにして `send` を呼ぶ。オーバーレイが
+/// 読む GetKeyState はこのスレッドのキーの状態なので、本物のキーボードには触れずに済む。
+///
+/// 入力デスクトップでは、ほかのプロセスが前面のウィンドウを替えるなどすると、Windows がこの
+/// スレッドに同期を保留し、次の GetKeyState でキーの状態の表をまるごとシステムの状態に置き換える
+/// （`test_support::desk` の `desktop` を参照）。確かめた範囲では、GetKeyboardState と
+/// SetKeyboardState は保留を当てない。先に GetKeyState で保留を当ててから書き換えないと、書いた
+/// Ctrl が、送ったキーを読む GetKeyState で消える。書き換えてから読むまでの間に新しく保留された
+/// ものは防げないので、画面を使わないテストは `Desk::start_apart` で入力デスクトップから離れる。
+fn with_control(control: bool, send: impl FnOnce()) {
+    let mut keys = [0u8; 256];
+    // SAFETY: the calls read or write the 256 key states of this thread.
+    unsafe {
+        GetKeyState(VK_CONTROL as i32);
+        GetKeyboardState(keys.as_mut_ptr());
+        let saved = keys;
+        keys[VK_CONTROL as usize] = if control { 0x80 } else { 0 };
+        SetKeyboardState(keys.as_ptr());
+        send();
+        SetKeyboardState(saved.as_ptr());
+    }
+}
+
 fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
     RECT {
         left,
