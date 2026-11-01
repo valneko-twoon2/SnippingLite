@@ -54,6 +54,8 @@ pub(crate) unsafe fn capture(flush: bool) {
     state().origin = POINT { x, y };
     state().width = width;
     state().height = height;
+    // オーバーレイが覆う並び。構成が変わったら取り消す（overlay/display.rs）。
+    remember_layout();
     let live = !state().freeze;
     let dimmed = if live {
         state().live = ui::Canvas::new(width, height);
@@ -73,7 +75,12 @@ pub(crate) unsafe fn capture(flush: bool) {
     state().theme = ui::theme();
     let mut cursor = POINT { x: 0, y: 0 };
     GetCursorPos(&mut cursor);
-    state().scale = ui::scale_at(cursor);
+    // 残したツールバーは、マウスではなく、それのあるモニターの倍率で描く。
+    state().scale = if state().toolbar_open {
+        kept_scale()
+    } else {
+        ui::scale_at(cursor)
+    };
     if !create_windows() {
         cleanup();
         restore_windows();

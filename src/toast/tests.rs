@@ -55,6 +55,54 @@ fn the_close_button_stays_inside_the_toast_on_every_scale() {
 }
 
 #[test]
+fn the_notification_sits_in_the_lower_right_of_any_work_area_at_its_scale() {
+    let work = |left, top, right, bottom| RECT {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    // 作業領域の右下から 12 DIP 内側。幅 364 DIP、高さは本文なしで 136、ありで 156 DIP。
+    // (left, right, top, width, height) の right は滑り込む前の左端（作業領域の右端）。
+    for (area, scale, body, expected) in [
+        (
+            work(0, 0, 1920, 1032),
+            1.0,
+            false,
+            (1544, 1920, 884, 364, 136),
+        ),
+        // 150%: 幅 546、高さ 234、余白 18。
+        (
+            work(0, 0, 1920, 1032),
+            1.5,
+            true,
+            (1356, 1920, 780, 546, 234),
+        ),
+        // タスクバーが上にある 200%: 幅 728、高さ 272、余白 24。
+        (
+            work(0, 40, 2560, 1440),
+            2.0,
+            false,
+            (1808, 2560, 1144, 728, 272),
+        ),
+        // 負の座標の作業領域、125%: 幅 455、高さ 195、余白 15。
+        (
+            work(-1920, 0, 0, 1020),
+            1.25,
+            true,
+            (-470, 0, 810, 455, 195),
+        ),
+    ] {
+        let f = frame(area, scale, body);
+        assert_eq!(
+            (f.left, f.right, f.top, f.width, f.height),
+            expected,
+            "{scale} {body}"
+        );
+    }
+}
+
+#[test]
 #[ignore = "Shows notification windows"]
 fn what_the_notification_says_follows_where_the_image_went() {
     let desk = Desk::start();

@@ -100,9 +100,17 @@ pub(crate) unsafe fn place_toolbar(cursor: POINT) {
         state().toolbar_dark = Some(state().theme.dark);
     }
     // A kept toolbar stays where it was moved; a newly opened one starts at the top center.
+    // ディスプレイの構成が変わって残したツールバーが画面からはみ出したときだけ、いちばん近い
+    // モニターの中へ寄せる（`ui::monitors::keep_on_screen`）。
     let mut bounds: RECT = std::mem::zeroed();
     let (left, top) = if state().toolbar_open && GetWindowRect(state().toolbar, &mut bounds) != 0 {
-        (bounds.left, bounds.top)
+        let resized = RECT {
+            right: bounds.left + width,
+            bottom: bounds.top + height,
+            ..bounds
+        };
+        let kept = ui::monitors::keep_on_screen(&ui::monitors::current(), resized);
+        (kept.left, kept.top)
     } else {
         (
             (monitor.left + monitor.right - width) / 2,
@@ -119,6 +127,15 @@ pub(crate) unsafe fn place_toolbar(cursor: POINT) {
         SWP_NOACTIVATE | SWP_NOZORDER,
     );
 }
+/// 残したツールバーの倍率: いちばん広く重なるモニター（画面の外なら、戻す先のいちばん近い
+/// モニター）の DPI。Windows も窓の DPI をこのモニターで決める。撮影を始めたときのマウスが
+/// 別の DPI のモニターにあっても、ツールバーはそれのあるモニターの倍率で描く。
+pub(crate) unsafe fn kept_scale() -> f32 {
+    let mut bounds: RECT = std::mem::zeroed();
+    GetWindowRect(state().toolbar, &mut bounds);
+    ui::monitors::most_of(&ui::monitors::current(), bounds)
+        .map_or(state().scale, |monitor| ui::monitors::scale(monitor.dpi))
+}
 /// Shows a kept toolbar between snips where it was left. A countdown or a
 /// recording on another monitor changes the scale, so the toolbar is sized and
 /// painted again for the monitor it is on.
@@ -130,13 +147,37 @@ pub(crate) unsafe fn show_kept_toolbar() {
         x: bounds.left,
         y: bounds.top,
     };
-    state().scale = ui::scale_at(corner);
+    state().scale = kept_scale();
     place_toolbar(corner);
     InvalidateRect(toolbar, null(), 0);
     ShowWindow(toolbar, SW_SHOWNOACTIVATE);
     ui::raise(toolbar);
     // A window that is always on top may rise over it a moment later; see `ui::raise`.
     SetTimer(toolbar, RAISE_TIMER, 200, None);
+}
+/// WM_DPICHANGED: 別の DPI のモニターへドラッグした、またはモニターの拡大率が変わった。新しい
+/// 倍率で作り直し、提案された矩形の左上へ移す。大きさは提案ではなく倍率から決める。自分で別の
+/// DPI のモニターへ置き直したとき（撮影の開始、構成の変化）にもこのメッセージが届き、そのときは
+/// 倍率をもう新しい値にしてあるので、何もしない（提案の大きさを当てると二重に拡大しうる）。
+unsafe fn rescale(hwnd: HWND, wp: WPARAM, lp: LPARAM) {
+    let scale = ui::monitors::message_scale(wp);
+    if scale == state().scale || lp == 0 {
+        return;
+    }
+    // 番地が揃っていなくても panic しないよう read_unaligned で読む（デバッグ版の `*` は揃いを
+    // 確かめ、揃っていなければ panic する）。
+    let suggested = std::ptr::read_unaligned(lp as *const RECT);
+    state().scale = scale;
+    SetWindowPos(
+        hwnd,
+        null_mut(),
+        suggested.left,
+        suggested.top,
+        (BAR_WIDTH * scale).round() as i32,
+        (BAR_HEIGHT * scale).round() as i32,
+        SWP_NOACTIVATE | SWP_NOZORDER,
+    );
+    InvalidateRect(hwnd, null(), 0);
 }
 /// The button under `p` in client coordinates, or -1 for the space that moves the toolbar.
 fn button_at(p: POINT, scale: f32) -> i32 {
@@ -273,6 +314,10 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             }
         }
         WM_NCLBUTTONDBLCLK => 0,
+        WM_DPICHANGED => {
+            rescale(hwnd, wp, lp);
+            0
+        }
         WM_TIMER if wp == RAISE_TIMER => {
             KillTimer(hwnd, RAISE_TIMER);
             // Only a kept toolbar between snips; a closed one stays hidden.

@@ -28,6 +28,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 mod canvas;
 pub use canvas::*;
+/// モニターの並びと DPI から窓を置く所を決める関数。
+pub mod monitors;
 
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
 pub const TEXT_FONT: &str = "Yu Gothic UI";

@@ -6,7 +6,7 @@ use crate::annotate::{self, Mark};
 
 mod bar;
 mod eraser;
-pub(crate) use bar::{bar_proc, BAR};
+pub(crate) use bar::{bar_proc, show as show_bar, BAR};
 use eraser::{erase, Erasing};
 #[cfg(test)]
 use eraser::{touches, ERASER_REACH};

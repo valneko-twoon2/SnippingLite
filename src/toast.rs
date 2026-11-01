@@ -22,6 +22,9 @@ use crate::{
     w,
 };
 
+mod paint;
+use paint::paint;
+
 pub const CLASS: &str = "SnippingLiteToast";
 const ANIMATION: usize = 1;
 const DISMISS: usize = 2;
@@ -83,6 +86,74 @@ pub unsafe fn show_moved_recording(pixels: &[u8], width: i32, height: i32, path:
     present(pixels, width, height, title, body, Some(path));
 }
 
+/// 通知の置き場所（画面の座標）。出ている間の左端 `left`、滑り込む前と滑り出た後の左端 `right`
+/// （作業領域の右端の外）、上端、幅と高さ。
+struct Frame {
+    left: i32,
+    right: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+}
+
+/// 作業領域 `work` の右下に、端から 12 DIP 空けて置く。本文があれば 20 DIP 高い。
+fn frame(work: RECT, scale: f32, body: bool) -> Frame {
+    let height = if body { 156.0 } else { 136.0 };
+    let (width, height) = (
+        (WIDTH * scale).round() as i32,
+        (height * scale).round() as i32,
+    );
+    let margin = (12.0 * scale).round() as i32;
+    Frame {
+        left: work.right - margin - width,
+        right: work.right,
+        top: work.bottom - margin - height,
+        width,
+        height,
+    }
+}
+
+/// 通知を出す作業領域（主モニターの、タスクバーを除いた所）と、その右下の倍率。
+unsafe fn home() -> (RECT, f32) {
+    let mut work: RECT = std::mem::zeroed();
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
+    let scale = ui::scale_at(POINT {
+        x: work.right - 1,
+        y: work.bottom - 1,
+    });
+    (work, scale)
+}
+
+/// 通知を倍率 `scale` で作り直し、今の作業領域の右下へ置き直す。滑っている途中なら横の位置は
+/// そのままにして、次の刻みから新しい位置へ滑らせる。
+unsafe fn relayout(toast: &mut Toast, scale: f32) {
+    let f = frame(home().0, scale, !toast.body.is_empty());
+    (toast.scale, toast.left, toast.right, toast.top) = (scale, f.left, f.right, f.top);
+    let sliding = toast.closing || toast.started.elapsed().as_secs_f32() * 1000.0 < SLIDE_MS;
+    let mut bounds: RECT = std::mem::zeroed();
+    GetWindowRect(toast.hwnd, &mut bounds);
+    let x = if sliding { bounds.left } else { f.left };
+    SetWindowPos(
+        toast.hwnd,
+        null_mut(),
+        x,
+        f.top,
+        f.width,
+        f.height,
+        SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    InvalidateRect(toast.hwnd, null(), 0);
+}
+
+/// ディスプレイの構成が変わった（解像度、モニターの追加と取り外し、主モニターの交代）: 出ている
+/// 通知を、新しい作業領域の右下へ、そこの倍率で置き直す。消えるまでの時間は変えない。
+pub unsafe fn display_changed() {
+    let scale = home().1;
+    if let Some(toast) = state().toast.as_deref_mut() {
+        relayout(toast, scale);
+    }
+}
+
 unsafe fn present(
     _pixels: &[u8],
     _width: i32,
@@ -92,26 +163,17 @@ unsafe fn present(
     path: Option<PathBuf>,
 ) {
     close();
-    let mut work: RECT = std::mem::zeroed();
-    SystemParametersInfoW(SPI_GETWORKAREA, 0, (&mut work as *mut RECT).cast(), 0);
-    let scale = ui::scale_at(POINT {
-        x: work.right - 1,
-        y: work.bottom - 1,
-    });
-    let toast_height = if body.is_empty() { 136.0 } else { 156.0 };
-    let toast_width = (WIDTH * scale).round() as i32;
-    let toast_height = (toast_height * scale).round() as i32;
-    let margin = (12.0 * scale).round() as i32;
-    let right = work.right - margin;
+    let (work, scale) = home();
+    let place = frame(work, scale, !body.is_empty());
     let hwnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
         w(CLASS).as_ptr(),
         w("Snipping Lite Notification").as_ptr(),
         WS_POPUP,
-        work.right,
-        work.bottom - margin - toast_height,
-        toast_width,
-        toast_height,
+        place.right,
+        place.top,
+        place.width,
+        place.height,
         null_mut(),
         null_mut(),
         null_mut(),
@@ -134,9 +196,9 @@ unsafe fn present(
         menu_hover: false,
         path,
         scale,
-        left: right - toast_width,
-        right: work.right,
-        top: work.bottom - margin - toast_height,
+        left: place.left,
+        right: place.right,
+        top: place.top,
         started: Instant::now(),
         closing: false,
         hover: false,
@@ -181,133 +243,6 @@ fn close_button(scale: f32, width: i32) -> RECT {
     ui::rect(right - size, 8.0 * scale, right, 8.0 * scale + size)
 }
 
-unsafe fn paint(toast: &Toast, dc: HDC) {
-    let mut client: RECT = std::mem::zeroed();
-    GetClientRect(toast.hwnd, &mut client);
-    let Some(mut canvas) = Canvas::new(client.right, client.bottom) else {
-        return;
-    };
-    let theme = ui::theme();
-    let s = toast.scale;
-    let title_top = 48.0;
-    canvas.surface(theme.dark, s);
-    let small = Font::new(ui::TEXT_FONT, 12.0 * s, FW_NORMAL as i32);
-    canvas.app_icon(
-        (PADDING * s).round() as i32,
-        (18.0 * s).round() as i32,
-        (16.0 * s).round() as u32,
-    );
-    canvas.text(
-        "Snipping Lite",
-        &small,
-        ui::rect(
-            (PADDING + 24.0) * s,
-            PADDING * s,
-            (WIDTH - PADDING - 40.0) * s,
-            (PADDING + HEADER) * s,
-        ),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        theme.secondary,
-    );
-    {
-        let button = close_button(s, client.right);
-        if toast.close_hover {
-            canvas.fill_round_rect(
-                [
-                    button.left as f32,
-                    button.top as f32,
-                    button.right as f32,
-                    button.bottom as f32,
-                ],
-                4.0 * s,
-                theme.hover,
-            );
-        }
-        let glyph = Font::new(ui::ICON_FONT, 10.0 * s, FW_NORMAL as i32);
-        canvas.text(
-            "\u{E711}",
-            &glyph,
-            button,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-            theme.text,
-        );
-    }
-    let title = Font::new(ui::TEXT_FONT, 14.0 * s, FW_NORMAL as i32);
-    let body = Font::new(ui::TEXT_FONT, 14.0 * s, FW_NORMAL as i32);
-    canvas.text(
-        toast.title,
-        &title,
-        ui::rect(
-            PADDING * s,
-            title_top * s,
-            (WIDTH - PADDING) * s,
-            (title_top + 20.0) * s,
-        ),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-        theme.text,
-    );
-    canvas.text(
-        &toast.body,
-        &body,
-        ui::rect(
-            PADDING * s,
-            (title_top + 22.0) * s,
-            (WIDTH - PADDING) * s,
-            (title_top + 40.0) * s,
-        ),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS,
-        theme.secondary,
-    );
-    let menu = ui::rect((WIDTH - 84.0) * s, 8.0 * s, (WIDTH - 44.0) * s, 40.0 * s);
-    let glyph = Font::new(ui::ICON_FONT, 12.0 * s, FW_NORMAL as i32);
-    canvas.text(
-        "\u{E712}",
-        &glyph,
-        menu,
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        theme.secondary,
-    );
-    if toast.can_open {
-        let top = if toast.body.is_empty() { 88.0 } else { 108.0 };
-        let button = [
-            PADDING * s,
-            top * s,
-            (WIDTH - PADDING) * s,
-            (top + 32.0) * s,
-        ];
-        let border = if theme.dark { 0xff404040 } else { 0xffd0d0d0 };
-        let fill = if theme.dark {
-            if toast.action_hover {
-                0xff353535
-            } else {
-                0xff2d2d2d
-            }
-        } else if toast.action_hover {
-            0xffeeeeee
-        } else {
-            0xfffafafa
-        };
-        canvas.fill_round_rect(button, 4.0 * s, border);
-        canvas.fill_round_rect(
-            [button[0] + s, button[1] + s, button[2] - s, button[3] - s],
-            3.0 * s,
-            fill,
-        );
-        canvas.text(
-            if toast.edit {
-                tr("Markup and share")
-            } else {
-                tr("Open")
-            },
-            &body,
-            ui::rect(button[0], button[1], button[2], button[3]),
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-            theme.text,
-        );
-    }
-    canvas.present(dc);
-}
-
 pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let Some(toast) = state().toast.as_deref_mut().filter(|t| t.hwnd == hwnd) else {
         return DefWindowProcW(hwnd, msg, wp, lp);
@@ -315,6 +250,15 @@ pub unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM)
     match msg {
         WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
         WM_ERASEBKGND => 1,
+        // 通知のあるモニターの拡大率が変わった。新しい倍率で作り直し、作業領域の右下へ置き直す。
+        // 提案された矩形は使わない（右下にそろえる規則が先に立つ）。倍率が同じなら何もしない。
+        WM_DPICHANGED => {
+            let scale = ui::monitors::message_scale(wp);
+            if scale != toast.scale {
+                relayout(toast, scale);
+            }
+            0
+        }
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(hwnd, &mut ps);

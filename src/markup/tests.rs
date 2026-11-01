@@ -162,6 +162,41 @@ fn the_bar_stays_off_the_taskbar_when_the_area_is_on_it() {
 }
 
 #[test]
+fn the_bar_takes_the_work_area_and_scale_of_the_monitor_below_the_snip() {
+    use crate::ui::monitors::Monitor;
+    let monitor = |r: RECT, taskbar: i32, dpi: u32| Monitor {
+        rect: r,
+        work: RECT {
+            bottom: r.bottom - taskbar,
+            ..r
+        },
+        dpi,
+    };
+    // 主モニター A（100%）、右に D（2560x1440、150%）、左に B（負の座標、125%）。
+    let a = monitor(rect(0, 0, 1920, 1080), 48, 96);
+    let d = monitor(rect(1920, 0, 4480, 1440), 72, 144);
+    let b = monitor(rect(-1920, 0, 0, 1080), 60, 120);
+    let edges =
+        |(work, scale): (RECT, f32)| ((work.left, work.top, work.right, work.bottom), scale);
+    // 境目をまたぐ範囲は、下端の中央の点のモニター: (2000, 600) は D、(1725, 600) は A。
+    let across = home(rect(1800, 300, 2200, 600), &[a, d]).unwrap();
+    assert_eq!(edges(across), ((1920, 0, 4480, 1368), 1.5));
+    let left_part = home(rect(1500, 300, 1950, 600), &[a, d]).unwrap();
+    assert_eq!(edges(left_part), ((0, 0, 1920, 1032), 1.0));
+    // 画面の下端までの範囲: 下端の中央 (1000, 1080) はすぐ上の A がいちばん近い。
+    let bottom = home(rect(800, 500, 1200, 1080), &[a, d]).unwrap();
+    assert_eq!(edges(bottom), ((0, 0, 1920, 1032), 1.0));
+    // 負の座標の左のモニターの上では、そこの 125% で、その作業領域の中に置く。
+    let area = rect(-600, 100, -200, 400);
+    let (work, scale) = home(area, &[a, b]).unwrap();
+    assert_eq!(edges((work, scale)), ((-1920, 0, 0, 1020), 1.25));
+    // 幅 540、高さ 60、間隔 15: 中央の -400 から 270 左、範囲の下端 400 から 15 下。
+    let at = place(area, work, scale);
+    assert_eq!((at.x, at.y), (-670, 415));
+    assert!(home(rect(0, 0, 1, 1), &[]).is_none());
+}
+
+#[test]
 fn the_toggle_survives_a_restart_and_ignores_recordings() {
     let _sandbox = Sandbox::new();
     assert!(!config::load_markup(), "off until it is turned on");

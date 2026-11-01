@@ -2,6 +2,10 @@
 
 use super::*;
 
+mod display;
+pub(crate) use display::remember_layout;
+use display::{display_changed, settle, SETTLE};
+
 unsafe fn select_window(p: POINT) -> Option<(HWND, RECT)> {
     let absolute = POINT {
         x: p.x + state().origin.x,
@@ -450,6 +454,18 @@ pub(crate) unsafe extern "system" fn overlay_proc(
             0
         }
         WM_ERASEBKGND => 1,
+        // ディスプレイの構成が変わった（overlay/display.rs）。
+        WM_DISPLAYCHANGE => {
+            display_changed(hwnd);
+            0
+        }
+        SETTLE => {
+            settle();
+            0
+        }
+        // オーバーレイは仮想画面を物理画素で覆うので、拡大率が変わっても提案された矩形へは
+        // 動かさない（凍結した画像も選んでいる範囲も画素の位置のまま正しい）。
+        WM_DPICHANGED => 0,
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(hwnd, &mut ps);
