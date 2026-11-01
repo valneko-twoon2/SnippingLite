@@ -19,6 +19,10 @@ use windows_sys::Win32::{
 /// WM_PAINT など）があっても、ループを終える。
 pub const MESSAGE_LIMIT: usize = 10_000;
 
+extern "system" {
+    fn GetCurrentThreadId() -> u32;
+}
+
 /// 見えている窓を隠す（`EnumThreadWindows` のコールバック）。
 unsafe extern "system" fn hide(hwnd: HWND, _: LPARAM) -> BOOL {
     if IsWindowVisible(hwnd) != 0 {
@@ -200,11 +204,10 @@ impl Drop for Desk {
             // 代わりの窓など）を残す。見えている窓は描かれるまで WM_PAINT を出し続け、取り出しても
             // 消えないので、下でメッセージを捨てるループが終わらなくなる。隠した窓には WM_PAINT が
             // 来ない。取り消しは撮影のために隠した窓を戻すので、その後で隠す。
-            EnumThreadWindows(
-                GetWindowThreadProcessId(self.main, std::ptr::null_mut()),
-                Some(hide),
-                0,
-            );
+            // スレッドはトレイの窓からではなく、このスレッドから決める。トレイを終了させたテストでは
+            // トレイの窓がもう無く、窓から引いたスレッドは 0 になる。EnumThreadWindows は 0 を渡すと
+            // デスクトップのすべての窓を列挙するので、利用者の窓やタスクバーまで隠してしまう。
+            EnumThreadWindows(GetCurrentThreadId(), Some(hide), 0);
             for window in [
                 std::mem::replace(&mut crate::state().record_window, std::ptr::null_mut()),
                 std::mem::replace(&mut crate::state().record_frame, std::ptr::null_mut()),
