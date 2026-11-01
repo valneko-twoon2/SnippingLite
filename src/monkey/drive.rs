@@ -34,8 +34,22 @@ pub(super) fn device_input(message: &MSG) -> bool {
         )
 }
 
-/// たまったメッセージ（描画、タイマー、メニューのコマンド）を `duration` の間流す。
-/// `Desk::pump` と同じだが、本物の機器の入力は捨てる。
+/// 本物の時計で来る、このアプリの窓のタイマー（通知を滑らせる・閉じる、ツールバーを上げ直す、
+/// カウントダウン、録画の表示）か。テストはこれを流さず、自分で WM_TIMER を送って時計を進める。
+/// 本物の時計で来ると、どの手の後に来るかが手の速さで変わり、同じシードでも手順が変わる。
+pub(super) fn real_timer(message: &MSG) -> bool {
+    if message.message != WM_TIMER || message.hwnd.is_null() {
+        return false;
+    }
+    let mut class = [0u16; 32];
+    // SAFETY: the buffer outlives the call, which writes at most its length.
+    let length = unsafe { GetClassNameW(message.hwnd, class.as_mut_ptr(), 32) }.clamp(0, 32);
+    let class = String::from_utf16_lossy(&class[..length as usize]);
+    [MAIN, TOOLBAR, RECORD, COUNT, toast::CLASS].contains(&class.as_str())
+}
+
+/// たまったメッセージ（描画、メニューのコマンド）を `duration` の間流す。
+/// `Desk::pump` と同じだが、本物の機器の入力と、本物の時計で来るタイマーは捨てる。
 pub(super) fn pump(duration: Duration) {
     let end = Instant::now() + duration;
     loop {
@@ -46,7 +60,7 @@ pub(super) fn pump(duration: Duration) {
                 if PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) == 0 {
                     break;
                 }
-                if device_input(&message) {
+                if device_input(&message) || real_timer(&message) {
                     continue;
                 }
                 TranslateMessage(&message);
@@ -74,7 +88,7 @@ pub(super) struct Hands<'a> {
 }
 
 impl Hands<'_> {
-    /// 送って、出てきたカウントダウンのタイマーを止める（本物の録画を始めないため）。
+    /// 送って、出てきたカウントダウンのタイマーを止める（録画はテストが送る刻みで始める）。
     fn send(&mut self, hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         let result = self.desk.send(hwnd, message, wp, lp);
         self.after_send();
@@ -320,6 +334,36 @@ impl Hands<'_> {
         self.send(look.hwnd, WM_LBUTTONUP, 0, lparam(p));
     }
 
+    /// カウントダウンを 1 つ進める。最後の刻みで録画が始まる。
+    fn tick(&mut self) {
+        let window = s().count_window;
+        if window.is_null() {
+            return;
+        }
+        let last = s().count_left == 1;
+        let expect = last.then(|| recording::expect_start(self.world));
+        self.send(window, WM_TIMER, COUNT_TIMER, 0);
+        if let Some(expect) = expect {
+            recording::started(self.world, expect);
+        }
+    }
+
+    /// 録画中の表示をクリックする。`x` は左から（DIP）の位置で、`None` は停止のボタンの真ん中。
+    fn record_click(&mut self, x: Option<f32>) {
+        let window = s().record_window;
+        if window.is_null() {
+            return;
+        }
+        let scale = s().scale;
+        let p = match x {
+            None => middle(stop_button(scale)),
+            Some(x) => ((x * scale) as i32, (24.0 * scale) as i32),
+        };
+        self.send(window, WM_MOUSEMOVE, 0, lparam(p));
+        self.send(window, WM_LBUTTONDOWN, 1, lparam(p));
+        self.send(window, WM_LBUTTONUP, 0, lparam(p));
+    }
+
     fn system(&mut self, which: Sys) {
         let st = s();
         match which {
@@ -358,4 +402,4 @@ impl Hands<'_> {
 }
 
 mod apply;
-pub(super) use apply::{apply, settle};
+pub(super) use apply::{apply, exit, settle};

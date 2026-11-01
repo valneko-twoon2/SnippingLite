@@ -7,5 +7,9 @@ mod window;
 
 pub use window::run;
 
+/// ほかのテスト（モンキーテスト）が、仕上がった録画を再生できるか確かめるのに使う。
+#[cfg(test)]
+pub(crate) use engine::{Engine, Status};
+
 #[cfg(test)]
 mod tests;

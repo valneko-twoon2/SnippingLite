@@ -1,18 +1,20 @@
 //! 到達の集計。状態は全体の手数に対して数える。操作の種類は、その操作を受ける面（トレイ、
-//! オーバーレイ、ツールバー、書き込みのバー、通知、カウントダウン）が出ていた手数に対して数える。
+//! オーバーレイ、ツールバー、書き込みのバー、通知、カウントダウン、録画中の表示）が出ていた手数に
+//! 対して数える。
 //! 面ごとに分けるのは、バーや通知のように短い間しか出ない面の操作を、出ていた間に偏りなく
 //! 選んだかを見るため（全体の手数に対して数えると、面が出ていた時間の揺れで決まってしまう）。
 
 use super::*;
 
 /// 面の名前と、その面の操作の名前の頭。
-const SURFACES: [(&str, &[&str]); 6] = [
+const SURFACES: [(&str, &[&str]); 7] = [
     ("anytime", &["tray:", "system", "wait"]),
     ("overlay", &["overlay:", "key:"]),
     ("toolbar", &["toolbar:"]),
     ("markup bar", &["bar:"]),
     ("notification", &["toast:"]),
     ("countdown", &["countdown:"]),
+    ("recording", &["recording:"]),
 ];
 
 pub(super) struct Tally {
@@ -71,6 +73,7 @@ impl Tally {
             now.bar && free,
             now.toast.is_some(),
             now.count.is_some(),
+            now.recording,
         ];
         for ((_, _, count), shown) in self.surfaces.iter_mut().zip(shown) {
             *count += shown as usize;

@@ -27,6 +27,27 @@ unsafe extern "system" fn hide(hwnd: HWND, _: LPARAM) -> BOOL {
     1
 }
 
+/// Desk を作るテストの番: テーマと窓の名前の錠を、この順に取って持つ（環境変数の錠は、その後に
+/// `Sandbox` が取る）。1 つのテストで Desk を何度も作るとき（モンキーテストのケースごと）は、
+/// 初めに 1 度だけ取って `Desk::start_in` に渡し、`Desk::into_turn` で取り戻す。並べて走るほかの
+/// テストがケースの間に割り込まず、錠を待つ時間がケースの時間に数えられない。
+pub struct Turn {
+    _theme: MutexGuard<'static, ()>,
+    _captions: MutexGuard<'static, ()>,
+}
+
+impl Turn {
+    pub fn take() -> Turn {
+        // The same order everywhere: theme, captions, then the environment.
+        let theme = THEME.lock().unwrap_or_else(|e| e.into_inner());
+        let captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+        Turn {
+            _theme: theme,
+            _captions: captions,
+        }
+    }
+}
+
 pub struct Desk {
     pub sandbox: Sandbox,
     state: Box<crate::State>,
@@ -34,7 +55,8 @@ pub struct Desk {
     dpi: DPI_AWARENESS_CONTEXT,
     /// `start_apart` で移ったデスクトップ。窓を壊した後（`drop` の後）で元に戻る。
     _desktop: Option<desktop::Own>,
-    _guards: [MutexGuard<'static, ()>; 2],
+    /// 後片付けの後に手放す（`into_turn` で取り出したときは、呼んだ側が持つ）。
+    turn: Option<Turn>,
 }
 
 impl Desk {
@@ -56,9 +78,11 @@ impl Desk {
 
     /// Like `start`, after `prepare` changed the saved settings.
     pub fn start_with(prepare: impl FnOnce(&mut crate::config::Settings)) -> Desk {
-        // The same order everywhere: theme, captions, then the environment.
-        let theme = THEME.lock().unwrap_or_else(|e| e.into_inner());
-        let captions = CAPTIONS.lock().unwrap_or_else(|e| e.into_inner());
+        Desk::start_in(Turn::take(), prepare)
+    }
+
+    /// `start_with` と同じだが、先に取ってある番を使う。
+    pub fn start_in(turn: Turn, prepare: impl FnOnce(&mut crate::config::Settings)) -> Desk {
         let sandbox = Sandbox::new();
         let mut settings = crate::config::parse_settings("");
         // Files go into the sandbox, never into the real Pictures and Videos folders.
@@ -83,9 +107,16 @@ impl Desk {
                 main,
                 dpi,
                 _desktop: None,
-                _guards: [theme, captions],
+                turn: Some(turn),
             }
         }
+    }
+
+    /// 片付けて（`Drop` と同じ）、持っていた番を返す。次の Desk は待たずに作れる。
+    pub fn into_turn(mut self) -> Turn {
+        let turn = self.turn.take();
+        drop(self);
+        turn.expect("a desk holds its turn until it is put away")
     }
 
     /// Handles the messages that are waiting, including timers, for this long.

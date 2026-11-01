@@ -2,24 +2,28 @@
 //!
 //! | 種類 | 届くとき | 重み |
 //! |---|---|---|
-//! | トレイの左クリック、ショートカット、NEW（3 つで 1 つの重み） | いつでも | 待機中は 12、カウントダウン中は 1.5、ほかは 2.5 |
+//! | トレイの左クリック、ショートカット、NEW（3 つで 1 つの重み） | いつでも | 待機中は 12、カウントダウン中は 1、録画中は 0.4、ほかは 2.5 |
 //! | トレイのメニュー（Snipping Lite、About、Escape） | ボタンを押していないとき | 2 |
 //! | トレイへのコマンド（設定、履歴、About、録画の停止、WM_CLOSE） | いつでも | 2 |
 //! | 無作為な設定を書いて TRAY_RELOAD | いつでも | 2.5 |
-//! | オーバーレイ: 移動、押したまま、ドラッグ、クリック、ダブルクリック、右クリックとホイール | オーバーレイが出ているとき | 3、5、11、4、2.5、2.5（書き込み中は押したまま 5、ドラッグ 5、クリック 2.5。全画面のモードでは 2.5、5.5、2） |
+//! | オーバーレイ: 移動、押したまま、ドラッグ、クリック、ダブルクリック、右クリックとホイール | オーバーレイが出ているとき | 3、5、11、4、2.5、2.5（書き込み中は押したまま 5、ドラッグ 5、クリック 2.5。全画面のモードでは 1.5、3、1.5、1.5） |
 //! | オーバーレイ: 離す | 押したままのとき | 40 |
 //! | キー: Escape、Enter、Ctrl+Z/Y/C、そのほか | オーバーレイが出ているとき | 2.5（書き込み中は 1.5）、2.5（同 1.5）、2.5、3 |
-//! | ツールバー: カメラとビデオ（ビデオを 6 割）、範囲のメニュー、ペン、履歴と歯車、×、移動・ホバー・ずらし（半分は移動） | ツールバーが出ているとき | 3.5、4.5、2.5、2、2、3 |
+//! | ツールバー: カメラとビデオ（ビデオを 6 割）、範囲のメニュー、ペン、履歴と歯車、×、移動・ホバー・ずらし（半分は移動） | ツールバーが出ているとき | 3.5、6、2.5、2、2、3 |
 //! | 書き込みのバー: 道具、元に戻す・やり直す・すべて消去、キャプチャ、×、ホバー・ずらし・離れる | バーが出ているとき | 12、12、7、9、9 |
-//! | 通知: ホバー・クリック・離れる、メニュー、タイマー | 通知が出ているとき | 12、7、8 |
-//! | カウントダウン: 刻みと再描画、クリック | カウントダウンのとき（刻みは残りが 2 以上のとき） | 12、8 |
+//! | 通知: ホバー・クリック・離れる、メニュー、タイマー（閉じ始める、滑らせる） | 通知が出ているとき | 12、7、8 |
+//! | カウントダウン: 刻みと再描画、クリック | カウントダウンのとき（最後の刻みで録画が始まる） | 16、2 |
+//! | 録画中の表示: 停止のボタン、表示のタイマーと停止でない所のクリック | 録画中 | 1、6 |
 //! | システムのメッセージ（WM_DISPLAYCHANGE、WM_DPICHANGED、WM_SETTINGCHANGE、WM_CANCELMODE） | いつでも | 2 |
 //! | 待つ（タイマーと描画を流す） | いつでも | 2 |
 //!
 //! 重みは 10 倍の整数で持つ。ボタンを押したままの間は、ほかのウィンドウへのマウスの操作は届かない。
 //! 書き込みのバー、通知、カウントダウンは短い間しか出ないので、出ている間はその操作を重くする。
-//! 範囲のメニューは矩形、自由形式、ウィンドウ、全画面、Escape を 2:2:3:3:1 で選ぶ（ウィンドウと全画面の
-//! モードは、的や画面を押すとすぐに撮れて終わるので多めにする）。
+//! 録画はカウントダウンを 3 つ刻んでから始まるので、カウントダウン中は刻みを重く、取り消すクリックを
+//! 軽くする（30 ケースで数回の録画になる）。録画中は止める手を軽くし、止めるまでに数手を送る。
+//! 範囲のメニューは矩形、自由形式、ウィンドウ、全画面、Escape を 2:2:3:5:1 で選ぶ（ウィンドウと全画面の
+//! モードは、的や画面を押すとすぐに撮れて終わるので多めにする。全画面は選ぶとその場で撮れるので、
+//! 全画面の撮影中になるのは、その後に始めた撮影だけ。それでいちばん多くする）。
 
 use super::*;
 use crate::test_support::rng::Rng;
@@ -88,16 +92,25 @@ pub(super) enum Action {
     ToastClick(Spot),
     ToastLeave,
     ToastMenu(Option<usize>),
-    ToastTimer(usize),
+    /// 表示を終えて閉じ始めるタイマー。
+    ToastDismiss,
+    /// 滑らせるタイマー。滑り始めてから、この時間（ミリ秒）たったことにして送る。
+    ToastSlide(u64),
     Tick,
     CountPaint,
     CountClick,
+    /// 録画中の表示の停止のボタン。
+    RecordStop,
+    /// 録画中の表示の、停止のボタンでない所（左から x DIP）のクリック。
+    RecordClick(f32),
+    /// 録画中の表示のタイマー（枠を合わせ直し、表示を上げ直す）。
+    RecordTick,
     System(Sys),
     Wait(u64),
 }
 
 /// 到達を数える、操作の種類の名前。
-pub(super) const KINDS: [&str; 35] = [
+pub(super) const KINDS: [&str; 37] = [
     "tray: icon",
     "tray: shortcut",
     "tray: NEW",
@@ -131,12 +144,14 @@ pub(super) const KINDS: [&str; 35] = [
     "toast: timer",
     "countdown: tick or paint",
     "countdown: click",
+    "recording: stop button",
+    "recording: tick or click elsewhere",
     "system message",
     "wait",
 ];
 
 /// 到達を数える、手を選ぶ前の状態の名前。
-pub(super) const STATES: [&str; 13] = [
+pub(super) const STATES: [&str; 14] = [
     "idle",
     "idle with the kept toolbar",
     "snipping a rectangle",
@@ -147,6 +162,7 @@ pub(super) const STATES: [&str; 13] = [
     "selecting",
     "marking up",
     "countdown",
+    "recording",
     "notification",
     "frozen",
     "live",
@@ -192,9 +208,11 @@ impl Action {
             }
             Action::ToastHover(_) | Action::ToastClick(_) | Action::ToastLeave => "toast: pointer",
             Action::ToastMenu(_) => "toast: menu",
-            Action::ToastTimer(_) => "toast: timer",
+            Action::ToastDismiss | Action::ToastSlide(_) => "toast: timer",
             Action::Tick | Action::CountPaint => "countdown: tick or paint",
             Action::CountClick => "countdown: click",
+            Action::RecordStop => "recording: stop button",
+            Action::RecordClick(_) | Action::RecordTick => "recording: tick or click elsewhere",
             Action::System(_) => "system message",
             Action::Wait(_) => "wait",
         }
@@ -235,6 +253,8 @@ enum Kind {
     ToastTimer,
     Tick,
     CountClick,
+    RecordStop,
+    RecordOther,
     System,
     Wait,
 }
@@ -243,10 +263,11 @@ enum Kind {
 fn choices(now: &Snapshot) -> Vec<(Kind, u32)> {
     let free = !now.held;
     let idle = !now.active && now.count.is_none();
-    let start = match (idle, now.count.is_some()) {
-        (true, _) => 120,
-        // 開始の手はカウントダウンを取り消すので、カウントダウン中は軽くする。
-        (_, true) => 15,
+    // 開始の手はカウントダウンを取り消し、録画を止めるので、そのときは軽くする。
+    let start = match (idle, now.count.is_some(), now.recording) {
+        (_, _, true) => 4,
+        (true, _, _) => 120,
+        (_, true, _) => 10,
         _ => 25,
     };
     let mut list = vec![
@@ -271,17 +292,17 @@ fn choices(now: &Snapshot) -> Vec<(Kind, u32)> {
             (Kind::OtherKey, 30),
         ]);
         if free {
-            // 全画面のモードは、どこを押してもすぐに撮れて終わるので、押す手を半分にする。
-            let (hold, drag, click) = match (marking, now.mode == MODE_SCREEN) {
-                (true, _) => (50, 50, 25),
-                (_, true) => (25, 55, 20),
-                _ => (50, 110, 40),
+            // 全画面のモードは、どこを押してもすぐに撮れて終わるので、押す手を軽くする。
+            let (hold, drag, click, double) = match (marking, now.mode == MODE_SCREEN) {
+                (true, _) => (50, 50, 25, 25),
+                (_, true) => (15, 30, 15, 15),
+                _ => (50, 110, 40, 25),
             };
             list.extend([
                 (Kind::Hold, hold),
                 (Kind::Drag, drag),
                 (Kind::Click, click),
-                (Kind::DoubleClick, 25),
+                (Kind::DoubleClick, double),
                 (Kind::OtherMouse, 25),
             ]);
         }
@@ -292,7 +313,7 @@ fn choices(now: &Snapshot) -> Vec<(Kind, u32)> {
     if free && now.toolbar.is_some() {
         list.extend([
             (Kind::Camera, 35),
-            (Kind::AreaMenu, 45),
+            (Kind::AreaMenu, 60),
             (Kind::Pen, 25),
             (Kind::Leave, 20),
             (Kind::Close, 20),
@@ -314,13 +335,14 @@ fn choices(now: &Snapshot) -> Vec<(Kind, u32)> {
             list.extend([(Kind::ToastPointer, 120), (Kind::ToastMenu, 70)]);
         }
     }
-    if let Some(left) = now.count {
-        if left >= 2 {
-            list.push((Kind::Tick, 120));
-        }
+    if now.count.is_some() {
+        list.push((Kind::Tick, 160));
         if free {
-            list.push((Kind::CountClick, 80));
+            list.push((Kind::CountClick, 20));
         }
+    }
+    if now.recording {
+        list.extend([(Kind::RecordStop, 10), (Kind::RecordOther, 60)]);
     }
     list
 }
@@ -380,7 +402,7 @@ fn build(rng: &mut Rng, kind: Kind, now: &Snapshot, scene: &Scene) -> Action {
         Kind::Camera => Action::Toolbar(CAMERA_BUTTON),
         Kind::AreaMenu => {
             let choices = [Some(0), Some(1), Some(2), Some(3), None];
-            Action::AreaMenu(choices[rng.weighted(&[2, 2, 3, 3, 1])])
+            Action::AreaMenu(choices[rng.weighted(&[2, 2, 3, 5, 1])])
         }
         Kind::Pen => Action::Toolbar(EDIT_BUTTON),
         Kind::Leave => Action::Toolbar(*rng.pick(&[HISTORY_BUTTON, SETTINGS_BUTTON])),
@@ -425,12 +447,16 @@ fn build(rng: &mut Rng, kind: Kind, now: &Snapshot, scene: &Scene) -> Action {
             }
         }
         Kind::ToastMenu => Action::ToastMenu(*rng.pick(&[Some(0), Some(1), None])),
-        Kind::ToastTimer => Action::ToastTimer(
-            *rng.pick(&[toast::probe::DISMISS_TIMER, toast::probe::ANIMATION_TIMER]),
-        ),
+        Kind::ToastTimer if rng.chance(0.5) => Action::ToastDismiss,
+        // 滑り終える前（0、125、200 ミリ秒）と、滑り終えた後（400 ミリ秒）の刻み。
+        Kind::ToastTimer => Action::ToastSlide(*rng.pick(&[0, 125, 200, 400])),
         Kind::Tick if rng.chance(0.25) => Action::CountPaint,
         Kind::Tick => Action::Tick,
         Kind::CountClick => Action::CountClick,
+        Kind::RecordStop => Action::RecordStop,
+        // 赤い点（20 DIP）と経過時間（60 DIP）。
+        Kind::RecordOther if rng.chance(0.4) => Action::RecordClick(*rng.pick(&[20.0, 60.0])),
+        Kind::RecordOther => Action::RecordTick,
         Kind::System => Action::System(*rng.pick(&[
             Sys::DisplayChange,
             Sys::DpiChanged,

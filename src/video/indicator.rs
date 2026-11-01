@@ -7,7 +7,7 @@ use super::*;
 pub(super) const RECORD_WIDTH: f32 = 168.0;
 pub(super) const RECORD_HEIGHT: f32 = 48.0;
 /// The Stop button of the recording indicator; only a click on it ends the recording.
-pub(super) fn stop_button(scale: f32) -> [f32; 4] {
+pub(crate) fn stop_button(scale: f32) -> [f32; 4] {
     [100.0 * scale, 8.0 * scale, 160.0 * scale, 40.0 * scale]
 }
 

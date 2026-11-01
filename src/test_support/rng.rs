@@ -4,11 +4,15 @@
 //! 環境変数で変える。`SNIPPING_LITE_SEED` は実行全体のシード（10 進、または `0x` で始まる 16 進）、
 //! `SNIPPING_LITE_CASES` はテストごとのケース数（`MAX_CASES` まで）。ケースが失敗すると、
 //! そのケースだけを再現するシードと、テストが `Rng::note` で残した手順を表示する。
+//! `SNIPPING_LITE_TRACE=1` を付けると、`Rng::note` の手順をすべて、ケースのシードを頭に付けて
+//! 標準エラーへ書く（出力のキャプチャを通さない）。同じシードで 2 回回した手順を比べて、結果が
+//! シードだけで決まるかを確かめるためのもの。
 //!
 //! 生成器は SplitMix64。依存を足さずに、近いシード（1 と 2 など）からも互いに関係のない列を作る。
 
 use std::{
     collections::VecDeque,
+    io::Write as _,
     ops::{Bound, RangeBounds},
     time::{Duration, Instant},
 };
@@ -28,6 +32,8 @@ const GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
 pub struct Rng {
     state: u64,
     notes: VecDeque<String>,
+    /// 手順を標準エラーにも書くときの、頭に付けるシード（`SNIPPING_LITE_TRACE`）。
+    trace: Option<u64>,
 }
 
 impl Rng {
@@ -35,6 +41,7 @@ impl Rng {
         Rng {
             state: seed,
             notes: VecDeque::new(),
+            trace: None,
         }
     }
 
@@ -130,7 +137,11 @@ impl Rng {
         if self.notes.len() == NOTES {
             self.notes.pop_front();
         }
-        self.notes.push_back(step.into());
+        let step = step.into();
+        if let Some(seed) = self.trace {
+            let _ = writeln!(std::io::stderr(), "trace {seed:#x}: {step}");
+        }
+        self.notes.push_back(step);
     }
 }
 
@@ -202,6 +213,7 @@ pub fn check(name: &str, default: usize, case: impl FnMut(&mut Rng)) -> usize {
 }
 
 fn run(name: &str, base: u64, count: usize, mut case: impl FnMut(&mut Rng)) -> usize {
+    let trace = variable("SNIPPING_LITE_TRACE").is_some_and(|text| text != "0");
     for index in 0..count {
         let seed = base.wrapping_add(index as u64);
         let mut failure = Failure {
@@ -210,6 +222,7 @@ fn run(name: &str, base: u64, count: usize, mut case: impl FnMut(&mut Rng)) -> u
             seed,
             rng: Rng::new(seed),
         };
+        failure.rng.trace = trace.then_some(seed);
         let started = Instant::now();
         case(&mut failure.rng);
         let spent = started.elapsed();

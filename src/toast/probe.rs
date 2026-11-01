@@ -1,7 +1,8 @@
 //! テスト用の窓口: 出ている通知の状態を、toast の外のテスト（モンキーテスト）から読めるようにする。
-//! 読むだけで、状態は変えない。
+//! 読むほかには、滑らせる時計を進めることだけをする（`age_slide`）。
 
 use super::*;
+use std::time::Duration;
 
 /// 出ている通知のうち、外のテストが確かめる部分の写し。
 #[derive(Clone)]
@@ -30,6 +31,19 @@ pub(crate) unsafe fn look() -> Option<Look> {
     })
 }
 
+/// 出ている通知が、滑り始めて（出始めて、または閉じ始めて）から `elapsed` たったことにする。
+/// モンキーテストは本物のタイマーを流さず、滑らせるタイマーを自分で送るので、次の刻みでどこまで
+/// 滑るかを本物の時計ではなく手で決める。
+pub(crate) unsafe fn age_slide(elapsed: Duration) {
+    if let Some(toast) = state().toast.as_deref_mut() {
+        if let Some(started) = Instant::now().checked_sub(elapsed) {
+            toast.started = started;
+        }
+    }
+}
+
 /// 表示を終えて閉じ始めるタイマーと、滑らせるタイマー。
 pub(crate) const DISMISS_TIMER: usize = DISMISS;
 pub(crate) const ANIMATION_TIMER: usize = ANIMATION;
+/// 滑り終えるまでの時間。
+pub(crate) const SLIDE: Duration = Duration::from_millis(SLIDE_MS as u64);
