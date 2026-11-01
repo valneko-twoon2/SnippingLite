@@ -142,6 +142,20 @@ unsafe fn rescale(hwnd: HWND, wp: WPARAM, lp: LPARAM) {
     );
     InvalidateRect(hwnd, null(), 0);
 }
+/// ボタンのヒント（Snipping Tool と同じく、アイコンにマウスを置くと出す）。
+fn tip(index: i32) -> Option<&'static str> {
+    Some(match index {
+        CAMERA_BUTTON => tr("Snip"),
+        VIDEO_BUTTON => tr("Record"),
+        AREA_BUTTON => tr("Snipping mode"),
+        EDIT_BUTTON => tr("Quick markup"),
+        TEXT_BUTTON => tr("Text extractor"),
+        HISTORY_BUTTON => tr("History"),
+        SETTINGS_BUTTON => tr("Settings"),
+        CLOSE_BUTTON => tr("Close"),
+        _ => return None,
+    })
+}
 /// The button under `p` in client coordinates, or -1 for the space that moves the toolbar.
 fn button_at(p: POINT, scale: f32) -> i32 {
     (0..GLYPHS.len() as i32)
@@ -313,6 +327,11 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                 }
                 state().hover_button = hit;
                 InvalidateRect(hwnd, null(), 0);
+                let scale = state().scale;
+                tooltip::hover(
+                    hwnd,
+                    tip(hit).map(|text| (toolbar_button(hit, scale), text)),
+                );
             }
             0
         }
@@ -320,9 +339,16 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             state().hover_button = -1;
             state().pressed_button = -1;
             InvalidateRect(hwnd, null(), 0);
+            tooltip::hide();
             0
         }
+        // 隠れるツールバーのヒントは残さない。
+        WM_SHOWWINDOW if wp == 0 => {
+            tooltip::hide();
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
         WM_LBUTTONDOWN => {
+            tooltip::hide();
             state().pressed_button = toolbar_hit(point(lp));
             InvalidateRect(hwnd, null(), 0);
             0

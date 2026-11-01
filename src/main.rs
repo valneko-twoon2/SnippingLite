@@ -25,6 +25,7 @@ mod staging;
 mod test_support;
 mod toast;
 mod toolbar;
+mod tooltip;
 mod tray;
 mod ui;
 mod video;
@@ -154,6 +155,8 @@ struct State {
     /// 書き込み中の切り取り。
     markup_session: Option<Box<markup::Session>>,
     markup_bar: HWND,
+    /// ツールバーと書き込みのバーのボタンのヒント。
+    tip: tooltip::Tip,
 }
 static mut STATE: *mut State = null_mut();
 fn w(s: &str) -> Vec<u16> {
@@ -314,6 +317,7 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         extract: false,
         markup_session: None,
         markup_bar: null_mut(),
+        tip: tooltip::Tip::new(),
         count_target: None,
         count_area: RECT {
             left: 0,
@@ -340,6 +344,7 @@ unsafe fn register_classes() {
     );
     register(toast::CLASS, Some(toast::proc), null_mut(), IDC_HAND);
     register(markup::BAR, Some(markup::bar_proc), null_mut(), IDC_ARROW);
+    register(tooltip::CLASS, Some(tooltip::proc), null_mut(), IDC_ARROW);
 }
 /// Creates the tray window, which is never shown; it receives the tray, hotkey and timer messages.
 unsafe fn create_main_window() -> HWND {

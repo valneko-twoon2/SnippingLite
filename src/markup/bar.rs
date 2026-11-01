@@ -42,6 +42,21 @@ pub(super) fn button(index: i32, scale: f32) -> [f32; 4] {
     ]
 }
 
+/// ボタンのヒント（Snipping Tool と同じく、アイコンにマウスを置くと出す）。「キャプチャ」は名前が
+/// 書いてあるので出さない。
+fn tip(index: i32) -> Option<&'static str> {
+    Some(match index {
+        PEN => tr("Pen"),
+        HIGHLIGHTER => tr("Highlighter"),
+        ERASER => tr("Eraser"),
+        UNDO => tr("Undo"),
+        REDO => tr("Redo"),
+        CLEAR => tr("Clear all"),
+        CLOSE => tr("Close"),
+        _ => return None,
+    })
+}
+
 /// `p`（クライアント座標）にあるボタン。ボタンの外なら -1。
 pub(super) fn button_at(p: POINT, scale: f32) -> i32 {
     (0..BUTTONS.len() as i32)
@@ -336,6 +351,7 @@ pub(crate) unsafe extern "system" fn bar_proc(
                     }
                     session.hover = hit;
                     InvalidateRect(hwnd, null(), 0);
+                    tooltip::hover(hwnd, tip(hit).map(|text| (button(hit, scale), text)));
                 }
             }
             0
@@ -346,9 +362,16 @@ pub(crate) unsafe extern "system" fn bar_proc(
                 session.pressed = -1;
                 InvalidateRect(hwnd, null(), 0);
             }
+            tooltip::hide();
             0
         }
+        // 隠れるバーのヒントは残さない。
+        WM_SHOWWINDOW if wp == 0 => {
+            tooltip::hide();
+            DefWindowProcW(hwnd, msg, wp, lp)
+        }
         WM_LBUTTONDOWN => {
+            tooltip::hide();
             if let Some(session) = state().markup_session.as_mut() {
                 session.pressed = button_at(point(lp), scale);
                 InvalidateRect(hwnd, null(), 0);

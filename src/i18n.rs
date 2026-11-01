@@ -258,6 +258,16 @@ const JAPANESE: &[(&str, &str)] = &[
     ("Freeform", "フリーフォーム"),
     ("Window", "ウィンドウ"),
     ("Full screen", "全画面表示"),
+    // ツールバーと書き込みのバーのボタンのヒント
+    ("Snip", "切り取り"),
+    ("Record", "録画"),
+    ("Snipping mode", "切り取りモード"),
+    ("Quick markup", "クイック マークアップ"),
+    ("Text extractor", "テキスト抽出"),
+    ("Close", "閉じる"),
+    ("Eraser", "消しゴム"),
+    ("Redo", "やり直し"),
+    ("Clear all", "すべて消去"),
     ("Markup and share", "マークアップと共有"),
     ("Dismiss notification", "通知を閉じる"),
     // Notification
