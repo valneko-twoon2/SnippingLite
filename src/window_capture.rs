@@ -118,7 +118,12 @@ impl Target {
 
     /// The captured screen area, a part of `frame`.
     pub fn bounds(self) -> Result<RECT> {
-        let mut rect = self.frame()?;
+        self.bounds_within(self.frame()?)
+    }
+
+    /// 読んである枠 `rect`（`frame` の結果）のうちの、撮る範囲。枠を読み直さないので、撮った絵の
+    /// どこを写すかを、範囲と同じ時に読んだ枠から決められる。
+    fn bounds_within(self, mut rect: RECT) -> Result<RECT> {
         // SAFETY: Windows validates this borrowed window identifier.
         unsafe {
             let hwnd = self.id as windows_sys::Win32::Foundation::HWND;
@@ -358,19 +363,15 @@ impl WindowCapture {
                 self.pool_size = size;
                 continue;
             }
+            // 枠は 1 回だけ読み、撮る範囲もその枠から決める。別々に読むと、間で窓の大きさが
+            // 変わったとき（0 の大きさから戻るときなど）に、範囲と枠が食い違う。
             let full = self.target.frame()?;
-            let crop = self.target.bounds()?;
-            let left = ((i64::from(crop.left - full.left) * i64::from(size.Width))
-                / i64::from(full.right - full.left))
-            .clamp(0, i64::from(size.Width)) as u32;
-            let top = ((i64::from(crop.top - full.top) * i64::from(size.Height))
-                / i64::from(full.bottom - full.top))
-            .clamp(0, i64::from(size.Height)) as u32;
-            let width = (size.Width as u32 - left).min(self.width as u32);
-            let height = (size.Height as u32 - top).min(self.height as u32);
-            if width == 0 || height == 0 {
+            let crop = self.target.bounds_within(full)?;
+            let Some((left, top, width, height)) =
+                source_box(full, crop, size, (self.width, self.height))
+            else {
                 return Err(Error::from_hresult(E_FAIL));
-            }
+            };
             // SAFETY: the copy box fits the frame; mapped rows are bounds checked.
             unsafe {
                 let access: IDirect3DDxgiInterfaceAccess = frame.0.Surface()?.cast()?;
@@ -424,6 +425,33 @@ impl Drop for WindowCapture {
         let _ = self.session.Close();
         let _ = self.pool.Close();
     }
+}
+
+/// 撮った絵（大きさ `size`）のうち、写す範囲（左, 上, 幅, 高さ）。絵は窓の枠 `full` の全体なので、
+/// 撮る範囲 `crop` の左上の、枠の左上からの位置を、枠と絵の大きさの比で絵の画素に直す。幅と高さは、
+/// 絵の残りと出力の大きさ `limit` の小さいほう。枠の幅か高さが 1 未満だと比が決まらない（0 で
+/// 割ることになる）ので、写すものがないときと同じく `None` を返す。
+fn source_box(
+    full: RECT,
+    crop: RECT,
+    size: SizeInt32,
+    limit: (i32, i32),
+) -> Option<(u32, u32, u32, u32)> {
+    // 枠の `near` から `far` までの中の `at` を、`length` 画素の絵の中の位置に直す。座標は i64 で
+    // 引くので、画面の端の大きな値でもあふれない（差は 2^32 未満、掛けても 2^63 未満）。
+    let scale = |near: i32, far: i32, at: i32, length: i32| {
+        let whole = i64::from(far) - i64::from(near);
+        if whole < 1 || length < 1 {
+            return None;
+        }
+        let offset = (i64::from(at) - i64::from(near)) * i64::from(length) / whole;
+        Some(offset.clamp(0, i64::from(length)) as u32)
+    };
+    let left = scale(full.left, full.right, crop.left, size.Width)?;
+    let top = scale(full.top, full.bottom, crop.top, size.Height)?;
+    let width = (size.Width as u32 - left).min(limit.0.max(0) as u32);
+    let height = (size.Height as u32 - top).min(limit.1.max(0) as u32);
+    (width > 0 && height > 0).then_some((left, top, width, height))
 }
 
 pub struct Snapshot {
