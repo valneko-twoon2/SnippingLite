@@ -21,10 +21,10 @@ fn keep_cursor() {
     unsafe {
         GetCursorPos(&mut now);
         if (now.x, now.y) != (placed.x, placed.y) {
-            eprintln!(
+            report(format_args!(
                 "カーソルが {},{} から {},{} へ動かされていたので置き直す",
                 placed.x, placed.y, now.x, now.y
-            );
+            ));
             note_disturbance();
             SetCursorPos(placed.x, placed.y);
         }

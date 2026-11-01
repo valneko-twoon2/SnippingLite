@@ -33,8 +33,17 @@ const ATTEMPTS: usize = 3;
 /// 画面を 1 件のテストで占有し、背景の窓で覆ったうえで `body` を実行する。テストの外から邪魔された
 /// 回（ほかのプロセスの窓が前面に出た、カーソルが動かされた）に失敗したら、上限まで初めから
 /// やり直す。邪魔されないまま失敗したら、やり直さずにその失敗を返す。
+///
+/// やり直すときは失敗の内容を添えて、終わるときは成否によらずやり直した回数を、`report` で
+/// 書く。成功したテストの捕まえた出力（1 回目の panic の知らせを含む）は libtest が捨てるので、
+/// そうしないと、やり直して通ったことが通常の実行の出力に残らない。
 pub fn on_desktop(body: impl Fn(&Backdrop)) {
     let _desktop = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
+    // libtest はテストごとに、テストの名前を付けたスレッドで実行する。
+    let name = std::thread::current()
+        .name()
+        .unwrap_or("E2E のテスト")
+        .to_owned();
     for attempt in 1..=ATTEMPTS {
         let backdrop = Backdrop::new();
         let before = DISTURBANCES.load(Ordering::Relaxed);
@@ -42,19 +51,36 @@ pub fn on_desktop(body: impl Fn(&Backdrop)) {
         // 失敗の後片付け（アプリを止める間の待ち）で見えた分も数える。
         let disturbed = DISTURBANCES.load(Ordering::Relaxed) - before;
         drop(backdrop);
+        let retries = attempt - 1;
         match result {
-            Ok(()) => return,
+            Ok(()) => {
+                report(format_args!("{name}: やり直し {retries} 回で通った"));
+                return;
+            }
             Err(panic) if disturbed == 0 || attempt == ATTEMPTS => {
                 if disturbed > 0 {
-                    eprintln!("{attempt} 回とも、テストの外から邪魔された");
+                    report(format_args!(
+                        "{name}: {attempt} 回とも、テストの外から邪魔された"
+                    ));
                 }
+                report(format_args!("{name}: やり直し {retries} 回の後に失敗した"));
                 std::panic::resume_unwind(panic);
             }
-            Err(_) => eprintln!(
-                "{attempt} 回目の失敗の間に、テストの外から {disturbed} 回邪魔されたので、初めからやり直す"
-            ),
+            Err(panic) => report(format_args!(
+                "{name}: {attempt} 回目の失敗（{}）の間に、テストの外から {disturbed} 回邪魔されたので、初めからやり直す",
+                panic_message(&*panic)
+            )),
         }
     }
+}
+
+/// `catch_unwind` で捕まえた panic の知らせ。
+fn panic_message(panic: &(dyn std::any::Any + Send)) -> &str {
+    panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("文字列でない panic")
 }
 
 /// 前面の窓を見て、ほかのプロセスの窓が新たに前面に出ていたら数える。`settle` が待つたびに呼ぶ。
@@ -109,7 +135,7 @@ fn process_of(window: HWND) -> u32 {
 }
 
 /// `window`（またはそれを含む最上位の窓）がこのテストかテストするアプリのプロセスのものか。
-fn ours(window: HWND) -> bool {
+pub fn ours(window: HWND) -> bool {
     if window.is_null() {
         return false;
     }
@@ -143,10 +169,10 @@ pub fn reclaim_foreground() -> Result<(), String> {
             return Ok(());
         }
         if attempt == 0 {
-            eprintln!(
+            report(format_args!(
                 "前面の窓がほかのプロセスのもの（{}）なので、背景の窓を前面に戻す",
                 describe(window)
-            );
+            ));
         }
         let backdrop = BACKDROP_WINDOW.load(Ordering::Relaxed);
         if !backdrop.is_null() {

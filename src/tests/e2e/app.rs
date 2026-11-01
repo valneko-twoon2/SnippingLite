@@ -3,10 +3,20 @@ use super::*;
 /// アプリを起動し直す回数の上限。起動したアプリがショートカットを登録できなかったとき
 /// （ほかのテストのプロセスがその瞬間だけ持っていたとき）や、トレイを渡して終わったときに起動し直す。
 const START_ATTEMPTS: usize = 3;
-/// ショートカットとトレイの窓が空くのを待つ秒数。ほかのテストのプロセスが一時的に持つことがある。
+/// ショートカットとトレイの窓が空き、ほかのプロセスの設定・履歴・プレイヤーの窓がなくなるのを
+/// 待つ秒数。ほかのテストのプロセスが一時的に持つことがある。
 const FREE_SECONDS: u64 = 30;
 /// 止めたプロセスが終わるのを待つ秒数。
 const EXIT_SECONDS: u64 = 10;
+/// 設定・履歴・プレイヤーの窓の題名と、それぞれの役目の印（`launch.rs` の `SETTINGS_TITLE` と `WINDOWS`）。
+const APP_TITLE: &str = "Snipping Lite";
+const APP_WINDOWS: [&str; 3] = [
+    "SnippingLite.Settings",
+    "SnippingLite.History",
+    "SnippingLite.Player",
+];
+/// 題名が `APP_TITLE` の最上位の窓を数える上限。
+const TITLED_LIMIT: usize = 1000;
 
 pub fn hotkey_taken() -> bool {
     // SAFETY: a thread hotkey that is released right away.
@@ -27,13 +37,44 @@ fn tray_exists() -> bool {
     !unsafe { FindWindowW(class.as_ptr(), null()) }.is_null()
 }
 
+/// このテストとテストするアプリのプロセスではない、Snipping Lite の設定・履歴・プレイヤーの窓が
+/// あるか（隠れた窓も数える）。テストするアプリはテスト用のビルドではないので、撮影のたびに、
+/// すべてのプロセスからこれらの窓を探して隠し、撮影の後に表示に戻す（`screenshot.rs`）。利用者が
+/// トレイだけを終了して履歴の窓を開いたままにしていると、その窓が撮影のたびに隠れ、撮影の途中で
+/// テストが落ちてアプリを止めると、隠れたまま残る。探し方は `ui::find_app_window` と同じ。
+fn app_window_exists() -> bool {
+    let title = wide(APP_TITLE);
+    let marks: Vec<Vec<u16>> = APP_WINDOWS.iter().map(|mark| wide(mark)).collect();
+    let mut previous = null_mut();
+    for _ in 0..TITLED_LIMIT {
+        // SAFETY: plain window queries; the strings are nul-terminated.
+        let window = unsafe { FindWindowExW(null_mut(), previous, null(), title.as_ptr()) };
+        if window.is_null() {
+            return false;
+        }
+        // SAFETY: as above.
+        let marked = marks
+            .iter()
+            .any(|mark| !unsafe { GetPropW(window, mark.as_ptr()) }.is_null());
+        if marked && !ours(window) {
+            return true;
+        }
+        previous = window;
+    }
+    // 数えきれないほどあれば、あるものとして扱う（利用者の窓を見落として始めない）。
+    true
+}
+
 /// プロセスを止め、終わるのを上限つきで待つ。
 fn stop(child: &mut Child) {
     let _ = child.kill();
     let end = Instant::now() + Duration::from_secs(EXIT_SECONDS);
     while !matches!(child.try_wait(), Ok(Some(_)) | Err(_)) {
         if Instant::now() >= end {
-            eprintln!("プロセス {} が {EXIT_SECONDS} 秒で終わらない", child.id());
+            report(format_args!(
+                "プロセス {} が {EXIT_SECONDS} 秒で終わらない",
+                child.id()
+            ));
             break;
         }
         settle(50);
@@ -66,11 +107,11 @@ impl App {
         .unwrap();
         for attempt in 1..=START_ATTEMPTS {
             let free = wait_for(FREE_SECONDS, || {
-                (!hotkey_taken() && !tray_exists()).then_some(())
+                (!hotkey_taken() && !tray_exists() && !app_window_exists()).then_some(())
             });
             if free.is_none() {
                 let _ = std::fs::remove_dir_all(&root);
-                panic!("Alt+Shift+S is in use or another tray is running: close Snipping Lite before running the end-to-end tests");
+                panic!("Alt+Shift+S is in use or another tray or window of Snipping Lite is open: close Snipping Lite before running the end-to-end tests");
             }
             let mut child = App::command(&root).spawn().expect("Start the app");
             adopt(child.id());
@@ -83,14 +124,14 @@ impl App {
             if started == Some(true) {
                 return App { child, root };
             }
-            eprintln!(
+            report(format_args!(
                 "{attempt} 回目に起動したアプリが Alt+Shift+S を登録しなかった（{}）",
                 if started.is_some() {
                     "終わった"
                 } else {
                     "15 秒待った"
                 }
-            );
+            ));
             stop(&mut child);
         }
         let _ = std::fs::remove_dir_all(&root);
