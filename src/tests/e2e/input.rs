@@ -137,7 +137,45 @@ pub fn keys(keys: &[VIRTUAL_KEY]) {
     settle(250);
 }
 
+/// ショートカットを押す前にポインターを置く、主モニターの上の決まった位置。アプリは撮影の画面の
+/// ツールバーを、ポインターのあるモニターの上端の中央に、そのモニターの倍率で出す。テストは主モニターの
+/// ツールバーを見るので、ポインターがほかのモニター（主モニターの左など）にあると、ツールバーが
+/// 見つからない。位置は、ツールバー、選ぶ範囲、見本の板（`PANEL`）、確かめる点のどれにも重ならない、
+/// 左下の 4 分の 1 の角にする。
+fn resting_point() -> POINT {
+    let (_, r) = primary_monitor();
+    POINT {
+        x: r.left + (r.right - r.left) / 4,
+        y: r.top + (r.bottom - r.top) * 3 / 4,
+    }
+}
+
 pub fn shortcut() {
+    move_to(resting_point());
     keys(&[VK_MENU, VK_SHIFT, 0x53]);
     settle(800);
+}
+
+/// テストの前のポインターの位置。テストの終わりに `restore` でそこへ戻す（`on_desktop`）。
+pub struct CursorHome(pub POINT);
+
+impl CursorHome {
+    /// 今のポインターの位置を覚える。座標を物理的な画素で受け取るよう、`setup` の後に呼ぶ。
+    pub fn remember() -> CursorHome {
+        let mut p = POINT { x: 0, y: 0 };
+        // SAFETY: a plain cursor query.
+        unsafe { GetCursorPos(&mut p) };
+        CursorHome(p)
+    }
+
+    /// 覚えた位置へポインターを戻し、戻せたかを返す。前面の窓が管理者として動くアプリ（タスク
+    /// マネージャーなど）のものだと、Windows はポインターを動かさない（UIPI）ので、背景の窓を前面に
+    /// 戻してから、背景の窓を閉じる前に呼ぶ。
+    pub fn restore(&self) -> bool {
+        // テストが置いた位置は、この後は確かめない。
+        *PLACED.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let _ = reclaim_foreground();
+        // SAFETY: moving the cursor has no memory effects.
+        unsafe { SetCursorPos(self.0.x, self.0.y) != 0 }
+    }
 }
