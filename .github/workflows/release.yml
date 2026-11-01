@@ -15,7 +15,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check the tag matches the crate version
         shell: pwsh
         run: |
@@ -35,7 +35,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
