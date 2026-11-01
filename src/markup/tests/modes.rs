@@ -1,5 +1,5 @@
 //! 切り取りのモードごとの書き込みの始まり。README: 選んだスクリーンショットはバーとともに画面に残り、
-//! 確定するといつもどおり届く。枠線は四角形、ウィンドウ、全画面に付き、自由形式には付かない。
+//! 確定するといつもどおり届く。枠線は四角形とウィンドウに付き、自由形式には付かない。全画面と
 //! 録画には書き込まない。
 //!
 //! | モード | 書き込む範囲 | 境界線（`shaped`） | テスト |
@@ -7,7 +7,7 @@
 //! | 四角形 | 選んだ範囲 | 付く | 既存 `a_marked_up_snip_is_drawn_on_undone_erased_and_captured` |
 //! | ウィンドウ | 対象のウィンドウの範囲。上に重なった窓は入らない | 付く | `a_window_snip_is_marked_up_over_the_window_alone` |
 //! | ウィンドウ（画面の左からはみ出す） | はみ出した分も含めて、窓のあった所 | - | `a_window_hanging_off_the_left_of_the_screen_is_marked_up_where_it_is` |
-//! | 全画面 | 画面全体。バーは画面の内側 | 付く | `a_full_screen_snip_is_marked_up_over_the_whole_screen` |
+//! | 全画面 | 書き込まず、画面全体をそのまま届ける | 付く | `a_full_screen_snip_is_delivered_without_markup` |
 //! | 自由形式 | 形を囲む範囲。形の外は透明 | 付かない | `a_freeform_snip_is_marked_up_as_a_shape_without_a_border` |
 //! | 録画（どのモードでも） | 書き込まない | - | `a_recording_selection_is_not_marked_up` |
 
@@ -180,7 +180,7 @@ fn a_window_hanging_off_the_left_of_the_screen_is_marked_up_where_it_is() {
 
 #[test]
 #[ignore = "Covers the screen"]
-fn a_full_screen_snip_is_marked_up_over_the_whole_screen() {
+fn a_full_screen_snip_is_delivered_without_markup() {
     let desk = Desk::start_with(|settings| {
         settings.copy = false;
         settings.history = true;
@@ -191,28 +191,15 @@ fn a_full_screen_snip_is_marked_up_over_the_whole_screen() {
     let (width, height) = (s().width, s().height);
     // SAFETY: the windows belong to this test.
     unsafe { set_mode(MODE_SCREEN) };
-    assert_marking_up();
-    let session = session();
-    assert_eq!(edges(session.area), (0, 0, width, height));
-    assert!(!session.shaped);
-    // 範囲の下にも上にも入らないので、バーは画面の作業領域（タスクバーを除く）の内側に出る。
-    // SAFETY: plain window and monitor queries.
-    let (bar, work) = unsafe {
-        let mut bar: RECT = std::mem::zeroed();
-        GetWindowRect(s().markup_bar, &mut bar);
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        GetMonitorInfoW(
-            MonitorFromWindow(s().markup_bar, MONITOR_DEFAULTTONEAREST),
-            &mut info,
-        );
-        (edges(bar), edges(info.rcWork))
-    };
+    // ペンのボタンがオンでも書き込まず、その場で届ける。
     assert!(
-        bar.0 >= work.0 && bar.1 >= work.1 && bar.2 <= work.2 && bar.3 <= work.3,
-        "the bar {bar:?} is inside {work:?}"
+        !s().active && s().markup_session.is_none(),
+        "the full screen is taken on the spot"
     );
-    let (w, h, pixels) = capture_with_enter(&desk);
+    assert!(!shown(s().markup_bar));
+    assert!(s().markup, "the pen button stays on for the next snip");
+    let entry = crate::history::list().remove(0);
+    let (w, h, pixels) = imaging::decode(&entry.image).unwrap();
     assert_eq!((w, h), (width, height));
     assert_eq!(pixel(&pixels, w, 0, 0), border(), "the border is drawn");
 }

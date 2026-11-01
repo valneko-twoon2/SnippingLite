@@ -130,7 +130,8 @@ pub(super) fn verify(
             }
             None
         }
-        Expect::Selection(size) if flags.markup => {
+        // 全画面はペンのボタンにかかわらず、書き込まずに届く。
+        Expect::Selection(size) if flags.markup && st.mode != MODE_SCREEN => {
             let session = session.unwrap_or_else(|| panic!("{what}: the selection is marked up"));
             assert!(st.active, "{what}: marking up goes on in the overlay");
             if let Some(size) = size {

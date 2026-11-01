@@ -48,9 +48,9 @@ pub(crate) struct Session {
     pressed: i32,
 }
 
-/// 書き込みを始めるか。録画には使わない。
+/// 書き込みを始めるか。録画には使わない。全画面もペンのボタンにかかわらず、そのまま届ける。
 pub(crate) unsafe fn wanted() -> bool {
-    state().markup && !state().video
+    state().markup && !state().video && state().mode != MODE_SCREEN
 }
 
 /// 切り取った画像を `at`（オーバーレイの座標）に残して書き込みを始める。
