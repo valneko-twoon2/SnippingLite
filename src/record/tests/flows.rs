@@ -187,7 +187,8 @@ fn a_recording_whose_name_is_held_open_is_kept_under_another_name() {
 
 /// 最後の名前は共有なしで開かれたまま、連番の名前（`staging::keep` が試す (2) から (20) まで）も
 /// すべて埋まっていて、録画をどこにも置けない。書き終えた録画は作り直せないので、一時名のまま残し、
-/// エラーはその場所を知らせる。ほかのファイルには触れない。
+/// エラーはその場所を知らせる。ほかのファイルには触れない。アプリを終えて次に録画を始めるときの
+/// 掃除も、知らせた場所の録画を消さない。
 #[test]
 #[ignore = "Requires an unlocked Windows desktop and Media Foundation encoder"]
 fn a_recording_that_no_name_is_left_for_stays_under_its_temporary_name_and_says_where() {
@@ -240,6 +241,19 @@ fn a_recording_that_no_name_is_left_for_stays_under_its_temporary_name_and_says_
         );
     }
     assert!(!sandbox.path().join("Snipping Lite 1 (21).mp4").exists());
+    // アプリを終えた後の次の録画の掃除。書いていたプロセスが終わった一時名に写して試す。
+    let stopped = super::crash::finished_process();
+    let left = sandbox
+        .path()
+        .join(format!("Snipping Lite 1.mp4.{}.partial", stopped.0.id()));
+    std::fs::copy(&partial, &left).unwrap();
+    let recording = std::fs::read(&partial).unwrap();
+    crate::staging::remove_leftovers(sandbox.path());
+    assert_eq!(
+        std::fs::read(&left).ok(),
+        Some(recording),
+        "the recording the error pointed to is still there after the next cleanup"
+    );
 }
 
 #[test]

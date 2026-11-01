@@ -252,6 +252,8 @@ fn run(
             }
         };
         // 書き終えた録画は作り直せないので、名前を変えられなくても消さない（`staging::keep`）。
+        // どこにも置けなければ一時名のまま残し、場所をエラーで知らせる。書き終えているので、
+        // アプリを終えた後の次の掃除（`staging::remove_leftovers`）も消さない。
         match crate::staging::keep(&partial, path) {
             Ok(saved) => {
                 frame.saved = (saved != path).then_some(saved);

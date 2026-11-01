@@ -5,7 +5,8 @@
 //! 残った一時名のファイルは、次に同じフォルダーへ書くときに消す。消すのは、書いていたプロセスが
 //! もう動いていないものだけなので、別のプロセス（開いている履歴のウィンドウ）が書いている途中の
 //! ファイルには触れない。書き終えた録画が最後の名前に置けないときは、`<名前> (2).mp4` などの
-//! 一時名でない名前に残す（`keep`）ので、この掃除の対象にならない。
+//! 一時名でない名前に残す（`keep`）ので、この掃除の対象にならない。どの名前にも置けず一時名のまま
+//! 残った録画も、書き終えている（MP4 の目次の `moov` ボックスがある）ので、掃除は消さない。
 //!
 //! 書き込みは段階を 1 つ終えるたびに `step` を呼ぶ。製品のビルドでは何もしない。テストのビルドでは、
 //! クラッシュ時の整合性のテストが子プロセスをその段階で止めて殺し、残ったファイルを確かめる
@@ -51,7 +52,8 @@ pub fn commit(partial: &Path, path: &Path) -> io::Result<()> {
 /// 3. それもできなければ（`partial` 自体が開かれているなど）、その連番の名前へ中身を写し、
 ///    写せたら `partial` を消す。
 ///
-/// 返すのは置いた場所。どれもできなければ `partial` をそのまま残して失敗を返す。
+/// 返すのは置いた場所。どれもできなければ `partial` をそのまま残して失敗を返す。残した `partial` は
+/// 書き終えた録画なので、書いたプロセスが終わった後の `remove_leftovers` も消さない。
 pub fn keep(partial: &Path, path: &Path) -> io::Result<PathBuf> {
     let Err(error) = rename_retrying(partial, path) else {
         return Ok(path.to_owned());
@@ -134,25 +136,80 @@ fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// `folder` に、もう動いていないプロセスが残した書きかけの画像と録画があれば消す。
+///
+/// 一時名の録画でも、書き終えたもの（`keep` がどの名前にも置けず、場所をエラーで知らせて残したもの）は
+/// 作り直せないので消さない。書き終えたか確かめられない（読めない）録画も、同じ理由で消さない。
 pub fn remove_leftovers(folder: &Path) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
     for entry in entries.flatten() {
-        let writer = entry.file_name().to_str().and_then(writer_of);
-        if writer.is_some_and(|id| !alive(id)) {
-            let _ = fs::remove_file(entry.path());
+        let Some((kind, writer)) = entry.file_name().to_str().and_then(writer_of) else {
+            continue;
+        };
+        if alive(writer) {
+            continue;
         }
+        let path = entry.path();
+        if kind == "mp4" && finished_video(&path).unwrap_or(true) {
+            continue;
+        }
+        let _ = fs::remove_file(path);
     }
 }
 
-/// 書きかけの名前から、書いていたプロセスの ID を読む。`KINDS` の書きかけでなければ `None`。
-fn writer_of(name: &str) -> Option<u32> {
+/// 書きかけの名前から、種類（`KINDS` のどれか、小文字）と書いていたプロセスの ID を読む。
+/// `KINDS` の書きかけでなければ `None`。
+fn writer_of(name: &str) -> Option<(&'static str, u32)> {
     let (rest, id) = name.strip_suffix(".partial")?.rsplit_once('.')?;
     let (_, kind) = rest.rsplit_once('.')?;
-    let ours = KINDS.iter().any(|known| kind.eq_ignore_ascii_case(known));
+    let kind = KINDS
+        .into_iter()
+        .find(|known| kind.eq_ignore_ascii_case(known))?;
     let digits = !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit());
-    (ours && digits).then(|| id.parse().ok()).flatten()
+    let id = digits.then(|| id.parse().ok()).flatten()?;
+    Some((kind, id))
+}
+
+/// `path` が書き終えた MP4 か。MP4 は最上位のボックス（4 バイトの大きさと 4 バイトの種類で始まる）を
+/// 並べたもので、録画を仕上げる（`Finalize`）ときに、再生に要る目次の `moov` ボックスを書く。
+/// 先頭からボックスの見出しだけをたどり（映像のデータの中身は読まない）、ファイルに収まる `moov` が
+/// あれば書き終えている。途中で止まった録画には `moov` がないか、ボックスがファイルの残りより大きい
+/// （書いている途中の `mdat` か `moov`）。
+fn finished_video(path: &Path) -> io::Result<bool> {
+    use io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    let mut at = 0;
+    while length - at >= 8 {
+        file.seek(SeekFrom::Start(at))?;
+        let mut header = [0; 8];
+        file.read_exact(&mut header)?;
+        let [a, b, c, d, kind @ ..] = header;
+        // 大きさ 0（ファイルの終わりまで）は見出しより小さいものとして扱う。書いている途中の `mdat` で、
+        // その後に `moov` はない。見出しより小さい大きさを拒むので、1 回ごとに 8 バイト以上進み、
+        // たどるのは必ず終わる。
+        let (size, header_size) = match u32::from_be_bytes([a, b, c, d]) {
+            // 大きさ 1 は、続く 8 バイトに 64 ビットで書いてある。
+            1 => {
+                if length - at < 16 {
+                    return Ok(false);
+                }
+                let mut large = [0; 8];
+                file.read_exact(&mut large)?;
+                (u64::from_be_bytes(large), 16)
+            }
+            size => (u64::from(size), 8),
+        };
+        if size < header_size || size > length - at {
+            return Ok(false);
+        }
+        if kind == *b"moov" {
+            return Ok(true);
+        }
+        at += size;
+    }
+    Ok(false)
 }
 
 /// プロセスが動いているか。開けないプロセス（もう無いか、別の利用者のもの）は書きかけの持ち主ではない。
