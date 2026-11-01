@@ -308,7 +308,7 @@ fn settings_and_history_open_their_windows_and_end_the_snip() {
 fn the_area_menu_changes_the_mode_while_snipping() {
     let desk = Desk::start();
     start(&desk);
-    for (index, mode) in [(1, MODE_FREE), (2, MODE_WINDOW), (0, MODE_RECT)] {
+    for (index, mode) in [(1, MODE_WINDOW), (3, MODE_FREE), (0, MODE_RECT)] {
         let answer = answer_menu(index);
         press(&desk, AREA_BUTTON);
         assert!(answer.join().unwrap());
@@ -321,7 +321,7 @@ fn the_area_menu_changes_the_mode_while_snipping() {
     assert!(answer.join().unwrap());
     assert_eq!(s().mode, MODE_RECT);
     // Full screen takes the picture on the spot.
-    let answer = answer_menu(3);
+    let answer = answer_menu(2);
     press(&desk, AREA_BUTTON);
     assert!(answer.join().unwrap());
     assert!(!s().active);
@@ -333,7 +333,7 @@ fn the_area_menu_changes_the_mode_while_snipping() {
 fn the_area_menu_of_a_kept_toolbar_starts_a_snip_in_the_chosen_mode() {
     let desk = Desk::start_with(|settings| settings.keep_toolbar = true);
     s().toolbar_open = true;
-    let answer = answer_menu(1);
+    let answer = answer_menu(3);
     press(&desk, AREA_BUTTON);
     assert!(answer.join().unwrap());
     assert!(s().active && s().mode == MODE_FREE);

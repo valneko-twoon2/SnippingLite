@@ -2,6 +2,10 @@
 
 use super::*;
 
+mod area_menu;
+#[cfg(test)]
+pub(crate) use area_menu::area_mode;
+
 /// Fluent command bar: capture type, area picker, editing, history and settings.
 const BAR_HEIGHT: f32 = 48.0;
 const BAR_WIDTH: f32 = 332.0;
@@ -13,7 +17,7 @@ pub(crate) const HISTORY_BUTTON: i32 = 4;
 pub(crate) const SETTINGS_BUTTON: i32 = 5;
 pub(crate) const CLOSE_BUTTON: i32 = 6;
 const GLYPHS: [&str; 7] = [
-    "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E70F}", "\u{E81C}", "\u{E713}", "\u{E711}",
+    "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E932}", "\u{E81C}", "\u{E713}", "\u{E711}",
 ];
 pub(crate) fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     let (left, width) = match index {
@@ -33,56 +37,6 @@ pub(crate) fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     ]
 }
 
-unsafe fn choose_capture_area(hwnd: HWND) {
-    let menu = CreatePopupMenu();
-    if menu.is_null() {
-        return;
-    }
-    for (mode, label) in [
-        (MODE_RECT, tr("Rectangle")),
-        (MODE_FREE, tr("Freeform")),
-        (MODE_WINDOW, tr("Window")),
-        (MODE_SCREEN, tr("Full screen")),
-    ] {
-        let checked = if state().mode == mode { MF_CHECKED } else { 0 };
-        AppendMenuW(
-            menu,
-            MF_STRING | checked,
-            mode as usize + 1,
-            w(label).as_ptr(),
-        );
-    }
-    let button = toolbar_button(AREA_BUTTON, state().scale);
-    let mut anchor = POINT {
-        x: button[0] as i32,
-        y: button[3] as i32,
-    };
-    ClientToScreen(hwnd, &mut anchor);
-    SetForegroundWindow(hwnd);
-    let command = TrackPopupMenu(
-        menu,
-        TPM_RETURNCMD | TPM_NONOTIFY,
-        anchor.x,
-        anchor.y,
-        0,
-        hwnd,
-        null(),
-    );
-    DestroyMenu(menu);
-    if command > 0 && state().active {
-        set_mode(command - 1);
-    } else if command > 0 {
-        // A kept toolbar between snips starts a new snip in the chosen mode.
-        state().mode = command - 1;
-        begin_capture();
-        if state().active {
-            set_mode(command - 1);
-        }
-    }
-    if state().active {
-        SetForegroundWindow(state().overlay);
-    }
-}
 pub(crate) unsafe fn place_toolbar(cursor: POINT) {
     let scale = state().scale;
     let mut info: MONITORINFO = std::mem::zeroed();
@@ -251,12 +205,7 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
             );
         }
         let glyph = if i == AREA_BUTTON {
-            match s.mode {
-                MODE_FREE => "\u{EA49}",
-                MODE_WINDOW => "\u{E7C4}",
-                MODE_SCREEN => "\u{E7F4}",
-                _ => glyph,
-            }
+            area_menu::glyph(s.mode)
         } else {
             glyph
         };
@@ -320,6 +269,14 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             }
         }
         WM_NCLBUTTONDBLCLK => 0,
+        WM_MEASUREITEM => {
+            area_menu::measure(lp);
+            1
+        }
+        WM_DRAWITEM => {
+            area_menu::draw(lp);
+            1
+        }
         WM_DPICHANGED => {
             rescale(hwnd, wp, lp);
             0
@@ -413,7 +370,7 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                             set_mode(mode);
                         }
                     }
-                    AREA_BUTTON => choose_capture_area(hwnd),
+                    AREA_BUTTON => area_menu::choose(hwnd),
                     _ => {}
                 }
                 InvalidateRect(hwnd, null(), 0);

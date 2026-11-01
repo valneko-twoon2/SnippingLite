@@ -250,8 +250,9 @@ impl Hands<'_> {
         if !shown(s().toolbar) {
             return;
         }
-        let expect = match choice {
-            Some(mode) if mode as i32 == MODE_SCREEN => {
+        let mode = choice.map(area_mode);
+        let expect = match mode {
+            Some(MODE_SCREEN) => {
                 // SAFETY: plain metric queries.
                 let size = unsafe {
                     (
@@ -265,8 +266,8 @@ impl Hands<'_> {
         };
         scene::queue_menu(choice);
         self.toolbar_click(AREA_BUTTON, expect);
-        if let Some(mode) = choice {
-            self.world.mode = mode as i32;
+        if let Some(mode) = mode {
+            self.world.mode = mode;
         }
     }
 
