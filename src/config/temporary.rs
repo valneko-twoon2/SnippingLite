@@ -91,11 +91,8 @@ fn writer(name: &str, file: &str) -> Option<u32> {
 }
 
 /// 最後に書かれてから `STALE` より経ったか。時刻を読めないときや、時計が戻って未来の時刻に
-/// なっているときは、経っていないとみなして残す。
+/// なっているときは、経っていないとみなして残す（画像と録画の書きかけと同じ規則、
+/// `staging::untouched_for`）。
 fn stale(path: &Path) -> bool {
-    fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|time| SystemTime::now().duration_since(time).ok())
-        .is_some_and(|age| age > STALE)
+    crate::staging::untouched_for(path, SystemTime::now(), STALE)
 }

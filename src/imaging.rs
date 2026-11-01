@@ -85,6 +85,9 @@ pub fn bad_size() -> std::io::Error {
 /// ほかに片付ける機会がないので、そこへ保存するここで片付ける。消すのは `staging` の一時名の規則に
 /// 合い、書いたプロセスが動いていないものだけで、利用者のファイル、書き終えた録画（`(2).mp4` など）、
 /// 動いているプロセス（もう一方の Snipping Lite のプロセス）が書いている途中のものには触れない。
+/// ネットワークの場所や、ほかの利用者のものは、最後に書かれてから数分経つまで消さない（ほかの PC や
+/// 利用者の Snipping Lite が書いている途中かもしれない）。名前を付けて保存の名前はいつも `.png` か
+/// `.bmp` で終わる（`saved_name`）ので、書きかけは掃除の規則に合う。
 pub fn encode(path: &Path, pixels: &[u8], width: i32, height: i32) -> std::io::Result<()> {
     if let Some(folder) = path.parent() {
         staging::remove_leftovers(folder);
@@ -108,10 +111,7 @@ pub fn encode_partial(
         return Err(std::io::Error::other("Could not start GDI+"));
     }
     let partial = staging::partial(path);
-    let bmp = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("bmp"));
-    match save(&partial, pixels, width, height, bmp) {
+    match save(&partial, pixels, width, height, is_bmp(path)) {
         Ok(()) => Ok(partial),
         Err(error) => {
             let _ = fs::remove_file(&partial);
@@ -311,27 +311,28 @@ pub fn choose_folder(owner: HWND, current: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Shows the Save As dialog; returns the chosen path and the selected filter (1-based).
+/// Shows the Save As dialog with `index` (1-based) as the selected filter; returns the chosen
+/// path and the selected filter.
 fn save_dialog(
     owner: HWND,
     folder: &Path,
     name: &str,
     filter: &str,
-    extension: &str,
+    index: u32,
 ) -> Option<(PathBuf, u32)> {
     let mut file = [0u16; 520];
-    let initial: Vec<u16> = name.encode_utf16().collect();
+    let initial: Vec<u16> = name.encode_utf16().take(file.len() - 1).collect();
     file[..initial.len()].copy_from_slice(&initial);
     let directory = wide(folder);
     let filter: Vec<u16> = filter.encode_utf16().collect();
-    let extension = w(extension);
+    let extension = w("png");
     // SAFETY: every pointer in the structure outlives the call.
     unsafe {
         let mut dialog: OPENFILENAMEW = std::mem::zeroed();
         dialog.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;
         dialog.hwndOwner = owner;
         dialog.lpstrFilter = filter.as_ptr();
-        dialog.nFilterIndex = 1;
+        dialog.nFilterIndex = index;
         dialog.lpstrFile = file.as_mut_ptr();
         dialog.nMaxFile = file.len() as u32;
         dialog.lpstrInitialDir = directory.as_ptr();
@@ -355,20 +356,70 @@ pub fn choose_path(owner: HWND, folder: &Path, name: &str, ask: bool) -> Option<
         return Some(folder.join(name));
     }
     let filter = format!("{}\0*.png\0{}\0*.bmp\0\0", tr("PNG image"), tr("BMP image"));
-    let (path, index) = save_dialog(owner, folder, name, &filter, "png")?;
-    Some(default_extension(
-        path,
-        if index == 2 { "bmp" } else { "png" },
-    ))
+    settle(folder, name, |folder, name, index| {
+        save_dialog(owner, folder, name, &filter, index)
+    })
 }
 
-/// A name typed without an extension gets the one of the chosen file type.
-fn default_extension(path: PathBuf, extension: &str) -> PathBuf {
-    if path.extension().is_none() {
-        path.with_extension(extension)
-    } else {
-        path
+/// 名前を付けて保存で、保存する場所を決める。`ask` はダイアログを開き（場所、名前、選んでおく種類。
+/// 1 が PNG、2 が BMP）、選んだ場所と種類を返す。返した名前に拡張子を付け足し（`saved_name`）、
+/// 付け足した名前のファイルが既にあれば、その名前でダイアログを開き直す。ダイアログが上書きして
+/// よいかを確かめたのは付け足す前の名前なので、付け足した名前でも確かめさせる。
+fn settle(
+    folder: &Path,
+    name: &str,
+    mut ask: impl FnMut(&Path, &str, u32) -> Option<(PathBuf, u32)>,
+) -> Option<PathBuf> {
+    let (mut folder, mut name, mut index) = (folder.to_owned(), name.to_owned(), 1);
+    loop {
+        let (path, chosen) = ask(&folder, &name, index)?;
+        let saved = saved_name(path.clone(), chosen);
+        if saved == path || fs::symlink_metadata(&saved).is_err() {
+            return Some(saved);
+        }
+        let (Some(parent), Some(file)) = (saved.parent(), saved.file_name()) else {
+            return Some(saved);
+        };
+        folder = parent.to_owned();
+        name = file.to_string_lossy().into_owned();
+        index = chosen;
     }
+}
+
+/// `encode` が BMP で書く名前か（拡張子が `.bmp`、大文字小文字は問わない）。ほかの名前は PNG で書く。
+fn is_bmp(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("bmp"))
+}
+
+/// 保存する名前。`encode` は拡張子で形式を選ぶので、名前はいつも書く形式の拡張子で終わるようにする。
+///
+/// - `.png` か `.bmp` で終わる名前（大文字小文字は問わない）は、その形式で書くので、そのまま。
+/// - ほかの名前（拡張子のない `shot`、ほかの形式の `shot.jpg`）には、ダイアログで選んだ種類
+///   （`selected` が 2 なら BMP、ほかは PNG）の拡張子を付け足す（`shot.png`、`shot.jpg.png`）。
+///
+/// 拡張子を置き換えずに付け足すのは、打った名前を残すため（`v1.2` の `.2` は拡張子ではない）。
+/// 中身が PNG なのに `.jpg` で終わる名前にはせず、書きかけの名前（`shot.jpg.png.<ID>.partial`）も
+/// `staging` の掃除の規則に合う。Windows はファイル名の終わりの点と空白を落とすので、先に落として
+/// から見る（`shot.` は `shot.png`、`shot.png.` は `shot.png`）。
+fn saved_name(path: PathBuf, selected: u32) -> PathBuf {
+    let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+    while name
+        .last()
+        .is_some_and(|&c| c == u16::from(b'.') || c == u16::from(b' '))
+    {
+        name.pop();
+    }
+    let trimmed = PathBuf::from(OsString::from_wide(&name));
+    let png = trimmed
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("png"));
+    if png || is_bmp(&trimmed) {
+        return trimmed;
+    }
+    let extension = if selected == 2 { ".bmp" } else { ".png" };
+    name.extend(extension.encode_utf16());
+    PathBuf::from(OsString::from_wide(&name))
 }
 
 /// Milliseconds since the Unix epoch, used for file names.

@@ -5,9 +5,12 @@
 //! 残った一時名のファイルは、次に同じフォルダーへ書くときに消す（`remove_leftovers`）。画像は
 //! `imaging::encode` が書く前にそのフォルダーを片付けるので、名前を付けて保存で選んだフォルダーも
 //! 対象になる。録画は保存先と一時フォルダーを用意するとき、履歴は `history` の `tidy` が片付ける。
-//! 消すのは、書いていたプロセスがもう動いていないものだけなので、別のプロセス（開いている履歴の
-//! ウィンドウ）が書いている途中のファイルには触れない。書き終えた録画が最後の名前に置けないときは、
-//! `<名前> (2).mp4` などの一時名でない名前に残す（`keep`）ので、この掃除の対象にならない。どの名前にも置けず一時名のまま
+//! 消すのは、書いていたプロセスがもう動いていないものだけなので、この PC の別のプロセス（開いている
+//! 履歴のウィンドウ）が書いている途中のファイルには触れない。プロセスが動いているかは、この PC の
+//! プロセスをこの利用者の権限で開いて確かめるので、ほかの PC や利用者のプロセスは見えない。そこで、
+//! ネットワークの場所にあるものと、ほかの利用者が持ち主のものは、最後に書かれてから `STALE` より
+//! 経つまで消さない（`origin`）。書き終えた録画が最後の名前に置けないときは、`<名前> (2).mp4` などの
+//! 一時名でない名前に残す（`keep`）ので、この掃除の対象にならない。どの名前にも置けず一時名のまま
 //! 残った録画も、書き終えている（MP4 の目次の `moov` ボックスがある）ので、掃除は消さない。
 //!
 //! 書き込みは段階を 1 つ終えるたびに `step` を呼ぶ。製品のビルドでは何もしない。テストのビルドでは、
@@ -17,15 +20,22 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HANDLE};
+
+mod origin;
 
 /// 名前を変えるのを試す回数。書いたばかりのファイルを、ウイルス対策ソフトなどが少しの間開いていることがある。
 const ATTEMPTS: usize = 5;
 const RETRY: Duration = Duration::from_millis(20);
 /// 一時名で書いてよい種類。掃除が利用者のほかのファイルに触れないよう、これ以外は消さない。
 const KINDS: [&str; 3] = ["png", "bmp", "mp4"];
+/// 書いたプロセスが動いているかをこの PC から確かめられない書きかけを、書いている途中ではないと
+/// みなすまでの時間（5 分）。書いている途中のファイルは、書くたびに最後に書かれた時刻が進む。書き
+/// 終えてから名前を変えるまでは一瞬で、大きな画像をネットワークの場所へ書いても数秒で済む。
+/// ネットワークの場所のファイルの時刻はその場所の PC の時計で付くので、PC の間の時計のずれも見込む。
+const STALE: Duration = Duration::from_secs(5 * 60);
 
 /// `path` を書いている途中の名前。最後の名前（`.png` など）では終わらないので、エクスプローラーや
 /// 履歴の一覧に画像や動画として並ばない。
@@ -139,9 +149,23 @@ fn copy_new(from: &Path, to: &Path) -> io::Result<()> {
 
 /// `folder` に、もう動いていないプロセスが残した書きかけの画像と録画があれば消す。
 ///
+/// 書きかけの名前のプロセス ID は、書いた PC の中でだけ意味を持つ。この PC のこの利用者が書いたと
+/// わからないもの（`folder` がネットワークの場所にある、ほかの利用者が持ち主）は、ほかの PC や利用者の
+/// Snipping Lite が書いている途中かもしれないので、最後に書かれてから `STALE` より経つまで消さない。
+///
 /// 一時名の録画でも、書き終えたもの（`keep` がどの名前にも置けず、場所をエラーで知らせて残したもの）は
 /// 作り直せないので消さない。書き終えたか確かめられない（読めない）録画も、同じ理由で消さない。
 pub fn remove_leftovers(folder: &Path) {
+    // 書いたプロセスが動いていない書きかけがあるときだけ、場所を確かめる。
+    let local = std::cell::OnceCell::new();
+    tidy(folder, SystemTime::now(), |file| {
+        *local.get_or_init(|| origin::on_this_pc(folder)) && origin::owned_here(file)
+    });
+}
+
+/// `remove_leftovers` の中身。`now` は今の時刻。`here` は、書きかけを書いたのがこの PC のこの利用者の
+/// プロセスだとわかるか（テストはこれで、ほかの PC や利用者の書きかけを作る）。
+fn tidy(folder: &Path, now: SystemTime, here: impl Fn(&Path) -> bool) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
@@ -153,11 +177,25 @@ pub fn remove_leftovers(folder: &Path) {
             continue;
         }
         let path = entry.path();
+        if !here(&path) && !untouched_for(&path, now, STALE) {
+            continue;
+        }
         if kind == "mp4" && finished_video(&path).unwrap_or(true) {
             continue;
         }
         let _ = fs::remove_file(path);
     }
+}
+
+/// `path` が、`now` の時点で、最後に書かれてから `time` より経っているか。時刻を読めないときや、
+/// 時計が戻って未来の時刻になっているときは、経っていないとみなす。設定ファイルの前の版の一時
+/// ファイル（`config::temporary`）も、この規則で見る。
+pub fn untouched_for(path: &Path, now: SystemTime, time: Duration) -> bool {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|written| now.duration_since(written).ok())
+        .is_some_and(|age| age > time)
 }
 
 /// 書きかけの名前から、種類（`KINDS` のどれか、小文字）と書いていたプロセスの ID を読む。
@@ -220,8 +258,9 @@ fn finished_video(path: &Path) -> io::Result<bool> {
     Ok(false)
 }
 
-/// プロセスが動いているか。開けないプロセス（もう無いか、別の利用者のもの）は書きかけの持ち主ではない。
-/// テストも、終わったプロセスが残した作業用のフォルダーを見分けるのに使う。
+/// この PC のプロセスが動いているか。開けないプロセス（もう無いか、別の利用者のもの）は動いていない
+/// とみなす。別の利用者のプロセスが書いている途中の書きかけは、`remove_leftovers` が持ち主と時刻で
+/// 守る。テストも、終わったプロセスが残した作業用のフォルダーを見分けるのに使う。
 pub fn alive(id: u32) -> bool {
     if id == std::process::id() {
         return true;
