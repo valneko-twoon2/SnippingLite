@@ -1,0 +1,43 @@
+name: test
+
+# push と pull request のたびに、Windows のランナーでテストを走らせる。画面を覆うテスト、
+# モンキーテスト、E2E は利用者の PC の画面とマウスを奪うので、手元ではなくここで走らせる。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        shell: pwsh
+        run: cargo install cargo-audit --locked
+      - name: Validate
+        shell: pwsh
+        run: scripts/validate.ps1
+      - name: Lint the workflows
+        shell: pwsh
+        run: scripts/check-workflows.ps1 -Strict
+
+  screen:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      # リークのテストはプロセス全体の GDI と USER のオブジェクトを数えるので、ほかと分けて走らせる。
+      - name: Run the tests that cover the screen
+        shell: pwsh
+        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --bin snippinglite -- --ignored --test-threads=1 --skip leaks
+      - name: Run the leak tests
+        shell: pwsh
+        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --bin snippinglite -- leaks --ignored --test-threads=1
+      - name: Run the end-to-end tests
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --test e2e -- --ignored --test-threads=1
