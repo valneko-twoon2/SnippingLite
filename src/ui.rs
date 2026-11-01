@@ -32,7 +32,8 @@ pub use canvas::*;
 pub mod monitors;
 
 pub const ICON_FONT: &str = "Segoe Fluent Icons";
-pub const TEXT_FONT: &str = "Yu Gothic UI";
+/// GDI のグレースケールの描画は DirectWrite（WinUI）より太く見えるので、一段細い Semilight を使う。
+pub const TEXT_FONT: &str = "Yu Gothic UI Semilight";
 
 /// `window` が `process` のプロセスの窓か。`process` がなければ、どのプロセスの窓でもよい。
 unsafe fn in_process(window: HWND, process: Option<u32>) -> bool {
