@@ -168,6 +168,11 @@ impl Recording {
         })
     }
 
+    /// ウィンドウを録画している（窓を追いかけるので、画面の座標に縛られない）。
+    pub fn follows_window(&self) -> bool {
+        self.target.is_some()
+    }
+
     /// Encoder warm-up is excluded from both the file timeline and the UI timer.
     pub fn elapsed(&self) -> Duration {
         self.started.get().map(Instant::elapsed).unwrap_or_default()

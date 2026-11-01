@@ -2,13 +2,9 @@
 
 use super::*;
 
-/// Recording indicator in DIPs: a red dot, the elapsed time and a Stop label.
-const RECORD_WIDTH: f32 = 168.0;
-const RECORD_HEIGHT: f32 = 48.0;
-/// The Stop button of the recording indicator; only a click on it ends the recording.
-fn stop_button(scale: f32) -> [f32; 4] {
-    [100.0 * scale, 8.0 * scale, 160.0 * scale, 40.0 * scale]
-}
+mod indicator;
+pub(crate) use indicator::*;
+
 /// Sends a selected shape to the active screenshot or recording destination.
 pub(crate) unsafe fn complete_selection(rect: RECT, freeform: bool) {
     if state().video {
@@ -158,6 +154,27 @@ unsafe fn begin_countdown(area: RECT, points: Vec<POINT>, target: Option<window_
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     SetTimer(hwnd, COUNT_TIMER, 1000, None);
 }
+/// WM_DPICHANGED: カウントダウンのあるモニターの拡大率が変わった。新しい倍率で作り直し、範囲の
+/// 真ん中に置き直す。自分で置いたときにも届き、そのときは倍率が同じなので、何もしない。
+unsafe fn rescale_count(hwnd: HWND, wp: WPARAM) {
+    let scale = ui::monitors::message_scale(wp);
+    if scale == state().scale {
+        return;
+    }
+    state().scale = scale;
+    let area = state().count_area;
+    let size = (COUNT_SIZE * scale).round() as i32;
+    SetWindowPos(
+        hwnd,
+        null_mut(),
+        (area.left + area.right) / 2 - size / 2,
+        (area.top + area.bottom) / 2 - size / 2,
+        size,
+        size,
+        SWP_NOACTIVATE | SWP_NOZORDER,
+    );
+    InvalidateRect(hwnd, null(), 0);
+}
 pub(crate) unsafe fn cancel_countdown() {
     state().count_points.clear();
     state().count_target = None;
@@ -176,6 +193,10 @@ pub(crate) unsafe extern "system" fn count_proc(
     match msg {
         WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
         WM_ERASEBKGND => 1,
+        WM_DPICHANGED => {
+            rescale_count(hwnd, wp);
+            0
+        }
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(hwnd, &mut ps);
@@ -282,44 +303,6 @@ unsafe fn show_frame(area: RECT) {
     state().record_frame = hwnd;
     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 }
-unsafe fn show_indicator(center: POINT) {
-    let theme = ui::theme();
-    let scale = ui::scale_at(center);
-    let mut info: MONITORINFO = std::mem::zeroed();
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    GetMonitorInfoW(
-        MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST),
-        &mut info,
-    );
-    let width = (RECORD_WIDTH * scale).round() as i32;
-    let height = (RECORD_HEIGHT * scale).round() as i32;
-    let hwnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-        w(RECORD).as_ptr(),
-        w(RECORD).as_ptr(),
-        WS_POPUP,
-        (info.rcMonitor.left + info.rcMonitor.right - width) / 2,
-        info.rcMonitor.top + (12.0 * scale).round() as i32,
-        width,
-        height,
-        null_mut(),
-        null_mut(),
-        GetModuleHandleW(null()),
-        null(),
-    );
-    if hwnd.is_null() {
-        return;
-    }
-    // The indicator must not appear in the video it controls.
-    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE);
-    ui::acrylic(hwnd, theme.dark);
-    ui::disable_transitions(hwnd);
-    state().theme = theme;
-    state().scale = scale;
-    state().record_window = hwnd;
-    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-    SetTimer(hwnd, RECORD_TIMER, 500, None);
-}
 /// Ends the recording, restores our windows and announces the file.
 pub(crate) unsafe fn stop_recording() {
     let Some(recording) = state().recording.take() else {
@@ -360,89 +343,6 @@ pub(crate) unsafe fn stop_recording() {
         Err(error) => message(state().owner, &error),
     }
 }
-unsafe fn paint_record(hwnd: HWND, dc: HDC) {
-    let mut client: RECT = std::mem::zeroed();
-    GetClientRect(hwnd, &mut client);
-    let Some(mut canvas) = ui::Canvas::new(client.right, client.bottom) else {
-        return;
-    };
-    let s = state();
-    let (theme, scale) = (&s.theme, s.scale);
-    let elapsed = s.recording.as_ref().map_or(0, |r| r.elapsed().as_secs());
-    let text = ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32);
-    canvas.fill_round_rect(
-        [14.0 * scale, 18.0 * scale, 26.0 * scale, 30.0 * scale],
-        6.0 * scale,
-        0xffe81123,
-    );
-    canvas.text(
-        &format!("{:02}:{:02}", elapsed / 60, elapsed % 60),
-        &text,
-        ui::rect(36.0 * scale, 0.0, 92.0 * scale, client.bottom as f32),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        theme.text,
-    );
-    canvas.fill_round_rect(stop_button(scale), 4.0 * scale, theme.selected);
-    canvas.fill_round_rect(
-        [110.0 * scale, 18.0 * scale, 122.0 * scale, 30.0 * scale],
-        2.0 * scale,
-        theme.text,
-    );
-    canvas.text(
-        tr("Stop"),
-        &text,
-        ui::rect(128.0 * scale, 0.0, 160.0 * scale, client.bottom as f32),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        theme.text,
-    );
-    canvas.present(dc);
-}
-pub(crate) unsafe extern "system" fn record_proc(
-    hwnd: HWND,
-    msg: u32,
-    wp: WPARAM,
-    lp: LPARAM,
-) -> LRESULT {
-    match msg {
-        WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
-        WM_ERASEBKGND => 1,
-        WM_PAINT => {
-            let mut ps: PAINTSTRUCT = std::mem::zeroed();
-            let dc = BeginPaint(hwnd, &mut ps);
-            paint_record(hwnd, dc);
-            EndPaint(hwnd, &ps);
-            0
-        }
-        WM_TIMER if wp == RECORD_TIMER => {
-            // A recorder that ended on its own failed; stopping reports the error.
-            if state().recording.as_ref().is_some_and(|r| r.failed()) {
-                stop_recording();
-            } else {
-                if let Some(area) = state()
-                    .recording
-                    .as_ref()
-                    .and_then(|recording| recording.display_area())
-                {
-                    show_frame(area);
-                }
-                // Keep the Stop button reachable over windows that are always on top;
-                // see `ui::raise`. The frame goes first so the indicator stays above it.
-                ui::raise(state().record_frame);
-                ui::raise(hwnd);
-                InvalidateRect(hwnd, null(), 0);
-            }
-            0
-        }
-        WM_LBUTTONUP => {
-            if ui::contains(stop_button(state().scale), point(lp)) {
-                stop_recording();
-            }
-            0
-        }
-        _ => DefWindowProcW(hwnd, msg, wp, lp),
-    }
-}
-
 #[cfg(test)]
 mod tests;
 

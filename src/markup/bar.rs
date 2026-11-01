@@ -87,8 +87,32 @@ pub(super) fn place(area: RECT, monitor: RECT, scale: f32) -> POINT {
     POINT { x, y }
 }
 
-/// バーを範囲のそばに出す。
-pub(super) unsafe fn show() {
+/// バーを置く作業領域と倍率: 範囲の下端の中央（`place` が基準にする所）にいちばん近いモニターの
+/// もの。範囲が、切り取りを始めたときのマウスと別の DPI のモニターにあっても、バーはそれが
+/// 出るモニターの倍率で作る（バーは作業領域の中に収まるので、窓の DPI もこのモニターになる）。
+pub(super) fn home(area: RECT, monitors: &[ui::monitors::Monitor]) -> Option<(RECT, f32)> {
+    let anchor = POINT {
+        x: (area.left + area.right) / 2,
+        y: area.bottom,
+    };
+    ui::monitors::nearest(monitors, anchor)
+        .map(|monitor| (monitor.work, ui::monitors::scale(monitor.dpi)))
+}
+
+/// 書き込み中の範囲（画面の座標）。
+unsafe fn screen_area() -> Option<RECT> {
+    let s = state();
+    let a = s.markup_session.as_ref()?.area;
+    Some(RECT {
+        left: a.left + s.origin.x,
+        top: a.top + s.origin.y,
+        right: a.right + s.origin.x,
+        bottom: a.bottom + s.origin.y,
+    })
+}
+
+/// バーを範囲のそばに出す。ディスプレイの構成が変わったときも、これで置き直す。
+pub(crate) unsafe fn show() {
     let s = state();
     if s.markup_bar.is_null() {
         s.markup_bar = CreateWindowExW(
@@ -109,28 +133,36 @@ pub(super) unsafe fn show() {
             return;
         }
     }
-    let Some(session) = s.markup_session.as_ref() else {
+    let Some(area) = screen_area() else {
         return;
     };
-    let a = session.area;
-    let area = RECT {
-        left: a.left + s.origin.x,
-        top: a.top + s.origin.y,
-        right: a.right + s.origin.x,
-        bottom: a.bottom + s.origin.y,
+    let Some((work, scale)) = home(area, &ui::monitors::current()) else {
+        return;
     };
-    let anchor = POINT {
-        x: (area.left + area.right) / 2,
-        y: area.bottom,
+    put(area, work, scale);
+}
+
+/// WM_DPICHANGED: バーのあるモニターの拡大率が変わった。新しい倍率で作り直し、同じ規則で
+/// 置き直す（作業領域もタスクバーの高さとともに変わりうる）。自分で別の DPI のモニターへ
+/// 置き直したときにも届き、そのときは倍率をもう新しい値にしてあるので、何もしない。
+unsafe fn rescale(wp: WPARAM) {
+    let scale = ui::monitors::message_scale(wp);
+    if scale == state().scale {
+        return;
+    }
+    let Some(area) = screen_area() else {
+        return;
     };
-    let mut info: MONITORINFO = std::mem::zeroed();
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    GetMonitorInfoW(
-        MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST),
-        &mut info,
-    );
-    let scale = s.scale;
-    let at = place(area, info.rcWork, scale);
+    if let Some((work, _)) = home(area, &ui::monitors::current()) {
+        put(area, work, scale);
+    }
+}
+
+/// バーを倍率 `scale` で作り、範囲 `area` のそばの作業領域 `work` の中に出す。
+unsafe fn put(area: RECT, work: RECT, scale: f32) {
+    let s = state();
+    s.scale = scale;
+    let at = place(area, work, scale);
     ui::acrylic(s.markup_bar, s.theme.dark);
     SetWindowPos(
         s.markup_bar,
@@ -278,6 +310,10 @@ pub(crate) unsafe extern "system" fn bar_proc(
     match msg {
         WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
         WM_ERASEBKGND => 1,
+        WM_DPICHANGED => {
+            rescale(wp);
+            0
+        }
         WM_PAINT => {
             let mut ps: PAINTSTRUCT = std::mem::zeroed();
             let dc = BeginPaint(hwnd, &mut ps);
