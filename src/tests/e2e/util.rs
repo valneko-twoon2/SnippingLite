@@ -4,6 +4,19 @@ pub fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
+/// 成功したテストでも出力に残す知らせ（やり直し、テストの外からの邪魔、アプリの起動し直し）を書く。
+/// libtest は成功したテストの `eprintln!` とパニックフックの出力を捨てるので、捕まえられない
+/// 標準エラーへ直接書く（`test_support::desk` の `Drop` と同じ）。通常の実行の出力から、揺れの
+/// 頻度を数えられるようにする。
+pub fn report(message: std::fmt::Arguments) {
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "E2E: {message}");
+}
+
+/// 1 回に流すメッセージの上限（`test_support::desk::MESSAGE_LIMIT` と同じ考え方）。取り出しても
+/// 消えないメッセージ（描かれないままの窓の WM_PAINT など）が来続けても、時間を確かめに戻る。
+pub const MESSAGE_LIMIT: usize = 10_000;
+
 /// Handles the backdrop's messages for `ms` milliseconds; every wait goes through
 /// here so the window keeps painting and answering the app's activation messages.
 pub fn settle(ms: u64) {
@@ -12,11 +25,16 @@ pub fn settle(ms: u64) {
         // SAFETY: a plain message loop for windows of this thread.
         unsafe {
             let mut message: MSG = std::mem::zeroed();
-            while PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) != 0 {
+            for _ in 0..MESSAGE_LIMIT {
+                if PeekMessageW(&mut message, null_mut(), 0, 0, PM_REMOVE) == 0 {
+                    break;
+                }
                 TranslateMessage(&message);
                 DispatchMessageW(&message);
             }
         }
+        // 待つたびに、ほかのプロセスの窓が前面に出ていないかを見る（`focus.rs`）。
+        watch_foreground();
         if Instant::now() >= end {
             break;
         }
