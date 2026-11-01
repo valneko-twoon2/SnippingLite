@@ -86,9 +86,9 @@ fn a_cleanup_killed_part_way_is_finished_by_the_next_one() {
 }
 
 /// 終わったプロセス。ハンドルを持っている間、その ID はほかのプロセスに使い回されない。
-struct Finished(std::process::Child);
+pub(super) struct Finished(pub(super) std::process::Child);
 
-fn finished_process() -> Finished {
+pub(super) fn finished_process() -> Finished {
     let mut child = std::process::Command::new("cmd")
         .args(["/c", "exit 0"])
         .spawn()

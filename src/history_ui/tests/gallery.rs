@@ -320,6 +320,43 @@ fn new_screenshots_appear_without_reopening_the_window() {
     assert!(viewer.app.thumbnails.is_empty());
 }
 
+/// 2 秒ごとの読み直しで一覧が変わらなくても、設定の変更は届き、読み込んだサムネイルは読み直さない。
+#[test]
+fn a_refresh_without_new_screenshots_keeps_the_thumbnails_and_follows_the_settings() {
+    let _sandbox = Sandbox::new();
+    let entry = seed(now(), 40, 30);
+    let mut viewer = Viewer::open();
+    let texture = |viewer: &Viewer| {
+        viewer.app.thumbnails[&entry.id]
+            .as_ref()
+            .map(|t| t.id())
+            .expect("the thumbnail is loaded")
+    };
+    let loaded = texture(&viewer);
+    config::save_settings(&config::Settings {
+        history: false,
+        history_limit: 50,
+        ..config::parse_settings("")
+    })
+    .unwrap();
+    viewer.app.refreshed = Instant::now() - Duration::from_secs(3);
+    viewer.settle();
+    assert_eq!(viewer.app.entries, vec![entry.clone()], "the same list");
+    let count = tr("{total} screenshots, newest first (the oldest beyond {limit} are removed)")
+        .replace("{total}", "1")
+        .replace("{limit}", "50");
+    assert!(viewer.screen.has(&count), "{:?}", viewer.screen.texts());
+    assert!(viewer
+        .screen
+        .has(tr("History recording is turned off in Settings.")));
+    assert_eq!(
+        texture(&viewer),
+        loaded,
+        "the thumbnail is not loaded again"
+    );
+    assert_eq!(viewer.screen.images().len(), 1);
+}
+
 #[test]
 fn a_missing_thumbnail_leaves_the_cell_empty() {
     let _sandbox = Sandbox::new();

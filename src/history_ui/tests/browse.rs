@@ -50,6 +50,43 @@ fn the_arrow_keys_browse_and_stop_at_both_ends() {
     assert_eq!(viewer.opened_id(), Some(ids[1]));
 }
 
+/// 開いている画像が、開いている間に履歴から消えた（トレイが上限を超えた古いものを消した、など）。
+/// 一覧に場所がないので隣を決められず、矢印キーは何もしない。別の画像へ飛ばず、開いた画像はそのまま。
+#[test]
+fn the_arrow_keys_stay_on_a_screenshot_removed_while_it_is_open() {
+    let _sandbox = Sandbox::new();
+    let t = now();
+    let entries: Vec<Entry> = [t - HOUR, t - 2 * HOUR, t - 3 * HOUR]
+        .into_iter()
+        .map(|id| seed(id, 60, 40))
+        .collect();
+    let mut viewer = Viewer::open();
+    let ctx = viewer.screen.ctx.clone();
+    viewer.app.open(&ctx, entries[1].clone());
+    history::remove_entry(&entries[1]);
+    viewer.app.refreshed = Instant::now() - Duration::from_secs(3);
+    viewer.settle();
+    assert_eq!(
+        viewer.app.entries,
+        vec![entries[0].clone(), entries[2].clone()]
+    );
+    for key in [Key::ArrowRight, Key::ArrowLeft] {
+        viewer.key(key);
+        assert_eq!(viewer.opened_id(), Some(entries[1].id), "{key:?}");
+    }
+    assert!(
+        viewer.screen.has("   60 x 40"),
+        "the picture is still shown"
+    );
+    viewer.key(Key::Escape);
+    assert!(viewer.app.opened.is_none());
+    assert_eq!(
+        viewer.screen.images().len(),
+        2,
+        "the gallery shows the rest"
+    );
+}
+
 #[test]
 fn the_newest_screenshot_opens_on_request() {
     let _sandbox = Sandbox::new();
