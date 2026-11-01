@@ -73,6 +73,9 @@ fn buttons_never_overlap_and_stay_inside_the_bar() {
 use crate::test_support::{answer_menu, desk::Desk, stub_window};
 use std::time::Duration;
 
+/// 録画のときの範囲。
+mod recording;
+
 fn s() -> &'static mut State {
     // SAFETY: the test owns the state and runs on the thread that created it.
     unsafe { state() }
@@ -440,6 +443,7 @@ fn the_area_menu_items_stack_without_gaps_and_without_overlap() {
                     y: y as i32,
                 },
                 scale,
+                4,
             )
         };
         for position in 0..4 {

@@ -240,7 +240,13 @@ impl Hands<'_> {
             hands.send(toolbar, WM_LBUTTONUP, 0, lparam(p));
         });
         match button {
-            CAMERA_BUTTON | VIDEO_BUTTON => self.world.video = button == VIDEO_BUTTON,
+            CAMERA_BUTTON | VIDEO_BUTTON => {
+                self.world.video = button == VIDEO_BUTTON;
+                // 録画の範囲は四角形かウィンドウだけで、ほかの範囲は四角形に戻る。
+                if self.world.video && !matches!(self.world.mode, MODE_RECT | MODE_WINDOW) {
+                    self.world.mode = MODE_RECT;
+                }
+            }
             EDIT_BUTTON => self.world.markup = !self.world.markup,
             _ => {}
         }
@@ -250,7 +256,7 @@ impl Hands<'_> {
         if !shown(s().toolbar) {
             return;
         }
-        let mode = choice.map(area_mode);
+        let mode = choice.map(|position| area_mode(position, s().video));
         let expect = match mode {
             Some(MODE_SCREEN) => {
                 // SAFETY: plain metric queries.

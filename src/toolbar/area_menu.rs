@@ -19,6 +19,8 @@ const PADDING: f32 = 4.0;
 
 /// ドロップダウンに並べる範囲（上から順）。
 const MODES: [i32; 4] = [MODE_RECT, MODE_WINDOW, MODE_SCREEN, MODE_FREE];
+/// 録画のときに並べる範囲。Snipping Tool と同じく、録画は四角形とウィンドウだけ。
+const VIDEO_MODES: [i32; 2] = [MODE_RECT, MODE_WINDOW];
 
 /// 強調している項目（マウスの下、またはキーで選んだもの）。なければ -1。
 static HOT: AtomicI32 = AtomicI32::new(-1);
@@ -30,10 +32,30 @@ static DONE: AtomicBool = AtomicBool::new(false);
 static LAST_MOVE: AtomicIsize = AtomicIsize::new(NO_MOVE);
 const NO_MOVE: isize = isize::MIN;
 
-/// ドロップダウンの上から `position` 番目（0 から）の範囲。
+/// 撮るもの（`video` なら録画）で選べる範囲。
+fn modes(video: bool) -> &'static [i32] {
+    if video {
+        &VIDEO_MODES
+    } else {
+        &MODES
+    }
+}
+
+/// 撮るものに合う範囲。選べない範囲なら四角形にする。
+pub(super) fn fitting(mode: i32, video: bool) -> i32 {
+    if modes(video).contains(&mode) {
+        mode
+    } else {
+        MODE_RECT
+    }
+}
+
+/// 撮るものが `video` のドロップダウンで、上から `position` 番目（0 から）の範囲。下キーは
+/// 末尾から先頭へ戻るので、項目の数を超えた分は先頭から数え直す。
 #[cfg(test)]
-pub(crate) fn area_mode(position: usize) -> i32 {
-    MODES[position]
+pub(crate) fn area_mode(position: usize, video: bool) -> i32 {
+    let modes = modes(video);
+    modes[position % modes.len()]
 }
 
 /// 範囲の名前。
@@ -67,9 +89,9 @@ pub(super) fn item(position: usize, scale: f32) -> [f32; 4] {
     ]
 }
 
-/// `p`（窓の中の座標）の下の項目。なければ -1。
-pub(super) fn item_at(p: POINT, scale: f32) -> i32 {
-    (0..MODES.len())
+/// `count` 個の項目のうち、`p`（窓の中の座標）の下の項目。なければ -1。
+pub(super) fn item_at(p: POINT, scale: f32, count: usize) -> i32 {
+    (0..count)
         .find(|&i| ui::contains(item(i, scale), p))
         .map_or(-1, |i| i as i32)
 }
@@ -86,7 +108,7 @@ unsafe fn paint(hwnd: HWND, dc: HDC) {
     let icon = ui::Font::new(ui::ICON_FONT, 16.0 * scale, FW_NORMAL as i32);
     let text = ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32);
     let hot = HOT.load(Ordering::Relaxed);
-    for (position, &mode) in MODES.iter().enumerate() {
+    for (position, &mode) in modes(s.video).iter().enumerate() {
         let [left, top, right, bottom] = item(position, scale);
         if position as i32 == hot {
             canvas.fill_round_rect([left, top, right, bottom], 4.0 * scale, theme.hover);
@@ -156,7 +178,8 @@ pub(crate) unsafe extern "system" fn area_menu_proc(
             // 窓を出した直後や、同じ位置のまま届いた分では、キーで選んだ項目を動かさない。
             let before = LAST_MOVE.swap(lp, Ordering::Relaxed);
             if before != NO_MOVE && before != lp {
-                highlight(hwnd, item_at(point(lp), state().scale));
+                let count = modes(state().video).len();
+                highlight(hwnd, item_at(point(lp), state().scale, count));
             }
             0
         }
@@ -171,9 +194,10 @@ pub(crate) unsafe extern "system" fn area_menu_proc(
             0
         }
         WM_LBUTTONUP => {
-            let position = item_at(point(lp), state().scale);
-            if position >= 0 {
-                finish(MODES[position as usize]);
+            let modes = modes(state().video);
+            let position = item_at(point(lp), state().scale, modes.len());
+            if let Some(&mode) = modes.get(position as usize) {
+                finish(mode);
             }
             0
         }
@@ -190,11 +214,12 @@ pub(crate) unsafe extern "system" fn area_menu_proc(
 /// 窓ではなくスレッドに届いたキーも受ける。
 unsafe fn key(popup: HWND, key: u16) {
     let hot = HOT.load(Ordering::Relaxed);
-    let count = MODES.len() as i32;
+    let modes = modes(state().video);
+    let count = modes.len() as i32;
     match key {
         VK_DOWN => highlight(popup, (hot + 1).rem_euclid(count)),
         VK_UP => highlight(popup, if hot <= 0 { count - 1 } else { hot - 1 }),
-        VK_RETURN if hot >= 0 => finish(MODES[hot as usize]),
+        VK_RETURN if hot >= 0 => finish(modes.get(hot as usize).copied().unwrap_or(-1)),
         VK_ESCAPE => finish(-1),
         _ => {}
     }
@@ -204,7 +229,8 @@ unsafe fn key(popup: HWND, key: u16) {
 unsafe fn pick(hwnd: HWND) -> Option<i32> {
     let scale = state().scale;
     let width = ((ITEM_WIDTH + 2.0 * PADDING) * scale).round() as i32;
-    let height = ((MODES.len() as f32 * ITEM_HEIGHT + 2.0 * PADDING) * scale).round() as i32;
+    let count = modes(state().video).len();
+    let height = ((count as f32 * ITEM_HEIGHT + 2.0 * PADDING) * scale).round() as i32;
     let button = toolbar_button(AREA_BUTTON, scale);
     let mut anchor = POINT {
         x: button[0] as i32,

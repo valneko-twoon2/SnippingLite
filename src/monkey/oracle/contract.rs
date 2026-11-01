@@ -237,7 +237,7 @@ pub(super) fn contract(
         }
         &Action::Toolbar(button) if before.toolbar.is_some() => toolbar(button, before, scene),
         Action::AreaMenu(Some(position)) if before.toolbar.is_some() => {
-            let mode = area_mode(*position);
+            let mode = area_mode(*position, st.video);
             assert_eq!(st.mode, mode, "the menu sets the mode");
             if mode != MODE_SCREEN {
                 assert!(st.active, "choosing a mode snips in it");

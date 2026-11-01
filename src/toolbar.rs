@@ -371,12 +371,15 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                     }
                     CAMERA_BUTTON | VIDEO_BUTTON => {
                         state().video = hit == VIDEO_BUTTON;
+                        // 録画の範囲は四角形かウィンドウだけ。自由形式や全画面を選んでいたら、
+                        // 四角形に戻す。
+                        let mode = area_menu::fitting(state().mode, state().video);
                         if !state().active {
                             // A kept toolbar between snips starts a new snip.
+                            state().mode = mode;
                             begin_capture();
-                        } else if hovers_windows() {
+                        } else if mode != state().mode || hovers_windows() {
                             // Refresh window bounds because recordings may exclude the title bar.
-                            let mode = state().mode;
                             set_mode(mode);
                         }
                     }

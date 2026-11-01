@@ -151,7 +151,7 @@ pub(super) fn invariants(world: &World) {
     }
     assert_eq!(
         st.mode, world.mode,
-        "the mode changes only from the area menu"
+        "the mode changes only from the area menu and the video button"
     );
     assert_eq!(
         st.video, world.video,
