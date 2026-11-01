@@ -5,6 +5,7 @@ use super::*;
 mod area_menu;
 #[cfg(test)]
 pub(crate) use area_menu::area_mode;
+pub(crate) use area_menu::{area_menu_proc, AREA_MENU};
 
 /// Fluent command bar: capture type, area picker, editing, history and settings.
 const BAR_HEIGHT: f32 = 48.0;
@@ -271,14 +272,6 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
             }
         }
         WM_NCLBUTTONDBLCLK => 0,
-        WM_MEASUREITEM => {
-            area_menu::measure(lp);
-            1
-        }
-        WM_DRAWITEM => {
-            area_menu::draw(lp);
-            1
-        }
         WM_DPICHANGED => {
             rescale(hwnd, wp, lp);
             0

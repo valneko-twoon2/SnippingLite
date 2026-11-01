@@ -429,3 +429,30 @@ fn a_kept_toolbar_stays_on_the_screen_while_a_snip_starts_and_ends() {
     desk.pump(Duration::from_millis(50));
     assert!(!s().active && shown(s().toolbar));
 }
+
+#[test]
+fn the_area_menu_items_stack_without_gaps_and_without_overlap() {
+    for scale in SCALES {
+        let at = |x: f32, y: f32| {
+            area_menu::item_at(
+                POINT {
+                    x: x as i32,
+                    y: y as i32,
+                },
+                scale,
+            )
+        };
+        for position in 0..4 {
+            let [left, top, right, bottom] = area_menu::item(position, scale);
+            // Every corner pixel inside belongs to the item, and the edge after it does not.
+            for (x, y) in [(left, top), (right - 1.0, bottom - 1.0)] {
+                assert_eq!(at(x, y), position as i32, "{position} at {scale}");
+            }
+            assert_ne!(at(right, top), position as i32);
+        }
+        // The padding around the items and the space below them belong to no item.
+        assert_eq!(at(1.0, 1.0), -1);
+        let [_, _, _, last] = area_menu::item(3, scale);
+        assert_eq!(at(10.0 * scale, last + 1.0), -1);
+    }
+}

@@ -1,18 +1,34 @@
-//! 範囲のドロップダウン。Snipping Tool と同じく、項目ごとにアイコンと名前を並べ、いま選んでいる
-//! 項目の左にアクセントの縦線を描く。標準のポップアップメニューの項目を自前で描くので、
-//! キーボードの操作や閉じ方は標準のメニューのまま。
+//! 範囲のドロップダウン。Snipping Tool と同じく、ツールバーと同じ見た目の窓に、項目ごとにアイコンと
+//! 名前を並べ、いま選んでいる項目の左にアクセントの縦線を描く。標準のポップアップメニューは明るい
+//! 枠が残るので使わず、自前の窓でメニューと同じ操作（上下キー、Enter、Escape、外のクリックで閉じる）
+//! を受ける。
 
 use super::*;
-use windows_sys::Win32::{
-    Graphics::Gdi::BitBlt,
-    UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_SELECTED},
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
+use windows_sys::Win32::UI::{
+    Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP},
+    WindowsAndMessaging::{MA_NOACTIVATE, WM_CAPTURECHANGED},
 };
 
-const ITEM_WIDTH: f32 = 176.0;
+/// ドロップダウンの窓のクラス名。
+pub(crate) const AREA_MENU: &str = "SLAreaMenu";
+
+const ITEM_WIDTH: f32 = 168.0;
 const ITEM_HEIGHT: f32 = 40.0;
+const PADDING: f32 = 4.0;
 
 /// ドロップダウンに並べる範囲（上から順）。
 const MODES: [i32; 4] = [MODE_RECT, MODE_WINDOW, MODE_SCREEN, MODE_FREE];
+
+/// 強調している項目（マウスの下、またはキーで選んだもの）。なければ -1。
+static HOT: AtomicI32 = AtomicI32::new(-1);
+/// 選んだ範囲。選ばずに閉じたときは -1。
+static PICK: AtomicI32 = AtomicI32::new(-1);
+/// 閉じるか。
+static DONE: AtomicBool = AtomicBool::new(false);
+/// 最後に見たマウスの位置（WM_MOUSEMOVE の `lp`）。まだ見ていなければ `NO_MOVE`。
+static LAST_MOVE: AtomicIsize = AtomicIsize::new(NO_MOVE);
+const NO_MOVE: isize = isize::MIN;
 
 /// ドロップダウンの上から `position` 番目（0 から）の範囲。
 #[cfg(test)]
@@ -40,126 +56,227 @@ pub(super) fn glyph(mode: i32) -> &'static str {
     }
 }
 
-/// WM_MEASUREITEM: 項目の大きさ。
-pub(super) unsafe fn measure(lp: LPARAM) {
-    let item = lp as *mut MEASUREITEMSTRUCT;
-    if item.is_null() {
-        return;
-    }
-    let scale = state().scale;
-    (*item).itemWidth = (ITEM_WIDTH * scale).round() as u32;
-    (*item).itemHeight = (ITEM_HEIGHT * scale).round() as u32;
+/// 項目 `position` の矩形（窓の中の座標）。
+pub(super) fn item(position: usize, scale: f32) -> [f32; 4] {
+    let top = (PADDING + position as f32 * ITEM_HEIGHT) * scale;
+    [
+        PADDING * scale,
+        top,
+        (PADDING + ITEM_WIDTH) * scale,
+        top + ITEM_HEIGHT * scale,
+    ]
 }
 
-/// WM_DRAWITEM: 項目 1 つを描く。`itemData` は範囲の番号。
-pub(super) unsafe fn draw(lp: LPARAM) {
-    let item = lp as *const DRAWITEMSTRUCT;
-    if item.is_null() {
-        return;
-    }
-    let item = &*item;
-    let (width, height) = (
-        item.rcItem.right - item.rcItem.left,
-        item.rcItem.bottom - item.rcItem.top,
-    );
-    let Some(mut canvas) = ui::Canvas::new(width, height) else {
+/// `p`（窓の中の座標）の下の項目。なければ -1。
+pub(super) fn item_at(p: POINT, scale: f32) -> i32 {
+    (0..MODES.len())
+        .find(|&i| ui::contains(item(i, scale), p))
+        .map_or(-1, |i| i as i32)
+}
+
+unsafe fn paint(hwnd: HWND, dc: HDC) {
+    let mut client: RECT = std::mem::zeroed();
+    GetClientRect(hwnd, &mut client);
+    let Some(mut canvas) = ui::Canvas::new(client.right, client.bottom) else {
         return;
     };
     let s = state();
     let (theme, scale) = (&s.theme, s.scale);
-    let mode = item.itemData as i32;
-    canvas
-        .pixels()
-        .fill(if theme.dark { 0xff2b2b2b } else { 0xfffcfcfc });
-    let (w, h) = (width as f32, height as f32);
-    if item.itemState & ODS_SELECTED != 0 {
-        canvas.fill_round_rect(
-            [4.0 * scale, 2.0 * scale, w - 4.0 * scale, h - 2.0 * scale],
-            4.0 * scale,
-            theme.hover,
-        );
-    }
-    if mode == s.mode {
-        canvas.fill_round_rect(
-            [
-                4.0 * scale,
-                h / 2.0 - 8.0 * scale,
-                7.0 * scale,
-                h / 2.0 + 8.0 * scale,
-            ],
-            1.5 * scale,
-            theme.accent,
-        );
-    }
+    canvas.surface(theme.dark, scale);
     let icon = ui::Font::new(ui::ICON_FONT, 16.0 * scale, FW_NORMAL as i32);
     let text = ui::Font::new(ui::TEXT_FONT, 14.0 * scale, FW_NORMAL as i32);
-    canvas.text(
-        glyph(mode),
-        &icon,
-        ui::rect(12.0 * scale, 0.0, 40.0 * scale, h),
-        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        theme.text,
-    );
-    canvas.text(
-        label(mode),
-        &text,
-        ui::rect(48.0 * scale, 0.0, w - 8.0 * scale, h),
-        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-        theme.text,
-    );
-    BitBlt(
-        item.hDC,
-        item.rcItem.left,
-        item.rcItem.top,
-        width,
-        height,
-        canvas.dc(),
-        0,
-        0,
-        SRCCOPY,
-    );
-}
-
-/// 範囲のボタンの下にドロップダウンを出し、選んだ範囲に切り替える。
-pub(super) unsafe fn choose(hwnd: HWND) {
-    let menu = CreatePopupMenu();
-    if menu.is_null() {
-        return;
-    }
-    for mode in MODES {
-        // 項目の名前は WM_DRAWITEM で描くので、`lpNewItem` には範囲の番号を渡す。
-        AppendMenuW(
-            menu,
-            MF_OWNERDRAW,
-            mode as usize + 1,
-            mode as usize as *const u16,
+    let hot = HOT.load(Ordering::Relaxed);
+    for (position, &mode) in MODES.iter().enumerate() {
+        let [left, top, right, bottom] = item(position, scale);
+        if position as i32 == hot {
+            canvas.fill_round_rect([left, top, right, bottom], 4.0 * scale, theme.hover);
+        }
+        if mode == s.mode {
+            let middle = (top + bottom) / 2.0;
+            canvas.fill_round_rect(
+                [
+                    left,
+                    middle - 8.0 * scale,
+                    left + 3.0 * scale,
+                    middle + 8.0 * scale,
+                ],
+                1.5 * scale,
+                theme.accent,
+            );
+        }
+        canvas.text(
+            glyph(mode),
+            &icon,
+            ui::rect(left + 8.0 * scale, top, left + 36.0 * scale, bottom),
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            theme.text,
+        );
+        canvas.text(
+            label(mode),
+            &text,
+            ui::rect(left + 44.0 * scale, top, right - 8.0 * scale, bottom),
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+            theme.text,
         );
     }
-    let button = toolbar_button(AREA_BUTTON, state().scale);
+    canvas.present(dc);
+}
+
+/// 強調する項目を変える。
+unsafe fn highlight(hwnd: HWND, position: i32) {
+    if HOT.swap(position, Ordering::Relaxed) != position {
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+/// 閉じる。最初に決めたものを残す（閉じるときのキャプチャの解除でも呼ばれるため）。
+fn finish(pick: i32) {
+    if !DONE.swap(true, Ordering::Relaxed) {
+        PICK.store(pick, Ordering::Relaxed);
+    }
+}
+
+pub(crate) unsafe extern "system" fn area_menu_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,
+        WM_ERASEBKGND => 1,
+        WM_PAINT => {
+            let mut ps: PAINTSTRUCT = std::mem::zeroed();
+            let dc = BeginPaint(hwnd, &mut ps);
+            paint(hwnd, dc);
+            EndPaint(hwnd, &ps);
+            0
+        }
+        WM_MOUSEMOVE => {
+            // 窓を出した直後や、同じ位置のまま届いた分では、キーで選んだ項目を動かさない。
+            let before = LAST_MOVE.swap(lp, Ordering::Relaxed);
+            if before != NO_MOVE && before != lp {
+                highlight(hwnd, item_at(point(lp), state().scale));
+            }
+            0
+        }
+        WM_LBUTTONDOWN => {
+            // 窓の外を押したら、選ばずに閉じる。
+            let mut client: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut client);
+            let p = point(lp);
+            if p.x < 0 || p.y < 0 || p.x >= client.right || p.y >= client.bottom {
+                finish(-1);
+            }
+            0
+        }
+        WM_LBUTTONUP => {
+            let position = item_at(point(lp), state().scale);
+            if position >= 0 {
+                finish(MODES[position as usize]);
+            }
+            0
+        }
+        // ほかの窓に奪われたら、選ばずに閉じる。
+        WM_CAPTURECHANGED => {
+            finish(-1);
+            0
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+/// キーで強調する項目を動かす。Enter で選び、Escape で選ばずに閉じる。メニューと同じく、
+/// 窓ではなくスレッドに届いたキーも受ける。
+unsafe fn key(popup: HWND, key: u16) {
+    let hot = HOT.load(Ordering::Relaxed);
+    let count = MODES.len() as i32;
+    match key {
+        VK_DOWN => highlight(popup, (hot + 1).rem_euclid(count)),
+        VK_UP => highlight(popup, if hot <= 0 { count - 1 } else { hot - 1 }),
+        VK_RETURN if hot >= 0 => finish(MODES[hot as usize]),
+        VK_ESCAPE => finish(-1),
+        _ => {}
+    }
+}
+
+/// 範囲のボタンの下にドロップダウンを出し、選んだ範囲（なければ `None`）を返す。
+unsafe fn pick(hwnd: HWND) -> Option<i32> {
+    let scale = state().scale;
+    let width = ((ITEM_WIDTH + 2.0 * PADDING) * scale).round() as i32;
+    let height = ((MODES.len() as f32 * ITEM_HEIGHT + 2.0 * PADDING) * scale).round() as i32;
+    let button = toolbar_button(AREA_BUTTON, scale);
     let mut anchor = POINT {
         x: button[0] as i32,
         y: button[3] as i32,
     };
     ClientToScreen(hwnd, &mut anchor);
-    SetForegroundWindow(hwnd);
-    let command = TrackPopupMenu(
-        menu,
-        TPM_RETURNCMD | TPM_NONOTIFY,
+    let popup = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        w(AREA_MENU).as_ptr(),
+        w(AREA_MENU).as_ptr(),
+        WS_POPUP,
         anchor.x,
         anchor.y,
-        0,
+        width,
+        height,
         hwnd,
+        null_mut(),
+        GetModuleHandleW(null()),
         null(),
     );
-    DestroyMenu(menu);
-    if command > 0 && state().active {
-        set_mode(command - 1);
-    } else if command > 0 {
-        // A kept toolbar between snips starts a new snip in the chosen mode.
-        state().mode = command - 1;
-        begin_capture();
+    if popup.is_null() {
+        return None;
+    }
+    HOT.store(-1, Ordering::Relaxed);
+    PICK.store(-1, Ordering::Relaxed);
+    DONE.store(false, Ordering::Relaxed);
+    LAST_MOVE.store(NO_MOVE, Ordering::Relaxed);
+    ui::acrylic(popup, state().theme.dark);
+    ui::disable_transitions(popup);
+    ShowWindow(popup, SW_SHOWNOACTIVATE);
+    UpdateWindow(popup);
+    SetCapture(popup);
+    let mut quit = None;
+    while !DONE.load(Ordering::Relaxed) {
+        let mut msg: MSG = std::mem::zeroed();
+        let got = GetMessageW(&mut msg, null_mut(), 0, 0);
+        if got == 0 {
+            quit = Some(msg.wParam);
+            break;
+        }
+        if got < 0 {
+            break;
+        }
+        if msg.message == WM_KEYDOWN {
+            key(popup, msg.wParam as u16);
+            continue;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    ReleaseCapture();
+    DestroyWindow(popup);
+    if let Some(code) = quit {
+        PostQuitMessage(code as i32);
+    }
+    let picked = PICK.load(Ordering::Relaxed);
+    (picked >= 0).then_some(picked)
+}
+
+/// 範囲のボタンの下にドロップダウンを出し、選んだ範囲に切り替える。
+pub(super) unsafe fn choose(hwnd: HWND) {
+    SetForegroundWindow(hwnd);
+    if let Some(mode) = pick(hwnd) {
         if state().active {
-            set_mode(command - 1);
+            set_mode(mode);
+        } else {
+            // A kept toolbar between snips starts a new snip in the chosen mode.
+            state().mode = mode;
+            begin_capture();
+            if state().active {
+                set_mode(mode);
+            }
         }
     }
     if state().active {

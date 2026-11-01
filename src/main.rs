@@ -328,6 +328,7 @@ unsafe fn register_classes() {
     register(MAIN, Some(main_proc), null_mut(), IDC_ARROW);
     register(OVERLAY, Some(overlay_proc), null_mut(), IDC_CROSS);
     register(TOOLBAR, Some(toolbar_proc), null_mut(), IDC_ARROW);
+    register(AREA_MENU, Some(area_menu_proc), null_mut(), IDC_ARROW);
     register(RECORD, Some(record_proc), null_mut(), IDC_ARROW);
     register(COUNT, Some(count_proc), null_mut(), IDC_ARROW);
     // The frame around a recording is a solid red window shaped like a ring.

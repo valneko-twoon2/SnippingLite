@@ -171,7 +171,8 @@ pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
     let target = unsafe { GetCurrentThreadId() };
     std::thread::spawn(move || {
         for _ in 0..300 {
-            if own_visible_window("#32768") == 0 {
+            // 標準のメニューか、範囲のドロップダウンの窓。
+            if own_visible_window("#32768") + own_visible_window("SLAreaMenu") == 0 {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 continue;
             }
