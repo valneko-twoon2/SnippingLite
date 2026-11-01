@@ -32,15 +32,17 @@ fn keep_cursor() {
 }
 
 pub fn send_mouse(flags: MOUSE_EVENT_FLAGS) {
-    keep_cursor();
     // 押す前に、前面とポインターの下がこのテストかアプリの窓か確かめる。離す前も前面を
     // 確かめる（管理者として動くアプリが前面だと、離したことが捨てられて押したままになる）が、
-    // 取り戻せなくても必ず送る（ボタンを押したままにしない）。
+    // 取り戻せなくても必ず送る（ボタンを押したままにしない）。カーソルの位置は前面を確かめてから
+    // 確かめる（前面が管理者として動くアプリのままだと、置き直せない。`move_to`）。
     if flags & MOUSEEVENTF_LEFTDOWN != 0 {
         claim_foreground();
+        keep_cursor();
         assert_ours_under_cursor();
     } else {
         let _ = reclaim_foreground();
+        keep_cursor();
     }
     // SAFETY: one fully initialized input record.
     unsafe {
@@ -51,10 +53,17 @@ pub fn send_mouse(flags: MOUSE_EVENT_FLAGS) {
     }
 }
 
+/// カーソルを置く。前面の窓が管理者として動くアプリ（タスク マネージャーなど）のものだと、Windows は
+/// カーソルを動かさない（UIPI）。ほかの作業の端末の窓が閉じた後などにそうなるので、動かせなければ
+/// 前面を取り戻してから置き直す。置き直せなくても、ボタンを押す前に `keep_cursor` が確かめる。
 pub fn move_to(p: POINT) {
     *PLACED.lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
     // SAFETY: moving the cursor has no memory effects.
-    unsafe { SetCursorPos(p.x, p.y) };
+    if unsafe { SetCursorPos(p.x, p.y) } == 0 {
+        let _ = reclaim_foreground();
+        // SAFETY: as above.
+        unsafe { SetCursorPos(p.x, p.y) };
+    }
 }
 
 pub fn click(p: POINT) {
