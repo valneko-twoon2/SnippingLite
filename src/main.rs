@@ -3,6 +3,7 @@
 mod about;
 mod annotate;
 mod config;
+mod extract;
 mod history;
 mod history_ui;
 mod i18n;
@@ -148,6 +149,8 @@ struct State {
     count_points: Vec<POINT>,
     /// ツールバーのペンのボタン: 切り取った範囲にその場で書き込んでから確定する。
     markup: bool,
+    /// ツールバーの文字のボタン: 切り取った範囲の文字を読み取ってクリップボードへ置く。
+    extract: bool,
     /// 書き込み中の切り取り。
     markup_session: Option<Box<markup::Session>>,
     markup_bar: HWND,
@@ -304,6 +307,7 @@ fn initial_state(settings: &config::Settings) -> Box<State> {
         count_left: 0,
         count_points: Vec::new(),
         markup: config::load_markup(),
+        extract: false,
         markup_session: None,
         markup_bar: null_mut(),
         count_target: None,

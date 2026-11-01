@@ -8,7 +8,7 @@ pub(crate) use area_menu::area_mode;
 
 /// Fluent command bar: capture type, area picker, editing, history and settings.
 const BAR_HEIGHT: f32 = 48.0;
-const BAR_WIDTH: f32 = 332.0;
+const BAR_WIDTH: f32 = 376.0;
 pub(crate) const CAMERA_BUTTON: i32 = 0;
 pub(crate) const VIDEO_BUTTON: i32 = 1;
 pub(crate) const AREA_BUTTON: i32 = 2;
@@ -16,8 +16,9 @@ pub(crate) const EDIT_BUTTON: i32 = 3;
 pub(crate) const HISTORY_BUTTON: i32 = 4;
 pub(crate) const SETTINGS_BUTTON: i32 = 5;
 pub(crate) const CLOSE_BUTTON: i32 = 6;
-const GLYPHS: [&str; 7] = [
-    "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E932}", "\u{E81C}", "\u{E713}", "\u{E711}",
+pub(crate) const TEXT_BUTTON: i32 = 7;
+const GLYPHS: [&str; 8] = [
+    "\u{E722}", "\u{E714}", "\u{EF20}", "\u{E932}", "\u{E81C}", "\u{E713}", "\u{E711}", "\u{EE6F}",
 ];
 pub(crate) fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
     let (left, width) = match index {
@@ -25,9 +26,10 @@ pub(crate) fn toolbar_button(index: i32, scale: f32) -> [f32; 4] {
         VIDEO_BUTTON => (44.0, 36.0),
         AREA_BUTTON => (92.0, 48.0),
         EDIT_BUTTON => (148.0, 36.0),
-        HISTORY_BUTTON => (196.0, 36.0),
-        SETTINGS_BUTTON => (236.0, 36.0),
-        _ => (288.0, 36.0),
+        TEXT_BUTTON => (188.0, 36.0),
+        HISTORY_BUTTON => (240.0, 36.0),
+        SETTINGS_BUTTON => (280.0, 36.0),
+        _ => (332.0, 36.0),
     };
     [
         left * scale,
@@ -174,8 +176,8 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
         let i = i as i32;
         let r = toolbar_button(i, scale);
         let selected = (i == CAMERA_BUTTON && !s.video) || (i == VIDEO_BUTTON && s.video);
-        // ペンのボタンはオン・オフの切り替えで、オンのときはアクセントの色で塗る。
-        let toggled = i == EDIT_BUTTON && s.markup;
+        // ペンと文字のボタンはオン・オフの切り替えで、オンのときはアクセントの色で塗る。
+        let toggled = (i == EDIT_BUTTON && s.markup) || (i == TEXT_BUTTON && s.extract);
         let fill = if toggled {
             if i == s.pressed_button {
                 theme.accent & 0xccffffff
@@ -241,7 +243,7 @@ unsafe fn paint_toolbar(hwnd: HWND, dc: HDC) {
             );
         }
     }
-    for x in [188.0, 280.0] {
+    for x in [232.0, 324.0] {
         canvas.fill_round_rect(
             [x * scale, 12.0 * scale, (x + 1.0) * scale, 36.0 * scale],
             0.0,
@@ -350,7 +352,22 @@ pub(crate) unsafe extern "system" fn toolbar_proc(
                     // 切り取った範囲にその場で書き込んでから確定できる。
                     EDIT_BUTTON => {
                         state().markup = !state().markup;
+                        if state().markup {
+                            state().extract = false;
+                        }
                         config::save_markup(state().markup);
+                        if state().active {
+                            SetForegroundWindow(state().overlay);
+                        }
+                    }
+                    // 文字のボタンもペンと同じく、押しても画面は変わらない。オンにしておくと、
+                    // 切り取った範囲の文字がクリップボードに入る。ペンとは同時に使えない。
+                    TEXT_BUTTON => {
+                        state().extract = !state().extract;
+                        if state().extract && state().markup {
+                            state().markup = false;
+                            config::save_markup(false);
+                        }
                         if state().active {
                             SetForegroundWindow(state().overlay);
                         }

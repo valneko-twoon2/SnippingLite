@@ -410,6 +410,10 @@ pub(crate) unsafe fn deliver_snip(
     shaped: bool,
     copy: bool,
 ) {
+    if extract::wanted() {
+        extract::deliver(&pixels, width, height);
+        return;
+    }
     let pixels = if shaped {
         pixels
     } else {

@@ -31,15 +31,17 @@ fn button_edges_and_the_gaps_that_move_the_toolbar() {
     assert_eq!(at(80, 24), -1);
     assert_eq!(at(92, 24), AREA_BUTTON);
     assert_eq!(at(139, 24), AREA_BUTTON);
-    assert_eq!(at(323, 24), CLOSE_BUTTON);
-    assert_eq!(at(324, 24), -1);
+    assert_eq!(at(188, 24), TEXT_BUTTON);
+    assert_eq!(at(223, 24), TEXT_BUTTON);
+    assert_eq!(at(367, 24), CLOSE_BUTTON);
+    assert_eq!(at(368, 24), -1);
     // Above and below the buttons.
     assert_eq!(at(26, 7), -1);
     assert_eq!(at(26, 8), CAMERA_BUTTON);
     assert_eq!(at(26, 39), CAMERA_BUTTON);
     assert_eq!(at(26, 40), -1);
     // Every gap between groups is free for dragging.
-    for x in [86, 144, 190, 234, 280] {
+    for x in [86, 144, 186, 228, 236, 278, 320, 328] {
         assert_eq!(at(x, 24), -1, "x {x}");
     }
     // Outside the bar.
@@ -114,7 +116,7 @@ fn the_space_between_the_buttons_moves_the_toolbar() {
     };
     // Equivalence: on a button the bar is a client; in a gap or outside a button it is a caption.
     assert_eq!(at(26, 24), HTCLIENT as LRESULT);
-    assert_eq!(at(310, 24), HTCLIENT as LRESULT);
+    assert_eq!(at(350, 24), HTCLIENT as LRESULT);
     assert_eq!(at(86, 24), HTCAPTION as LRESULT);
     assert_eq!(at(26, 2), HTCAPTION as LRESULT);
     assert_eq!(desk.send(s().toolbar, WM_NCLBUTTONDBLCLK, 0, 0), 0);
@@ -380,4 +382,28 @@ fn the_toolbar_paints_every_state_in_both_themes() {
         }
         desk.key(s().overlay, 0x1b);
     }
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn the_text_button_and_the_pen_button_exclude_each_other() {
+    let desk = Desk::start();
+    s().markup = false;
+    s().extract = false;
+    press(&desk, TEXT_BUTTON);
+    assert!(s().extract && !s().markup);
+    // The pen turns the text button off, and the text button turns the pen off.
+    press(&desk, EDIT_BUTTON);
+    assert!(s().markup && !s().extract);
+    press(&desk, TEXT_BUTTON);
+    assert!(s().extract && !s().markup);
+    press(&desk, TEXT_BUTTON);
+    assert!(!s().extract && !s().markup);
+    // Neither one changes the snip that is running.
+    start(&desk);
+    press(&desk, TEXT_BUTTON);
+    assert!(s().active && s().extract);
+    desk.key(s().overlay, 0x1b);
+    s().extract = false;
+    config::save_markup(false);
 }
