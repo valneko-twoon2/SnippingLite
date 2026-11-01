@@ -263,15 +263,15 @@ unsafe fn render_stroke() {
         return;
     };
     let (left, top) = (region.0.max(0), region.1.max(0));
-    let moved = Mark {
-        points: stroke
-            .points
-            .iter()
-            .map(|&(x, y)| (x - left as f32, y - top as f32))
-            .collect(),
-        ..stroke.clone()
-    };
-    annotate::draw(&mut part, width, height, &[moved]);
+    // 線は画像の座標のまま、切り抜いた部分の位置に描く。離したときに全体へ描き直す画像と、
+    // 画素ごとにぴったり同じになる。
+    annotate::draw_part(
+        &mut part,
+        (left, top),
+        width,
+        height,
+        std::slice::from_ref(stroke),
+    );
     let rect = RECT {
         left,
         top,
