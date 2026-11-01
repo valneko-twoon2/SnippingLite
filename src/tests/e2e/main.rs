@@ -62,7 +62,7 @@ fn a_selection_reaches_the_clipboard_and_the_screenshot_folder() {
             );
             clear_clipboard();
             shortcut();
-            assert!(covered(backdrop.toolbar()), "The toolbar opens");
+            assert!(toolbar_shown(backdrop.toolbar()), "The toolbar opens");
             assert_eq!(
                 dimmed(backdrop.free()),
                 freeze,
@@ -84,7 +84,7 @@ fn a_selection_reaches_the_clipboard_and_the_screenshot_folder() {
             let png = wait_for(10, || app.files("shots", "png").into_iter().next())
                 .expect("A PNG in the screenshot folder");
             assert_eq!(png_size(&png), Some((240, 160)));
-            assert!(!covered(backdrop.toolbar()), "The toolbar closes");
+            assert!(!toolbar_shown(backdrop.toolbar()), "The toolbar closes");
             assert!(!dimmed(backdrop.free()), "The overlay closes");
         }
     });
@@ -116,8 +116,8 @@ fn the_border_is_drawn_inside_rectangles_and_not_around_freeform_shapes() {
         clear_clipboard();
         shortcut();
         click(backdrop.button(backdrop.toolbar(), AREA));
-        keys(&[VK_DOWN]);
-        keys(&[VK_DOWN]);
+        // 何も強調していないときの上向きの矢印は、いちばん下の項目（自由形式）へ進む。
+        keys(&[VK_UP]);
         keys(&[VK_RETURN]);
         let start = backdrop.free();
         drag(&[
@@ -166,9 +166,9 @@ fn a_kept_toolbar_returns_moves_stays_out_of_screenshots_and_closes() {
         let home = backdrop.toolbar();
         let probe = backdrop.free();
         shortcut();
-        assert!(covered(home) && dimmed(probe), "A snip opens");
+        assert!(toolbar_shown(home) && dimmed(probe), "A snip opens");
         keys(&[VK_ESCAPE]);
-        assert!(covered(home), "Escape keeps the toolbar");
+        assert!(toolbar_shown(home), "Escape keeps the toolbar");
         assert!(!dimmed(probe), "Escape ends the snip");
 
         // Drag the space between the buttons.
@@ -181,13 +181,13 @@ fn a_kept_toolbar_returns_moves_stays_out_of_screenshots_and_closes() {
                 y: grip.y + 250,
             },
         ]);
-        assert!(covered(moved), "The toolbar follows the drag");
-        assert!(!covered(home), "The toolbar left its old place");
+        assert!(toolbar_shown(moved), "The toolbar follows the drag");
+        assert!(!toolbar_shown(home), "The toolbar left its old place");
 
         // A new snip keeps the moved toolbar, and a selection over its place does not show it.
         clear_clipboard();
         shortcut();
-        assert!(covered(moved) && !covered(home) && dimmed(probe));
+        assert!(toolbar_shown(moved) && !toolbar_shown(home) && dimmed(probe));
         let from = POINT {
             x: moved.left - 30,
             y: moved.top - 30,
@@ -206,24 +206,24 @@ fn a_kept_toolbar_returns_moves_stays_out_of_screenshots_and_closes() {
             })
             .count();
         assert_eq!(toolbar, 0, "The kept toolbar is not in the screenshot");
-        assert!(covered(moved), "The toolbar returns after the snip");
+        assert!(toolbar_shown(moved), "The toolbar returns after the snip");
         assert!(!dimmed(probe));
 
         // Its camera button starts the next snip.
         click(backdrop.button(moved, CAMERA));
         assert!(dimmed(probe), "The camera button starts a snip");
         keys(&[VK_ESCAPE]);
-        assert!(!dimmed(probe) && covered(moved));
+        assert!(!dimmed(probe) && toolbar_shown(moved));
 
         // The close button closes it; the next snip opens it at the top center again.
         click(backdrop.button(moved, CLOSE));
         assert!(
-            !covered(moved) && !covered(home),
+            !toolbar_shown(moved) && !toolbar_shown(home),
             "The close button closes the toolbar"
         );
         shortcut();
         assert!(
-            covered(home) && !covered(moved),
+            toolbar_shown(home) && !toolbar_shown(moved),
             "A reopened toolbar starts at the top center"
         );
         keys(&[VK_ESCAPE]);

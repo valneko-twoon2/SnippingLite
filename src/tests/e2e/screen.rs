@@ -45,20 +45,34 @@ pub fn screen(r: RECT) -> Vec<u32> {
     }
 }
 
-/// Whether something other than the plain or dimmed backdrop covers most of `r`.
-pub fn covered(r: RECT) -> bool {
-    let inner = RECT {
-        left: r.left + 4,
-        top: r.top + 4,
-        right: r.right - 4,
-        bottom: r.bottom - 4,
-    };
-    let pixels = screen(inner);
-    let other = pixels
-        .iter()
-        .filter(|&&p| !near(p, BACKGROUND, 12) && !near(p, DIMMED, 12))
-        .count();
-    other * 10 > pixels.len() * 4
+/// `r` の中心に、アプリのツールバーが見えているか。ツールバーは撮影から除いてあり（画面の画素には
+/// 写らない）、画素では探せないので、窓の位置で確かめる。隠れた窓や、別の場所にある窓は数えない。
+pub fn toolbar_shown(r: RECT) -> bool {
+    let class = wide("SnippingLiteToolbar");
+    let (x, y) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+    let mut previous = null_mut();
+    // 同じクラスの最上位の窓はわずかなので、上限で打ち切っても取りこぼさない。
+    for _ in 0..1000 {
+        // SAFETY: plain window queries; the class name is nul-terminated.
+        let window = unsafe { FindWindowExW(null_mut(), previous, class.as_ptr(), null()) };
+        if window.is_null() {
+            return false;
+        }
+        previous = window;
+        let mut bounds = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
+        // SAFETY: as above.
+        let found =
+            unsafe { IsWindowVisible(window) != 0 && GetWindowRect(window, &mut bounds) != 0 };
+        if found && bounds.left <= x && x < bounds.right && bounds.top <= y && y < bounds.bottom {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether the snipping overlay dims the backdrop around `p`.
