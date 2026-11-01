@@ -448,7 +448,9 @@ fn a_chosen_folder_wins_and_the_defaults_are_per_user() {
         user_folder(&unknown, "Pictures"),
         sandbox.path().join("profile").join("Pictures")
     );
-    assert!(known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Pictures).is_some());
+    // 実在の ID は引ける。ピクチャのフォルダーは、利用者の環境（GitHub のランナーのようにフォルダー
+    // のない環境など）で引けないことがあるので、どの PC にもある Windows のフォルダーで確かめる。
+    assert!(known_folder(&windows_sys::Win32::UI::Shell::FOLDERID_Windows).is_some());
 }
 
 #[test]
