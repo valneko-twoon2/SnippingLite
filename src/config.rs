@@ -7,6 +7,8 @@ use std::{
 
 use crate::i18n::tr;
 
+mod temporary;
+
 /// Capture delays in seconds offered in the settings window.
 pub const DELAYS: [u32; 4] = [0, 3, 5, 10];
 /// History sizes offered in the settings window; the middle one is the default.
@@ -111,8 +113,15 @@ pub fn load_pen() -> (usize, usize) {
 
 /// 設定ファイルを読む。ないか読めなければ空。UTF-8 として正しくないバイトがあっても、
 /// ファイル全体は捨てず、壊れた行だけを `readable_lines` の規則で読めない行にする。
+/// 読む前に、このファイルを書いている途中で止まったプロセスの一時ファイルを消す
+/// （`temporary::remove_leftovers`）。`settings.ini` はどのプロセスも起動してすぐ読み、`markup.ini` は
+/// トレイが起動して読むので、起動のたびに片付く。`pen.ini` はペンを使うときに読み、そのときに片付く。
 fn read_text(path: Option<PathBuf>) -> String {
-    path.and_then(|p| fs::read(p).ok())
+    let Some(path) = path else {
+        return String::new();
+    };
+    temporary::remove_leftovers(&path);
+    fs::read(&path)
         .map(|bytes| readable_lines(&bytes))
         .unwrap_or_default()
 }
@@ -147,11 +156,16 @@ fn readable_lines(bytes: &[u8]) -> String {
 }
 
 /// Writes through a temporary file so a reader never sees a half-written file.
+/// 一時ファイルは `temporary::name` の名前（書くプロセスの ID 入り）で書く。書けなかったときも、
+/// 名前を変えられなかったときも、一時ファイルは残さない（`staging::commit`）。
 fn write_atomic(path: &Path, contents: String) -> std::io::Result<()> {
-    let temporary = path.with_extension("tmp");
-    fs::write(&temporary, contents)?;
+    let temporary = temporary::name(path);
+    if let Err(error) = fs::write(&temporary, contents) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
     crate::staging::step("temporary written", path);
-    fs::rename(&temporary, path)
+    crate::staging::commit(&temporary, path)
 }
 
 pub fn save_pen(color: usize, thickness: usize) {
