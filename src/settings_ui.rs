@@ -234,11 +234,36 @@ fn face_count(bytes: &[u8]) -> u32 {
     }
 }
 
+/// 文字を描くのに要るテーブルと、読み手（read-fonts）が読むのに要る最小の長さ（バイト）。
+/// 固定長の部分を持つテーブルは、その部分より短いと読めない: cmap は版と数の 4、head は 54、
+/// hhea は 36、maxp は版 0.5 の 6。固定長の部分を持たない hmtx は、空でなければよい。
+/// 読めないと epaint（skrifa）は文字を正しく描けない。cmap では文字が字形に結びつかず .notdef の
+/// 箱になり、head では units_per_em が 0 になって倍率が無限大になる（debug ビルドの epaint は
+/// 最初のフレームの debug_assert で panic し、release でも文字が描けない）。hhea では行の高さと
+/// 文字の幅が、hmtx では文字の幅が狂い、maxp では字形の数が 0 と読まれて輪郭が描かれない。
+const DRAWING_TABLES: [(&[u8; 4], usize); 5] = [
+    (b"cmap", 4),
+    (b"head", 54),
+    (b"hhea", 36),
+    (b"hmtx", 1),
+    (b"maxp", 6),
+];
+/// 字形の輪郭のテーブルの組と、それぞれの最小の長さ。TrueType の glyf と loca の両方、CFF、CFF2 の
+/// どれか 1 組がそろえばよい（skrifa はこの 3 つから輪郭を読む。フェイスの印とは結びつけない）。
+/// glyf と loca は固定長の部分を持たないので空でなければよく、CFF と CFF2 はヘッダーの 4 と 5。
+const OUTLINE_TABLES: [&[(&[u8; 4], usize)]; 3] = [
+    &[(b"glyf", 1), (b"loca", 1)],
+    &[(b"CFF ", 4)],
+    &[(b"CFF2", 5)],
+];
+
 /// フェイス `index` を epaint に渡してよいか。epaint は読めないフォントで最初のフレームに panic
 /// するので、ヘッダーの数（`face_count`）を信じずに、途中で切れたファイルや壊れたファイルを
 /// 渡す前に除く。TTC は位置の表がすべてファイルに収まり（読み手は表を丸ごと読み、収まらなければ
 /// 空として扱う）、その番号の位置にフェイスの始まりがある。フェイスは TrueType か CFF の印で
-/// 始まり、テーブルの一覧と、一覧が示す各テーブル（位置と長さ）がファイルに収まる。
+/// 始まり、テーブルの一覧と、一覧が示す各テーブル（位置と長さ）がファイルに収まる。そのうえで、
+/// 描くのに要るテーブル（`DRAWING_TABLES` と `OUTLINE_TABLES` の 1 組）が、読むのに要る長さで
+/// そろっていないフェイスも、文字が欠けるので壊れたものと同じに扱い、次の候補へ進む。
 fn face_fits(bytes: &[u8], index: u32) -> bool {
     face_tables_fit(bytes, index).is_some()
 }
@@ -273,15 +298,29 @@ fn face_tables_fit(bytes: &[u8], index: u32) -> Option<()> {
         return None;
     }
     let tables = number(start.checked_add(4)?, 2)?;
+    // 一覧の各行の（タグ, 位置, 長さ）。
+    let mut records = Vec::with_capacity(tables);
     for table in 0..tables {
         let record = start.checked_add(12 + 16 * table)?;
+        let tag = bytes.get(record..record.checked_add(4)?)?;
         let offset = number(record.checked_add(8)?, 4)?;
         let length = number(record.checked_add(12)?, 4)?;
         if offset.checked_add(length)? > bytes.len() {
             return None;
         }
+        records.push((tag, offset, length));
     }
-    Some(())
+    // 読み手（read-fonts）は同じタグの最初の行を使い、位置が 0 の行は無いものとして扱う。
+    // 読むのに要る長さに満たないテーブルも中身を読めないので、無いものとみなす。
+    let has = |&(name, least): &(&[u8; 4], usize)| {
+        records
+            .iter()
+            .find(|(tag, _, _)| *tag == name.as_slice())
+            .is_some_and(|&(_, offset, length)| offset != 0 && length >= least)
+    };
+    let drawn = DRAWING_TABLES.iter().all(has);
+    let outlined = OUTLINE_TABLES.iter().any(|set| set.iter().all(has));
+    (drawn && outlined).then_some(())
 }
 
 /// Applies the chosen app theme to `ui::theme()` and to the egui context.
