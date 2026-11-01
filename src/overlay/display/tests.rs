@@ -111,6 +111,7 @@ fn with_one_more_on_the_left() -> Vec<Monitor> {
         rect,
         work: rect,
         dpi: 120,
+        device: ui::monitors::device(r"\\.\GONE"),
     });
     list
 }

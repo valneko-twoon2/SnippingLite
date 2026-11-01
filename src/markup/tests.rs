@@ -171,6 +171,7 @@ fn the_bar_takes_the_work_area_and_scale_of_the_monitor_below_the_snip() {
             ..r
         },
         dpi,
+        device: [0; 32],
     };
     // 主モニター A（100%）、右に D（2560x1440、150%）、左に B（負の座標、125%）。
     let a = monitor(rect(0, 0, 1920, 1080), 48, 96);

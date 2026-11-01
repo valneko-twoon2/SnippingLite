@@ -159,9 +159,15 @@ pub(crate) unsafe fn show_kept_toolbar() {
 /// 倍率で作り直し、提案された矩形の左上へ移す。大きさは提案ではなく倍率から決める。自分で別の
 /// DPI のモニターへ置き直したとき（撮影の開始、構成の変化）にもこのメッセージが届き、そのときは
 /// 倍率をもう新しい値にしてあるので、何もしない（提案の大きさを当てると二重に拡大しうる）。
+///
+/// 隠れているとき（書き込み中、カウントダウン中、録画中）も何もしない。倍率 `state().scale` は
+/// 書き込みのバー、カウントダウン、録画中の表示と共有で、それらは「倍率が今と同じなら何もしない」と
+/// 判定する。隠れたツールバーが先に書き換えると、見えている窓が作り直されず、古い大きさの窓に
+/// 新しい倍率で描かれてボタンが窓の外に切れる。ツールバーを出すとき（`show_kept_toolbar`、撮影の
+/// 開始）は倍率を求め直すので、隠れている間の変化を覚えておく必要はない。
 unsafe fn rescale(hwnd: HWND, wp: WPARAM, lp: LPARAM) {
     let scale = ui::monitors::message_scale(wp);
-    if scale == state().scale || lp == 0 {
+    if IsWindowVisible(hwnd) == 0 || scale == state().scale || lp == 0 {
         return;
     }
     // 番地が揃っていなくても panic しないよう read_unaligned で読む（デバッグ版の `*` は揃いを

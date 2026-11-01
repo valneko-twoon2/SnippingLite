@@ -7,6 +7,7 @@
 //! | オーバーレイ | 動かさず、撮影も選んでいる範囲も続く | `the_overlay_keeps_covering_the_screen_when_the_dpi_changes` |
 //! | ツールバー | 提案された矩形の左上に、新しい倍率の大きさとボタンで | `the_toolbar_is_rebuilt_at_the_new_scale_in_the_suggested_place` |
 //! | 書き込みのバー | 範囲の下に、新しい倍率で | `the_markup_bar_is_rebuilt_at_the_new_scale_below_the_snip` |
+//! | 隠れたツールバー | 何もしない（共有の倍率を書き換えず、見えている窓に任せる） | `a_hidden_toolbar_leaves_the_scale_to_the_markup_bar` |
 //! | カウントダウン | 範囲の真ん中に、新しい倍率で | `the_countdown_is_rebuilt_at_the_new_scale_over_the_middle_of_its_area` |
 //! | 録画中の表示 | 上部中央に、新しい倍率の大きさと停止のボタンで | `the_recording_indicator_is_rebuilt_at_the_new_scale_at_the_top_center` |
 //! | 通知 | 作業領域の右下に、新しい倍率で | `the_notification_is_rebuilt_at_the_new_scale_in_the_lower_right` |
@@ -145,6 +146,41 @@ fn the_markup_bar_is_rebuilt_at_the_new_scale_below_the_snip() {
         dpi_changed(&desk, bar, dpi, rect(900, 900, 10, 10));
         assert_eq!(edges(bounds(bar)), edges(before));
     }
+    desk.key(s().overlay, 0x1b);
+    assert!(!s().active);
+}
+
+#[test]
+#[ignore = "Covers the screen"]
+fn a_hidden_toolbar_leaves_the_scale_to_the_markup_bar() {
+    let desk = Desk::start_with(|settings| settings.copy = false);
+    s().markup = true;
+    start(&desk, true);
+    desk.drag(s().overlay, (200, 200), &[], (500, 400));
+    let (bar, toolbar) = (s().markup_bar, s().toolbar);
+    assert!(
+        shown(bar) && !shown(toolbar),
+        "marking up hides the toolbar"
+    );
+    let dpi = other_dpis()[0];
+    let scale = dpi as f32 / 96.0;
+    // 隠れたツールバーが先に受け取っても、倍率は書き込みのバーのものから変わらない。
+    let before = s().scale;
+    dpi_changed(&desk, toolbar, dpi, rect(100, 50, 10, 10));
+    assert_eq!(
+        s().scale,
+        before,
+        "the hidden toolbar does not take the scale"
+    );
+    // 後から受け取った書き込みのバーは、新しい倍率の大きさ（432x48 DIP）で作り直される。
+    dpi_changed(&desk, bar, dpi, rect(0, 0, 10, 10));
+    assert_eq!(s().scale, scale);
+    let r = bounds(bar);
+    assert_eq!(
+        (r.right - r.left, r.bottom - r.top),
+        (dip(432.0, scale), dip(48.0, scale)),
+        "the bar is as wide as its buttons"
+    );
     desk.key(s().overlay, 0x1b);
     assert!(!s().active);
 }

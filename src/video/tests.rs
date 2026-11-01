@@ -40,6 +40,7 @@ fn the_indicator_sits_at_the_top_center_of_the_recorded_monitor_at_its_scale() {
             rect,
             work: rect,
             dpi,
+            device: [0; 32],
         }
     };
     // 主モニター A（100%）の上に C（2560x1440、200%、負の座標）。

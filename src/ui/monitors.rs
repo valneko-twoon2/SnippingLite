@@ -6,16 +6,29 @@
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::{
     Foundation::{BOOL, LPARAM, POINT, RECT},
-    Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO},
+    Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFOEXW},
     UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
 };
 
-/// 1 台のモニター。`rect` は画面全体、`work` はタスクバーを除いた作業領域、`dpi` は実効 DPI。
+/// 1 台のモニター。`rect` は画面全体、`work` はタスクバーを除いた作業領域、`dpi` は実効 DPI、
+/// `device` はモニターの名前（`\\.\DISPLAY1` などの UTF-16、残りは 0）。主モニターを入れ替えると
+/// 同じ矩形に別のモニターが来るので、どのモニターかは名前で見分ける。
 #[derive(Clone, Copy)]
 pub struct Monitor {
     pub rect: RECT,
     pub work: RECT,
     pub dpi: u32,
+    pub device: [u16; 32],
+}
+
+/// テストの偽物のモニターの名前を `Monitor::device` の形にする（32 文字より後は捨てる）。
+#[cfg(test)]
+pub fn device(name: &str) -> [u16; 32] {
+    let mut out = [0u16; 32];
+    for (slot, unit) in out.iter_mut().zip(name.encode_utf16()) {
+        *slot = unit;
+    }
+    out
 }
 
 /// DPI を倍率にする（96 DPI が 100%）。
@@ -35,17 +48,19 @@ pub fn message_scale(wp: usize) -> f32 {
 pub unsafe fn current() -> Vec<Monitor> {
     unsafe extern "system" fn add(monitor: HMONITOR, _: HDC, _: *mut RECT, list: LPARAM) -> BOOL {
         let list = &mut *(list as *mut Vec<Monitor>);
-        let mut info: MONITORINFO = std::mem::zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) != 0 {
+        // MONITORINFOEXW を渡すと、モニターの名前（szDevice）も返る。
+        let mut info: MONITORINFOEXW = std::mem::zeroed();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(monitor, &mut info.monitorInfo) != 0 {
             let (mut x, mut y) = (96u32, 96u32);
             if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y) != 0 {
                 x = 96;
             }
             list.push(Monitor {
-                rect: info.rcMonitor,
-                work: info.rcWork,
+                rect: info.monitorInfo.rcMonitor,
+                work: info.monitorInfo.rcWork,
                 dpi: x,
+                device: info.szDevice,
             });
         }
         1
@@ -64,14 +79,18 @@ fn edges(r: RECT) -> (i32, i32, i32, i32) {
     (r.left, r.top, r.right, r.bottom)
 }
 
-/// 並び（各モニターの位置と解像度）が同じか。順番、DPI、作業領域は比べない。拡大率の変更は
-/// 画素の位置を変えず、窓ごとの WM_DPICHANGED で扱う。
+/// 並び（各モニターの名前、位置、解像度）が同じか。順番、DPI、作業領域は比べない。拡大率の変更は
+/// 画素の位置を変えず、窓ごとの WM_DPICHANGED で扱う。名前も比べるのは、同じ解像度のモニターどうしで
+/// 主モニターを入れ替えると、矩形の組は同じでも、同じ座標が別のモニターを指すようになるため。
 pub fn same_layout(a: &[Monitor], b: &[Monitor]) -> bool {
     sorted(a.iter()) == sorted(b.iter())
 }
 
-fn sorted<'a>(monitors: impl Iterator<Item = &'a Monitor>) -> Vec<(i32, i32, i32, i32)> {
-    let mut list: Vec<_> = monitors.map(|m| edges(m.rect)).collect();
+/// モニターごとの（名前、矩形の辺）を並べ替えた一覧。
+type Placed = ([u16; 32], (i32, i32, i32, i32));
+
+fn sorted<'a>(monitors: impl Iterator<Item = &'a Monitor>) -> Vec<Placed> {
+    let mut list: Vec<_> = monitors.map(|m| (m.device, edges(m.rect))).collect();
     list.sort_unstable();
     list
 }
@@ -188,7 +207,8 @@ pub fn top_center(monitor: RECT, width: i32, height: i32, scale: f32) -> RECT {
 }
 
 /// 範囲 `area` にかかるモニターの並びが、`before` から `after` で変わったか（そのモニターの位置や
-/// 解像度が変わった、外した、別のモニターがその場所に来た）。範囲にかからないモニターの変化は
+/// 解像度が変わった、外した、別のモニターがその場所に来た）。別のモニターかは名前で見分ける
+/// （主モニターを入れ替えると、同じ矩形に別のモニターが来る）。範囲にかからないモニターの変化は
 /// 数えない。範囲の座標が前と同じ画面を指しているかを確かめる。
 pub fn moved_under(before: &[Monitor], after: &[Monitor], area: RECT) -> bool {
     let under = |list: &[Monitor]| sorted(list.iter().filter(|m| overlap(m.rect, area) > 0));

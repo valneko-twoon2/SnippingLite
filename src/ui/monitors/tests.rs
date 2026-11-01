@@ -25,7 +25,7 @@ fn p(x: i32, y: i32) -> POINT {
     POINT { x, y }
 }
 
-/// タスクバー（`taskbar` 画素）を下に持つモニター。
+/// タスクバー（`taskbar` 画素）を下に持つモニター。名前は空（名前を見分けるテストは `named` を使う）。
 fn monitor(r: RECT, dpi: u32, taskbar: i32) -> Monitor {
     Monitor {
         rect: r,
@@ -34,6 +34,15 @@ fn monitor(r: RECT, dpi: u32, taskbar: i32) -> Monitor {
             ..r
         },
         dpi,
+        device: [0; 32],
+    }
+}
+
+/// 名前 `name` を付けたモニター。
+fn named(name: &str, r: RECT) -> Monitor {
+    Monitor {
+        device: device(name),
+        ..monitor(r, 96, 48)
     }
 }
 
@@ -254,4 +263,23 @@ fn only_changes_under_an_area_move_what_the_area_shows() {
     assert!(!same_layout(&before, &raised));
     assert!(!same_layout(&before, &moved));
     assert!(same_layout(&[], &[]));
+}
+
+#[test]
+fn swapping_the_main_monitor_moves_what_the_area_shows() {
+    // DISPLAY1 が主モニター (0,0)、DISPLAY2 が左 (-1920,0)。DISPLAY2 を主モニターにすると、
+    // DISPLAY2 が (0,0)、DISPLAY1 が右 (1920,0) へ移る。矩形の組は同じでも、範囲 (100,100)〜
+    // (400,300) の座標は今は DISPLAY2 を指す（BitBlt は座標で写すので、別のモニターを写してしまう）。
+    let before = [named(r"\\.\DISPLAY1", A), named(r"\\.\DISPLAY2", B)];
+    let after = [
+        named(r"\\.\DISPLAY2", A),
+        named(r"\\.\DISPLAY1", rect(1920, 0, 3840, 1080)),
+    ];
+    let on_a = rect(100, 100, 400, 300);
+    assert!(moved_under(&before, &after, on_a));
+    assert!(!same_layout(&before, &after));
+    // 同じモニターが同じ所にあるなら、名前があっても変わらない（並べる順番は比べない）。
+    let reordered = [named(r"\\.\DISPLAY2", B), named(r"\\.\DISPLAY1", A)];
+    assert!(!moved_under(&before, &reordered, on_a));
+    assert!(same_layout(&before, &reordered));
 }
