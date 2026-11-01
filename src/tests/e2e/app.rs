@@ -17,6 +17,45 @@ const APP_WINDOWS: [&str; 3] = [
 ];
 /// 題名が `APP_TITLE` の最上位の窓を数える上限。
 const TITLED_LIMIT: usize = 1000;
+/// テストが起動するアプリの写しを置く、一時フォルダーの中のフォルダー。
+const EXE_FOLDER: &str = "snippinglite-e2e-exe";
+/// 写しを書けるようになるのを待つ秒数。写した直後の exe はウイルス対策の検査などで少しの間
+/// 書けないことがある。
+const COPY_SECONDS: u64 = 10;
+/// テストが起動するアプリの写しのパス（`exe`）。
+static EXE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// テストが起動するアプリ。ビルドした exe を、どの worktree やビルドから実行しても同じパス
+/// （`%TEMP%\snippinglite-e2e-exe\snippinglite.exe`）へ写して、そこから起動する。アプリがトレイに
+/// アイコンを足すと、Windows は exe のパスごとに `HKCU\Control Panel\NotifyIconSettings` に項目を
+/// 残し、設定の「そのほかのシステム トレイ アイコン」に並べる。ビルドしたパス（worktree ごとの
+/// `src/target`）のまま起動すると、E2E を走らせた worktree の数だけ Snipping Lite が増える。
+/// 写しはテストの後も残し（次の実行が同じパスを使う）、同じビルドなら写し直さない。
+/// ほかのプロセスが写しを動かしていないことを確かめてから（`App::start`）呼ぶ。
+fn exe() -> &'static Path {
+    EXE.get_or_init(|| {
+        let built = Path::new(env!("CARGO_BIN_EXE_snippinglite"));
+        let folder = std::env::temp_dir().join(EXE_FOLDER);
+        let copy = folder.join("snippinglite.exe");
+        // 写しは元の更新時刻を引き継ぐので、大きさと更新時刻が同じなら同じビルド。
+        let stamp = |path: &Path| {
+            std::fs::metadata(path)
+                .ok()
+                .map(|m| (m.len(), m.modified().ok()))
+        };
+        let current = stamp(&copy);
+        if current.is_none() || current != stamp(built) {
+            std::fs::create_dir_all(&folder).expect("Create the folder for the app");
+            let copied = wait_for(COPY_SECONDS, || std::fs::copy(built, &copy).ok());
+            assert!(
+                copied.is_some(),
+                "Copy the app to {} (is a process still running it?)",
+                copy.display()
+            );
+        }
+        copy
+    })
+}
 
 pub fn hotkey_taken() -> bool {
     // SAFETY: a thread hotkey that is released right away.
@@ -140,9 +179,9 @@ impl App {
 
     /// テストするアプリのプロセスを、テストの設定・履歴・一時フォルダーで起動する命令。
     /// 一時フォルダーも差し替えるので、保存しない録画（1 日より古いものを消す）や、バージョン情報の
-    /// ページが、利用者の本物の一時フォルダーに書かれない。
+    /// ページが、利用者の本物の一時フォルダーに書かれない。exe は決まったパスへの写し（`exe`）。
     pub fn command(root: &Path) -> Command {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_snippinglite"));
+        let mut command = Command::new(exe());
         command
             .env("APPDATA", root.join("roaming"))
             .env("LOCALAPPDATA", root.join("local"))

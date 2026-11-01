@@ -1,6 +1,6 @@
 //! End-to-end tests of the real app.
 //!
-//! Each test starts the built app with its own settings, history and output
+//! Each test starts a copy of the built app with its own settings, history and output
 //! folders, covers the primary monitor with a backdrop of known colors, drives
 //! the app with synthetic mouse and keyboard input like a user and checks what
 //! reaches the clipboard, the disk and the screen. They take over the mouse and
@@ -12,6 +12,13 @@
 //! 確かめ、ほかのアプリには入力を送らない（`focus.rs`）。ほかのプロセスの窓が前面に出たり、
 //! カーソルが動かされたりした回に失敗したテストは、テストの外のせいなので、上限まで初めから
 //! やり直す（`on_desktop`）。
+//!
+//! アプリはツールバーをポインターのあるモニターに出すので、ショートカットを押す前にポインターを
+//! 主モニターの決まった位置へ置き（`input.rs` の `shortcut`）、テストの終わりに元の位置へ戻す。
+//! アプリは、ビルドした exe ではなく、一時フォルダーの決まったパス（`snippinglite-e2e-exe`）への
+//! 写しから起動する。Windows はトレイのアイコンを exe のパスごとに記録し（設定の「そのほかの
+//! システム トレイ アイコン」）、worktree ごとのパスのままだと、走らせた worktree の数だけ増える
+//! （`app.rs` の `exe`）。
 
 use std::{
     path::{Path, PathBuf},

@@ -6,7 +6,8 @@
 //! 入るか、そのアプリが管理者として動いていれば UIPI に捨てられ、ショートカットもクリックも
 //! 届かないままテストが失敗する。そこで、ボタンやキーを押す前に、前面の窓がこのテストか
 //! テストするアプリのプロセスのものでなければ背景の窓を前面に戻し、戻せなければほかのアプリに
-//! 入力を送らずに panic する。
+//! 入力を送らずに panic する。窓が切り替わる途中で前面の窓がない瞬間は、ほかのアプリの窓と
+//! みなさず、待って見直してから決める（`foreground`）。
 //!
 //! 前面を取られるのが、メニューを開いている間やキーを続けて押している間だと、メニューが閉じて
 //! キーが届かない。そこで、待つたびにほかのプロセスの窓が前面に出たかを数え（`watch_foreground`）、
@@ -25,8 +26,12 @@ static DISTURBANCES: AtomicUsize = AtomicUsize::new(0);
 /// 最後に見た、ほかのプロセスの前面の窓（前面に出ている間、同じ窓を何度も数えない）。
 static LAST_FOREIGN: AtomicPtr<core::ffi::c_void> = AtomicPtr::new(null_mut());
 
-/// 前面を取り戻すまでに試す回数。1 回ごとに 100 ms 待つので、最長でおよそ 3 秒。
+/// 前面を取り戻すまでに試す回数。1 回ごとに 100 ms 待つので、前面の窓がない間の待ち（`foreground`）を
+/// 除いて、最長でおよそ 3 秒。
 const CLAIM_TRIES: usize = 30;
+/// 前面の窓がない（窓が切り替わる途中の）ときに見直す間隔（ミリ秒）と回数。最長でおよそ 1 秒。
+const EMPTY_STEP: u64 = 20;
+const EMPTY_TRIES: u64 = 50;
 /// テストの外から邪魔された回に失敗したテストを、初めから実行し直す回数を含めた上限。
 const ATTEMPTS: usize = 3;
 
@@ -39,6 +44,9 @@ const ATTEMPTS: usize = 3;
 /// そうしないと、やり直して通ったことが通常の実行の出力に残らない。
 pub fn on_desktop(body: impl Fn(&Backdrop)) {
     let _desktop = DESKTOP.lock().unwrap_or_else(|e| e.into_inner());
+    setup();
+    // ショートカットはポインターを主モニターへ動かす（`input.rs`）。回ごとに元の位置へ戻す。
+    let home = CursorHome::remember();
     // libtest はテストごとに、テストの名前を付けたスレッドで実行する。
     let name = std::thread::current()
         .name()
@@ -48,7 +56,15 @@ pub fn on_desktop(body: impl Fn(&Backdrop)) {
         let backdrop = Backdrop::new();
         let before = DISTURBANCES.load(Ordering::Relaxed);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&backdrop)));
-        // 失敗の後片付け（アプリを止める間の待ち）で見えた分も数える。
+        // 背景の窓を閉じる前に戻す（`CursorHome::restore`）。回ごとに戻すので、やり直す回も
+        // 同じ位置から始まる。
+        if !home.restore() {
+            report(format_args!(
+                "{name}: ポインターを元の位置（{},{}）へ戻せなかった",
+                home.0.x, home.0.y
+            ));
+        }
+        // 失敗の後片付け（アプリを止める間の待ち）と、ポインターを戻す前の待ちで見えた分も数える。
         let disturbed = DISTURBANCES.load(Ordering::Relaxed) - before;
         drop(backdrop);
         let retries = attempt - 1;
@@ -149,6 +165,9 @@ pub fn ours(window: HWND) -> bool {
 
 /// 失敗の知らせに書く、窓のクラス名とプロセス。
 fn describe(window: HWND) -> String {
+    if window.is_null() {
+        return "窓なし".to_owned();
+    }
     let mut class = [0u16; 128];
     // SAFETY: the buffer length is passed along.
     let length = unsafe { GetClassNameW(window, class.as_mut_ptr(), class.len() as i32) };
@@ -159,20 +178,45 @@ fn describe(window: HWND) -> String {
     )
 }
 
-/// 前面の窓がほかのプロセスのものなら、背景の窓を前面に戻す。戻せなければ、その窓を書いた
-/// 知らせを返す。キーやボタンを押す前と離す前に呼ぶ（`claim_foreground` と `input.rs`）。
-pub fn reclaim_foreground() -> Result<(), String> {
-    for attempt in 0..CLAIM_TRIES {
+/// 前面の窓。前面の窓がない（null の）ときは、窓が切り替わる途中なので、短く待って上限つきで
+/// 見直す（`watch_foreground` も null を数えない）。アプリの撮影の画面が前面に出る途中の null を
+/// ほかのプロセスの窓として扱い、背景の窓に前面を戻すと、撮影の画面が前面に出られず、続くキーが
+/// 背景の窓に届く。上限まで待っても null なら null を返す。
+fn foreground() -> HWND {
+    for _ in 0..EMPTY_TRIES {
         // SAFETY: a plain window query.
         let window = unsafe { GetForegroundWindow() };
+        if !window.is_null() {
+            return window;
+        }
+        settle(EMPTY_STEP);
+    }
+    // SAFETY: as above.
+    unsafe { GetForegroundWindow() }
+}
+
+/// 前面の窓がほかのプロセスのものなら、背景の窓を前面に戻す。戻せなければ、その窓を書いた
+/// 知らせを返す。キーやボタンを押す前と離す前に呼ぶ（`claim_foreground` と `input.rs`）。
+/// 前面の窓がないまま見直しの上限を過ぎたときも、窓の切り替わりは終わっていて、どの窓もキーを
+/// 受け取らないので、背景の窓を前面に出す（前面にいるほかのアプリから前面を奪うことはない）。
+pub fn reclaim_foreground() -> Result<(), String> {
+    for attempt in 0..CLAIM_TRIES {
+        let window = foreground();
         if ours(window) {
             return Ok(());
         }
         if attempt == 0 {
-            report(format_args!(
-                "前面の窓がほかのプロセスのもの（{}）なので、背景の窓を前面に戻す",
-                describe(window)
-            ));
+            if window.is_null() {
+                report(format_args!(
+                    "前面の窓が {} ms ないままなので、背景の窓を前面に出す",
+                    EMPTY_STEP * EMPTY_TRIES
+                ));
+            } else {
+                report(format_args!(
+                    "前面の窓がほかのプロセスのもの（{}）なので、背景の窓を前面に戻す",
+                    describe(window)
+                ));
+            }
         }
         let backdrop = BACKDROP_WINDOW.load(Ordering::Relaxed);
         if !backdrop.is_null() {
@@ -181,8 +225,7 @@ pub fn reclaim_foreground() -> Result<(), String> {
         }
         settle(100);
     }
-    // SAFETY: a plain window query.
-    let window = unsafe { GetForegroundWindow() };
+    let window = foreground();
     Err(format!(
         "前面の窓（{}）がこのテストのものではなく、取り戻せない。入力を送らずに止める",
         describe(window)

@@ -77,6 +77,38 @@ pub unsafe extern "system" fn backdrop_proc(
     }
 }
 
+const BACKDROP_CLASS: &str = "SnippingLiteE2EBackdrop";
+
+/// プロセスを一度だけ整える。座標をモニターごとの物理的な画素で扱い（DPI を意識しないプロセスには、
+/// 倍率のあるモニターの座標が換算されて見える）、背景の窓のクラスを登録する。ポインターの位置を
+/// 覚える前（`on_desktop`）と、背景の窓を作る前に呼ぶ。
+pub fn setup() {
+    let class = wide(BACKDROP_CLASS);
+    // SAFETY: the class name outlives the call and the window procedure is a plain function.
+    SETUP.call_once(|| unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        RegisterClassW(&WNDCLASSW {
+            lpfnWndProc: Some(backdrop_proc),
+            hInstance: GetModuleHandleW(null()),
+            hCursor: LoadCursorW(null_mut(), IDC_ARROW),
+            lpszClassName: class.as_ptr(),
+            ..std::mem::zeroed()
+        });
+    });
+}
+
+/// 主モニターとその範囲（画素）。
+pub fn primary_monitor() -> (HMONITOR, RECT) {
+    // SAFETY: plain monitor queries into a sized structure.
+    unsafe {
+        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        GetMonitorInfoW(monitor, &mut info);
+        (monitor, info.rcMonitor)
+    }
+}
+
 /// A window of a known color over the whole primary monitor, so captures have
 /// known pixels and a stray click lands on it instead of another app.
 pub struct Backdrop {
@@ -87,26 +119,13 @@ pub struct Backdrop {
 
 impl Backdrop {
     pub fn new() -> Backdrop {
+        setup();
         // SAFETY: the window belongs to this thread and is destroyed on drop.
         unsafe {
-            let class = wide("SnippingLiteE2EBackdrop");
-            SETUP.call_once(|| {
-                SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-                RegisterClassW(&WNDCLASSW {
-                    lpfnWndProc: Some(backdrop_proc),
-                    hInstance: GetModuleHandleW(null()),
-                    hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-                    lpszClassName: class.as_ptr(),
-                    ..std::mem::zeroed()
-                });
-            });
-            let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-            let mut info: MONITORINFO = std::mem::zeroed();
-            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            GetMonitorInfoW(monitor, &mut info);
+            let class = wide(BACKDROP_CLASS);
+            let (monitor, r) = primary_monitor();
             let (mut dpi, mut unused) = (96u32, 96u32);
             GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut unused);
-            let r = info.rcMonitor;
             PANEL_SHOWN.store(false, Ordering::Relaxed);
             let hwnd = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
