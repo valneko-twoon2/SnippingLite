@@ -46,10 +46,6 @@ const JAPANESE: &[(&str, &str)] = &[
         "元のスクリーンショットを自動的に保存する",
     ),
     (
-        "Choose a file name when saving",
-        "保存時にファイル名を指定する",
-    ),
-    (
         "Keep a history of screenshots",
         "スクリーンショットの履歴を残す",
     ),

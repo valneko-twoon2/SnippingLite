@@ -7,7 +7,6 @@ mod sections;
 pub(super) struct SettingsApp {
     copy: bool,
     save: bool,
-    ask: bool,
     delay: u32,
     history: bool,
     history_limit: usize,
@@ -43,7 +42,6 @@ impl SettingsApp {
         SettingsApp {
             copy: settings.copy,
             save: settings.save,
-            ask: settings.ask,
             delay: settings.delay,
             history: settings.history,
             history_limit: settings.history_limit,
@@ -77,7 +75,8 @@ impl SettingsApp {
         config::Settings {
             copy: self.copy,
             save: self.save,
-            ask: self.ask,
+            // 保存時にファイル名を聞く設定は画面から外した。保存し直すとオフになる。
+            ask: false,
             delay: self.delay,
             history: self.history,
             history_limit: self.history_limit,

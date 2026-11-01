@@ -78,11 +78,6 @@ impl SettingsApp {
         divider(ui, p);
         self.border(ui, p);
         divider(ui, p);
-        let title = tr("Choose a file name when saving");
-        row(ui, p, title, None, |ui| {
-            switch(ui, &mut self.ask, title, p);
-        });
-        divider(ui, p);
         let title = tr("Dim and freeze the screen while snipping");
         let note = (
             tr("Turn off to keep videos and apps running while you select"),

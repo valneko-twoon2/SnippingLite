@@ -110,7 +110,6 @@ fn the_page_lists_every_setting_under_its_section() {
         "Snipping",
         "Automatically copy screenshots",
         "Automatically save screenshots",
-        "Choose a file name when saving",
         "Dim and freeze the screen while snipping",
         "Show notifications",
         "Keep the toolbar open after a snip",
@@ -173,9 +172,8 @@ fn every_switch_stores_its_own_setting() {
     let mut window = Window::open(true, false);
     type Read = fn(&config::Settings) -> bool;
     // Each row flips exactly one stored value and leaves all the others as they were.
-    let rows: [(&str, Read); 13] = [
+    let rows: [(&str, Read); 12] = [
         ("Automatically save screenshots", |s| s.save),
-        ("Choose a file name when saving", |s| s.ask),
         ("Dim and freeze the screen while snipping", |s| s.freeze),
         ("Show notifications", |s| s.notify),
         ("Keep the toolbar open after a snip", |s| s.keep_toolbar),
