@@ -104,7 +104,7 @@ pub(super) fn expander(
     heading(ui, rect, p, 16.0, title, note);
     chevron(ui, pos2(rect.right() - 28.0, rect.center().y), open, p);
     if let Some(on) = on {
-        let area = egui::Rect::from_min_max(rect.min, pos2(rect.right() - 48.0, rect.max.y));
+        let area = egui::Rect::from_min_max(rect.min, pos2(rect.right() - 16.0, rect.max.y));
         let mut child = ui.new_child(
             UiBuilder::new()
                 .max_rect(area)

@@ -3,6 +3,8 @@
 use super::*;
 
 const ROW_TALL: f32 = 64.0;
+/// スイッチの右端を、行の右端の余白（16）から更に空ける幅。折りたたみの矢印の分。
+const SWITCH_RIGHT_INSET: f32 = 32.0;
 
 /// A section heading above a card.
 pub(super) fn section(ui: &mut egui::Ui, p: &Palette, title: &str, gap: bool) {
@@ -189,7 +191,26 @@ pub(super) fn outline_button(ui: &mut egui::Ui, label: &str, p: &Palette) -> egu
 /// A toggle switch with its On or Off label to the left, as in the Windows settings.
 pub(super) fn switch(ui: &mut egui::Ui, on: &mut bool, label: &str, p: &Palette) {
     let text = if *on { tr("On") } else { tr("Off") };
-    ui.label(RichText::new(text).size(13.0).color(p.text));
+    // 折りたたみの行は右端に矢印があるぶんスイッチが左へ寄るので、どの行も同じ位置から始まるよう、
+    // 矢印の幅（折りたたみの行の右端 48 から、行の余白 16 を引いた 32）を空ける。
+    ui.add_space(SWITCH_RIGHT_INSET);
+    // オンとオフで文字の幅が違っても、スイッチの位置が行ごとにずれないよう、長いほうの幅を確保する。
+    let font = egui::FontId::proportional(13.0);
+    let width = [tr("On"), tr("Off")]
+        .into_iter()
+        .map(|t| {
+            ui.painter()
+                .layout_no_wrap(t.to_owned(), font.clone(), p.text)
+                .size()
+                .x
+        })
+        .fold(0.0, f32::max)
+        .ceil();
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, 20.0),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| ui.label(RichText::new(text).size(13.0).color(p.text)),
+    );
     ui.add_space(10.0);
     toggle(ui, on, label, p);
 }
