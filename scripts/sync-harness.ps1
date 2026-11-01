@@ -29,8 +29,13 @@ $hooks = [ordered]@{ Stop = @([ordered]@{ hooks = @([ordered]@{ type = 'command'
 Sync-Text '.codex/hooks.json' ([ordered]@{ hooks = $hooks } | ConvertTo-Json -Depth 10)
 # Claude Code also checks the file length right after each edit, so a file is split as soon as it grows too long.
 $lengthCommand = 'pwsh -NoProfile -File "$(git rev-parse --show-toplevel)/scripts/check-file-length.ps1" -Hook'
+# テストを走らせたコマンドの終わりに、残ったテスト用のプロセスを止める（画面を覆ったまま残さない）。
+$stopCommand = 'pwsh -NoProfile -File "$(git rev-parse --show-toplevel)/scripts/stop-test-processes.ps1" -Hook'
 $claudeHooks = [ordered]@{
-    PostToolUse = @([ordered]@{ matcher = 'Edit|Write|MultiEdit'; hooks = @([ordered]@{ type = 'command'; command = $lengthCommand; timeout = 15 }) })
+    PostToolUse = @(
+        [ordered]@{ matcher = 'Edit|Write|MultiEdit'; hooks = @([ordered]@{ type = 'command'; command = $lengthCommand; timeout = 15 }) }
+        [ordered]@{ matcher = 'Bash|PowerShell'; hooks = @([ordered]@{ type = 'command'; command = $stopCommand; timeout = 30 }) }
+    )
     Stop = $hooks.Stop
 }
 Sync-Text '.claude/settings.json' ([ordered]@{ hooks = $claudeHooks } | ConvertTo-Json -Depth 10)

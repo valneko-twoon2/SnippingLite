@@ -1,5 +1,7 @@
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+# テストが残したプロセスは、終わる前に必ず止める。
+pwsh -NoProfile -File (Join-Path $PSScriptRoot 'stop-test-processes.ps1')
 # A task is not finished while a source file is over the length limit: exit code 2 keeps the
 # agent working and shows it the message.
 $output = pwsh -NoProfile -File (Join-Path $PSScriptRoot 'check-file-length.ps1') 2>&1

@@ -10,6 +10,16 @@
             "timeout": 15
           }
         ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File \"$(git rev-parse --show-toplevel)/scripts/stop-test-processes.ps1\" -Hook",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "Stop": [
