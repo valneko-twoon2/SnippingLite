@@ -1,0 +1,24 @@
+name: audit
+
+# 依存関係の脆弱性は、コードが変わらなくても後から見つかる。週に 1 度、ロックファイルを検査する。
+# 見つかると、この実行が失敗して知らせが届く。
+on:
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cargo-audit
+        shell: pwsh
+        run: cargo install cargo-audit --locked
+      - name: Audit the dependencies
+        shell: pwsh
+        run: cargo audit --file src/Cargo.lock

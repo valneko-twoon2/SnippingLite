@@ -1,0 +1,17 @@
+# ワークフローが使うアクションと、Rust の依存関係の更新を、週に 1 度、pull request で知らせる。
+# 依存関係の更新を取り込むときは、cargo audit と scripts/update-notices.ps1 も実行する。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+  - package-ecosystem: cargo
+    directory: /src
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: build
