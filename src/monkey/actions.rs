@@ -397,8 +397,11 @@ fn build(rng: &mut Rng, kind: Kind, now: &Snapshot, scene: &Scene) -> Action {
             // Ctrl+Z、Y、C は書き込みの操作なので、ここでは Ctrl なしで送る。
             Action::Key(key, rng.chance(0.3) && !b"ZYC".contains(&(key as u8)))
         }
-        // 録画はカウントダウンでしか確かめられないので、ビデオを少し多めに選ぶ。
-        Kind::Camera if rng.chance(0.6) => Action::Toolbar(VIDEO_BUTTON),
+        // 録画はカウントダウンでしか確かめられないので、ビデオを少し多めに選ぶ。ただし全画面の
+        // ときは、ビデオが範囲を四角形に戻すので、全画面の切り取りに届くようカメラを多めに選ぶ。
+        Kind::Camera if rng.chance(if now.mode == MODE_SCREEN { 0.3 } else { 0.6 }) => {
+            Action::Toolbar(VIDEO_BUTTON)
+        }
         Kind::Camera => Action::Toolbar(CAMERA_BUTTON),
         Kind::AreaMenu => {
             let choices = [Some(0), Some(1), Some(2), Some(3), None];
