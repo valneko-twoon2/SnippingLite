@@ -15,3 +15,13 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: build
+    # windows、windows-core、windows-sys は、バージョンをそろえて手で上げる（0.x の更新は
+    # 互換がなく、型が合わなくなる）。Dependabot が 1 つずつ上げようとして失敗するので外す。
+    # 脆弱性の修正の更新は、この設定に関係なく届く。
+    ignore:
+      - dependency-name: windows
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: windows-core
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+      - dependency-name: windows-sys
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
