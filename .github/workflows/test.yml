@@ -2,20 +2,34 @@ name: test
 
 # push と pull request のたびに、Windows のランナーでテストを走らせる。画面を覆うテスト、
 # モンキーテスト、E2E は利用者の PC の画面とマウスを奪うので、手元ではなくここで走らせる。
+# release.yml からも呼び、タグのコミットがこのテストを通ってから公開する。
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
+# 同じ ref で新しい実行が始まったら、古い実行は止める。長い画面のテストが重ならない。
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+# 画面のテストは、ランナーの版で結果が変わりやすい。版が勝手に替わらないよう固定する。
 jobs:
   validate:
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # cargo install の結果（~/.cargo/bin）も、ここで一緒に保存される。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
       - name: Install cargo-audit
         shell: pwsh
         run: cargo install cargo-audit --locked
@@ -26,18 +40,83 @@ jobs:
         shell: pwsh
         run: scripts/check-workflows.ps1 -Strict
 
+  # 画面のテストは 3 つのジョブに分け、並べて走らせる。失敗したジョブの出力と、そのときの
+  # デスクトップの画像は、成果物（<名前>-logs）として持ち帰る。
   screen:
-    runs-on: windows-latest
+    runs-on: windows-2025
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
       # リークのテストはプロセス全体の GDI と USER のオブジェクトを数えるので、ほかと分けて走らせる。
       - name: Run the tests that cover the screen
         shell: pwsh
-        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --bin snippinglite -- --ignored --test-threads=1 --skip leaks
+        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks'
+      - name: Take a screenshot of the desktop
+        if: ${{ failure() || cancelled() }}
+        continue-on-error: true
+        shell: pwsh
+        run: scripts/ci-screenshot.ps1 -Name screen
+      - name: Keep the logs
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-logs
+          path: ci-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  leaks:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
       - name: Run the leak tests
         shell: pwsh
-        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --bin snippinglite -- leaks --ignored --test-threads=1
-      - name: Run the end-to-end tests
-        if: ${{ !cancelled() }}
+        run: scripts/ci-cargo-test.ps1 -Log leaks -TestArguments '--bin','snippinglite','--','leaks','--ignored','--test-threads=1'
+      - name: Take a screenshot of the desktop
+        if: ${{ failure() || cancelled() }}
+        continue-on-error: true
         shell: pwsh
-        run: cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked --test e2e -- --ignored --test-threads=1
+        run: scripts/ci-screenshot.ps1 -Name leaks
+      - name: Keep the logs
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: leaks-logs
+          path: ci-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  e2e:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
+      - name: Run the end-to-end tests
+        shell: pwsh
+        run: scripts/ci-cargo-test.ps1 -Log e2e -TestArguments '--test','e2e','--','--ignored','--test-threads=1'
+      - name: Take a screenshot of the desktop
+        if: ${{ failure() || cancelled() }}
+        continue-on-error: true
+        shell: pwsh
+        run: scripts/ci-screenshot.ps1 -Name e2e
+      - name: Keep the logs
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: ci-logs
+          retention-days: 7
+          if-no-files-found: ignore
