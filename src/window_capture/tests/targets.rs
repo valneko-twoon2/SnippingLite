@@ -102,3 +102,91 @@ fn a_uwp_frame_belongs_to_the_process_of_the_app_inside_it() {
         UnregisterClassW(class.as_ptr(), instance);
     }
 }
+
+fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+    RECT {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+fn size(width: i32, height: i32) -> SizeInt32 {
+    SizeInt32 {
+        Width: width,
+        Height: height,
+    }
+}
+
+#[test]
+fn the_part_of_the_picture_to_copy_follows_the_crop_in_proportion_to_the_frame() {
+    // 320x240 の枠から縁の 1 px を落とした範囲を、同じ大きさの絵から写す。左上は 1 * 320 / 320 = 1、
+    // 幅は絵の残り 319 と出力の 318 の小さいほう。
+    let full = rect(100, 50, 420, 290);
+    assert_eq!(
+        source_box(full, rect(101, 51, 419, 289), size(320, 240), (318, 238)),
+        Some((1, 1, 318, 238))
+    );
+    // 絵が枠の 2 倍（拡大の違う画面）なら、位置も 2 倍: 10 * 400 / 200 = 20、31 * 200 / 100 = 62。
+    // 高さは出力の 50 で切れ、幅は絵の残り 400 - 20 = 380。
+    let full = rect(0, 0, 200, 100);
+    assert_eq!(
+        source_box(full, rect(10, 31, 190, 99), size(400, 200), (1000, 50)),
+        Some((20, 62, 380, 50))
+    );
+    // 境界値: 1 px の枠でも割れる。
+    let one = rect(7, 8, 8, 9);
+    assert_eq!(source_box(one, one, size(1, 1), (1, 1)), Some((0, 0, 1, 1)));
+    // 枠の外の範囲は絵の端に収め、絵の右端より先なら写すものがない。
+    assert_eq!(
+        source_box(full, rect(-50, -50, 100, 100), size(200, 100), (200, 100)),
+        Some((0, 0, 200, 100))
+    );
+    assert_eq!(
+        source_box(full, rect(200, 0, 260, 100), size(200, 100), (200, 100)),
+        None
+    );
+    // 画面の端の大きな座標でも、引き算と掛け算があふれない: 2^31 * 100 / (2^32 - 1) = 50.00…
+    let huge = rect(i32::MIN, i32::MIN, i32::MAX, i32::MAX);
+    assert_eq!(
+        source_box(huge, rect(0, 0, 1, 1), size(100, 100), (100, 100)),
+        Some((50, 50, 50, 50))
+    );
+}
+
+#[test]
+fn a_frame_or_picture_without_width_or_height_copies_nothing_instead_of_dividing_by_zero() {
+    // 枠を読んだ時に窓の幅か高さが 0 でも（大きさが変わる途中など）、0 で割って録画のスレッドを
+    // 落とさずに、写すものがないと答える。幅か高さが負の枠も同じ。
+    let crop = rect(100, 50, 420, 290);
+    for full in [
+        rect(100, 50, 100, 290),
+        rect(100, 50, 420, 50),
+        rect(100, 50, 100, 50),
+        rect(420, 50, 100, 290),
+        rect(100, 290, 420, 50),
+    ] {
+        assert_eq!(
+            source_box(full, crop, size(320, 240), (320, 240)),
+            None,
+            "{:?}",
+            bounds_tuple(full)
+        );
+    }
+    // 絵や出力の大きさが 0 や負でも panic しない。
+    let full = rect(100, 50, 420, 290);
+    for (picture, limit) in [
+        (size(0, 240), (320, 240)),
+        (size(320, 0), (320, 240)),
+        (size(-1, 240), (320, 240)),
+        (size(320, 240), (0, 240)),
+        (size(320, 240), (320, -1)),
+    ] {
+        assert_eq!(
+            source_box(full, crop, picture, limit),
+            None,
+            "{picture:?} into {limit:?}"
+        );
+    }
+}
