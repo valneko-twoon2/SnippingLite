@@ -336,3 +336,9 @@ fn capture_stops_when_its_window_goes_away_or_is_minimized() {
     drop(fixture);
     assert!(capture.grab().is_err());
 }
+
+/// 撮る範囲と、音を録るプロセスの決め方。
+mod targets;
+
+/// 撮っている窓が閉じたときの終わり方。
+mod ending;

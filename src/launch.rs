@@ -78,3 +78,6 @@ pub(crate) fn run_window_process(args: &[String]) -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests;
