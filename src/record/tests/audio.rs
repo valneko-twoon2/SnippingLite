@@ -127,9 +127,29 @@ impl Drop for Helper {
     }
 }
 
+/// 既定の音声の出力（スピーカー）があるか。GitHub Actions のランナーのように、音声の機器がない
+/// 環境では、システムの音を録れないので、このテストは確かめようがない。
+fn audio_output_available() -> bool {
+    use windows::Win32::{
+        Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator},
+        System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED},
+    };
+    // SAFETY: plain COM calls on this thread.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            .and_then(|devices| devices.GetDefaultAudioEndpoint(eRender, eConsole))
+            .is_ok()
+    }
+}
+
 #[test]
 #[ignore = "Requires a desktop session with an audio output; plays a tone for a few seconds"]
 fn records_system_audio_and_only_the_chosen_app() {
+    if !audio_output_available() {
+        eprintln!("skipped: this machine has no audio output");
+        return;
+    }
     let tone = Helper(play_tone(16));
     std::thread::sleep(Duration::from_millis(2000));
     let loud = 3000;
