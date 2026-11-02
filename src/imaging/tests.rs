@@ -19,11 +19,7 @@ fn scratch(name: &str) -> PathBuf {
     TIDY.call_once(|| remove_stale_scratch(&temp));
     let folder = temp.join(format!("{SCRATCH}{}", std::process::id()));
     fs::create_dir_all(&folder).unwrap();
-    // CI のユーザーの一時フォルダーは短い名前（`RUNNER~1`）で返る。ダイアログは長い名前で答えるので、
-    // 比べられるよう、長い名前に直しておく。
-    let long = fs::canonicalize(&folder).unwrap();
-    let long = long.to_string_lossy();
-    PathBuf::from(long.strip_prefix(r"\\?\").unwrap_or(&long)).join(name)
+    crate::test_support::long_path(&folder).join(name)
 }
 
 fn remove_stale_scratch(temp: &Path) {

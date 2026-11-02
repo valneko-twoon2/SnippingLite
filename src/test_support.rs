@@ -20,6 +20,19 @@ pub struct Sandbox {
     _guard: MutexGuard<'static, ()>,
 }
 
+/// 短い名前（`RUNNER~1`）を含むパスを、長い名前（`runneradmin`）に直す。CI のユーザーの一時フォルダーは
+/// 短い名前で返るが、ダイアログやシェルは長い名前で答えるので、比べられるよう、テストの
+/// フォルダーは長い名前で作る。存在しないパスはそのまま返す。
+pub fn long_path(path: &Path) -> PathBuf {
+    match std::fs::canonicalize(path) {
+        Ok(long) => {
+            let text = long.to_string_lossy().into_owned();
+            PathBuf::from(text.strip_prefix(r"\\?\").unwrap_or(&text))
+        }
+        Err(_) => path.to_owned(),
+    }
+}
+
 impl Sandbox {
     pub fn new() -> Sandbox {
         let guard = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
@@ -31,6 +44,7 @@ impl Sandbox {
         ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        let root = long_path(&root);
         let mut sandbox = Sandbox {
             root,
             saved: Vec::new(),
