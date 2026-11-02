@@ -46,7 +46,7 @@ pub fn run(latest: bool) {
             }),
         ..Default::default()
     };
-    let _ = eframe::run_native(
+    let result = eframe::run_native(
         HISTORY_TITLE,
         options,
         Box::new(|cc| {
@@ -59,6 +59,10 @@ pub fn run(latest: bool) {
             Ok(Box::new(HistoryApp::new(mica, latest)))
         }),
     );
+    // 窓を開けなかった理由は標準エラーに残す（テストが失敗に添える）。
+    if let Err(error) = result {
+        eprintln!("{error}");
+    }
 }
 
 struct Opened {

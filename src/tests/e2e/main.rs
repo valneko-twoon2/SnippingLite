@@ -345,8 +345,13 @@ fn the_history_view_copies_text_and_colors() {
         click(backdrop.at(backdrop.width() / 2, backdrop.height() / 2 + 200));
         // SAFETY: lets the new process take the foreground from this one.
         unsafe { AllowSetForegroundWindow(ASFW_ANY) };
-        let _history = app.history();
-        let shown = wait_for(30, || find(CYAN)).expect("The history window shows the screenshot");
+        let mut history = app.history();
+        let Some(shown) = wait_for(30, || find(CYAN)) else {
+            panic!(
+                "The history window shows the screenshot ({})",
+                history.report()
+            );
+        };
         // Clicking the image without a tool only activates the window.
         click(center(shown));
 

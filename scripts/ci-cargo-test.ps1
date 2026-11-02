@@ -16,5 +16,11 @@ try {
     & cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked @TestArguments 2>&1 |
         ForEach-Object { "$_" } |
         Tee-Object -FilePath (Join-Path $folder "$Log.log")
-    exit $LASTEXITCODE
+    $code = $LASTEXITCODE
+    # 失敗したら、ログの末尾を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で原因が読める。
+    if ($code -ne 0) {
+        $tail = (Get-Content (Join-Path $folder "$Log.log") -Tail 60) -join '%0A'
+        Write-Host "::error title=$Log::$($tail -replace "`r", '')"
+    }
+    exit $code
 } finally { Pop-Location }

@@ -213,14 +213,21 @@ impl App {
         null_mut()
     }
 
-    /// Opens the history window on the newest screenshot.
+    /// Opens the history window on the newest screenshot. Its error output goes to a file in the
+    /// test folder, which `Process::report` reads when the window does not show up.
     pub fn history(&self) -> Process {
-        let child = App::command(&self.root)
-            .args(["--history", "--latest"])
-            .spawn()
-            .expect("Start the history window");
+        let errors = std::fs::File::create(self.root.join("history.err")).ok();
+        let mut command = App::command(&self.root);
+        command.args(["--history", "--latest"]);
+        if let Some(errors) = errors {
+            command.stderr(errors);
+        }
+        let child = command.spawn().expect("Start the history window");
         adopt(child.id());
-        Process(child)
+        Process {
+            child,
+            errors: self.root.join("history.err"),
+        }
     }
 
     pub fn files(&self, folder: &str, extension: &str) -> Vec<PathBuf> {
@@ -249,10 +256,26 @@ impl Drop for App {
 }
 
 /// A helper process that is closed when the test ends, even when it fails.
-pub struct Process(pub Child);
+pub struct Process {
+    pub child: Child,
+    errors: PathBuf,
+}
+
+impl Process {
+    /// プロセスが生きているか終わったかと、その標準エラー出力。窓が出ないときの原因を失敗に添える。
+    pub fn report(&mut self) -> String {
+        let state = match self.child.try_wait() {
+            Ok(None) => "still running".to_string(),
+            Ok(Some(status)) => format!("exited with {status}"),
+            Err(error) => format!("unknown ({error})"),
+        };
+        let errors = std::fs::read_to_string(&self.errors).unwrap_or_default();
+        format!("process {state}; stderr: {:?}", errors.trim())
+    }
+}
 
 impl Drop for Process {
     fn drop(&mut self) {
-        stop(&mut self.0);
+        stop(&mut self.child);
     }
 }
