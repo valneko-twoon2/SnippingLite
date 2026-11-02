@@ -104,7 +104,7 @@ fn own_visible_window(class: &'static str) -> usize {
 pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
     use windows_sys::Win32::{
         Foundation::HWND,
-        UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE, WM_COMMAND},
+        UI::WindowsAndMessaging::{IsWindow, PostMessageW, WM_CLOSE, WM_COMMAND},
     };
     // 止まったテストの名前は、CI の画面には出ない（行が終わるまで出ない）ので、ここで知らせる。
     eprintln!(
@@ -116,18 +116,25 @@ pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
             let found = own_visible_window("#32770");
             if found != 0 {
                 eprintln!("DIALOG {found:#x} for {command}");
-                // Give the dialog a moment to finish opening.
-                std::thread::sleep(std::time::Duration::from_millis(300));
-                // SAFETY: posting a message to a window handle is always sound.
-                unsafe {
-                    // Closing a dialog cancels it, and is the way out of a message box.
-                    if command == 2 {
-                        PostMessageW(found as HWND, WM_CLOSE, 0, 0);
-                    } else {
-                        PostMessageW(found as HWND, WM_COMMAND, command, 0);
+                // 開き終える前に送ったメッセージは捨てられる（遅い CI で起きる）ので、ダイアログが
+                // 閉じるまで、少し待っては送り直す。
+                for _ in 0..120 {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    // SAFETY: posting a message to a window handle is always sound.
+                    unsafe {
+                        if IsWindow(found as HWND) == 0 {
+                            return true;
+                        }
+                        // Closing a dialog cancels it, and is the way out of a message box.
+                        if command == 2 {
+                            PostMessageW(found as HWND, WM_CLOSE, 0, 0);
+                        } else {
+                            PostMessageW(found as HWND, WM_COMMAND, command, 0);
+                        }
                     }
                 }
-                return true;
+                eprintln!("DIALOG {found:#x} did not close: {}", close_own_windows());
+                return false;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
