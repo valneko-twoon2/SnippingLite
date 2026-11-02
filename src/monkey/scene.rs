@@ -138,8 +138,8 @@ impl Targets {
             let mut windows = [null_mut(); 2];
             for (index, (window, r)) in windows.iter_mut().zip(&rects).enumerate() {
                 *window = CreateWindowExW(
-                    // 撮る窓にツール窓（WS_EX_TOOLWINDOW）は付けない。窓の撮影が拒む。
-                    WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+                    // 撮る窓に WS_EX_TOOLWINDOW や WS_EX_NOACTIVATE は付けない。窓の撮影が拒む。
+                    WS_EX_TOPMOST,
                     class.as_ptr(),
                     w("Snipping Lite monkey target").as_ptr(),
                     WS_POPUP,

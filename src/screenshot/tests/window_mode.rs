@@ -9,8 +9,8 @@ unsafe fn window_under_the_pointer() -> (HWND, POINT) {
     let mut cursor = POINT { x: 0, y: 0 };
     GetCursorPos(&mut cursor);
     let hwnd = CreateWindowExW(
-        // 撮る窓にツール窓（WS_EX_TOOLWINDOW）は付けない。窓の撮影が拒む。
-        WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        // 撮る窓に WS_EX_TOOLWINDOW や WS_EX_NOACTIVATE は付けない。窓の撮影が拒む。
+        WS_EX_TOPMOST,
         w("STATIC").as_ptr(),
         w("Snipping Lite window mode test").as_ptr(),
         WS_POPUP,

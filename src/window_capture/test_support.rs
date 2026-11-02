@@ -58,9 +58,10 @@ impl CoveredWindow {
             assert_ne!(RegisterClassW(&spec), 0);
             let create = |color, style| {
                 let hwnd = CreateWindowExW(
-                    // ツール窓は、Windows の窓の撮影が拒む（CI の Windows Server 2025 で確かめた）ので、
-                    // 撮る窓には付けない。WS_EX_NOACTIVATE があれば、タスクバーには出ない。
-                    WS_EX_NOACTIVATE,
+                    // CI の Windows Server 2025 では、窓の撮影は、拡張スタイルのない普通の窓しか受け付けない
+                    // （WS_EX_TOOLWINDOW も WS_EX_NOACTIVATE も拒まれた）ので、撮る窓には付けない。
+                    // 表示は SW_SHOWNOACTIVATE なので、前面は奪わない。
+                    0,
                     class.as_ptr(),
                     crate::w("Snipping Lite capture validation").as_ptr(),
                     style,

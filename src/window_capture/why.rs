@@ -74,6 +74,7 @@ pub(super) fn probe() -> String {
     let variants = [
         ("plain window", 0),
         ("tool window", WS_EX_TOOLWINDOW),
+        ("topmost window", WS_EX_TOPMOST),
         ("no-activate window", WS_EX_NOACTIVATE),
         (
             "topmost no-activate window",
