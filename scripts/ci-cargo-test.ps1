@@ -79,9 +79,16 @@ try {
     if ($code -ne 0) {
         $lines = @(Get-Content (Join-Path $folder "$Log.log"))
         $summary = [System.Collections.Generic.List[string]]::new()
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match 'panicked at|^\[(FAILED|failed)\]|^failed:') {
-                $summary.AddRange([string[]]$lines[$i..[math]::Min($i + 4, $lines.Count - 1)])
+        # 失敗したテストは、名前をすべて並べる（件数が多くても、原因ごとに分けて見られる）。
+        $failed = @($lines | Where-Object { $_ -match '^\[(FAILED|failed)\] ' } | ForEach-Object { $_ -replace '^\[[A-Za-z]+\] ', '' })
+        $summary.Add("失敗したテスト $($failed.Count) 件")
+        $summary.AddRange([string[]]@($failed | Select-Object -First 80))
+        # パニックの文は、場所と最初の 1 行だけ（バックトレースは成果物のログにある）。
+        $summary.Add('--- パニック')
+        for ($i = 0; $i -lt $lines.Count - 1; $i++) {
+            if ($lines[$i] -match 'panicked at') {
+                $summary.Add(($lines[$i] -replace '^thread ', ''))
+                $summary.Add("  $($lines[$i + 1])")
             }
         }
         # 窓の撮影が拒まれた理由（`window capture:` の行）は、重複を除いて先頭から数行。
@@ -89,7 +96,7 @@ try {
         $started = $lines | Where-Object { $_ -like '`[開始`]*' } | Select-Object -Last 1
         if ($started) { $summary.Add("最後に始めたテスト: $started") }
         $tail = @($lines | Where-Object { $_ -notmatch '^\s+(\d+:|at )' } | Select-Object -Last 15)
-        $message = (@($summary | Select-Object -First 40) + '---' + $tail) -join '%0A'
+        $message = (@($summary | Select-Object -First 250) + '---' + $tail) -join '%0A'
         Write-Host "::error title=$Log::$($message -replace "`r", '')"
     }
     exit $code

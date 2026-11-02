@@ -260,7 +260,11 @@ impl WindowCapture {
             let item: GraphicsCaptureItem = factory
                 .CreateForWindow(HWND(target.id as *mut _))
                 .inspect_err(stage("CreateForWindow"))
-                .inspect_err(|_| eprintln!("window capture: {}", why::describe(target.id)))?;
+                .inspect_err(|_| {
+                    eprintln!("window capture: {}", why::describe(target.id));
+                    static PROBED: std::sync::Once = std::sync::Once::new();
+                    PROBED.call_once(|| eprintln!("window capture: {}", why::probe()));
+                })?;
             let size = item.Size()?;
             let (device, context) = create_device().inspect_err(stage("D3D11CreateDevice"))?;
             let dxgi: IDXGIDevice = device.cast()?;

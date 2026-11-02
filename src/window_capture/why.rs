@@ -47,3 +47,61 @@ pub(super) fn describe(id: usize) -> String {
         )
     }
 }
+
+/// 撮れなかった窓のほかに、普通の窓、ツール窓、画面全体なら撮れるかを試して、結果を 1 行にまとめる。
+/// 窓の状態に問題がないのに拒まれるとき、拒む条件（窓の種類か、撮影の機能そのものか）を切り分ける。
+pub(super) fn probe() -> String {
+    use windows::{
+        core::factory,
+        Graphics::Capture::GraphicsCaptureItem,
+        Win32::{
+            Foundation::HWND as Handle, Graphics::Gdi::HMONITOR,
+            System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop,
+        },
+    };
+    use windows_sys::Win32::{
+        Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY},
+        UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+        },
+    };
+    let Ok(interop) = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>() else {
+        return "probe: no interop factory".to_owned();
+    };
+    let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+    let mut results = Vec::new();
+    for (name, extended) in [("plain window", 0), ("tool window", WS_EX_TOOLWINDOW)] {
+        // SAFETY: a private window of the system STATIC class, destroyed right after the attempt.
+        unsafe {
+            let hwnd = CreateWindowExW(
+                extended,
+                class.as_ptr(),
+                std::ptr::null(),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                500,
+                300,
+                200,
+                150,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            );
+            let result = interop.CreateForWindow::<GraphicsCaptureItem>(Handle(hwnd.cast()));
+            results.push(format!("{name}: {:?}", result.map(|_| "ok")));
+            DestroyWindow(hwnd);
+        }
+    }
+    // SAFETY: a plain monitor query.
+    let monitor = unsafe {
+        MonitorFromPoint(
+            windows_sys::Win32::Foundation::POINT { x: 0, y: 0 },
+            MONITOR_DEFAULTTOPRIMARY,
+        )
+    };
+    // SAFETY: the handle comes from the monitor query above.
+    let result =
+        unsafe { interop.CreateForMonitor::<GraphicsCaptureItem>(HMONITOR(monitor.cast())) };
+    results.push(format!("primary monitor: {:?}", result.map(|_| "ok")));
+    format!("probe: {}", results.join("; "))
+}
