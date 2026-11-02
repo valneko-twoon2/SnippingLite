@@ -65,119 +65,6 @@ impl Drop for Sandbox {
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
-/// このプロセスの、見えている `class`（"#32770" はダイアログ、"#32768" はメニュー）の窓。なければ 0。
-/// ほかのプロセス（同時に動くほかのテストや、利用者のアプリ）のダイアログやメニューは数えない。
-fn own_visible_window(class: &'static str) -> usize {
-    use windows_sys::Win32::{
-        Foundation::{BOOL, HWND, LPARAM},
-        UI::WindowsAndMessaging::{
-            EnumWindows, GetClassNameW, GetWindowThreadProcessId, IsWindowVisible,
-        },
-    };
-    struct Search {
-        class: &'static str,
-        found: usize,
-    }
-    unsafe extern "system" fn find(hwnd: HWND, search: LPARAM) -> BOOL {
-        let search = &mut *(search as *mut Search);
-        let mut class = [0u16; 16];
-        let length = GetClassNameW(hwnd, class.as_mut_ptr(), 16).clamp(0, 16) as usize;
-        let mut process = 0;
-        GetWindowThreadProcessId(hwnd, &mut process);
-        if IsWindowVisible(hwnd) != 0
-            && process == std::process::id()
-            && String::from_utf16_lossy(&class[..length]) == search.class
-        {
-            search.found = hwnd as usize;
-            return 0;
-        }
-        1
-    }
-    let mut search = Search { class, found: 0 };
-    // SAFETY: `search` outlives the synchronous enumeration.
-    unsafe { EnumWindows(Some(find), &mut search as *mut Search as LPARAM) };
-    search.found
-}
-
-/// Presses a button of the next dialog this process shows, from another thread:
-/// 1 accepts it, 2 cancels or closes it (message boxes only close this way). Returns whether a dialog was found.
-pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
-    use windows_sys::Win32::{
-        Foundation::HWND,
-        UI::WindowsAndMessaging::{IsWindow, PostMessageW, WM_CLOSE, WM_COMMAND},
-    };
-    // 止まったテストの名前は、CI の画面には出ない（行が終わるまで出ない）ので、ここで知らせる。
-    eprintln!(
-        "DIALOG waiting for {command} in {:?}",
-        std::thread::current().name()
-    );
-    std::thread::spawn(move || {
-        for _ in 0..1200 {
-            let found = own_visible_window("#32770");
-            if found != 0 {
-                eprintln!("DIALOG {found:#x} for {command}");
-                // 開き終える前に送ったメッセージは捨てられる（遅い CI で起きる）ので、ダイアログが
-                // 閉じるまで、少し待っては送り直す。
-                for _ in 0..120 {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    // SAFETY: posting a message to a window handle is always sound.
-                    unsafe {
-                        if IsWindow(found as HWND) == 0 {
-                            return true;
-                        }
-                        // Closing a dialog cancels it, and is the way out of a message box.
-                        if command == 2 {
-                            PostMessageW(found as HWND, WM_CLOSE, 0, 0);
-                        } else {
-                            PostMessageW(found as HWND, WM_COMMAND, command, 0);
-                        }
-                    }
-                }
-                eprintln!("DIALOG {found:#x} did not close: {}", close_own_windows());
-                return false;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        // 見つからなかった。ダイアログが開いたまま呼び出し側が戻らないと、テストが止まり続けるので、
-        // このプロセスの窓を一覧にして閉じ、テストを失敗させる（一覧は失敗の出力に残る）。
-        eprintln!("DIALOG not found for {command}: {}", close_own_windows());
-        false
-    })
-}
-
-/// このプロセスの最上位の窓（クラス、題名、見えているか）を一覧にして、すべて閉じる。
-fn close_own_windows() -> String {
-    use windows_sys::Win32::{
-        Foundation::{BOOL, HWND, LPARAM},
-        UI::WindowsAndMessaging::{
-            EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
-            PostMessageW, WM_CLOSE,
-        },
-    };
-    unsafe extern "system" fn each(hwnd: HWND, list: LPARAM) -> BOOL {
-        let list = &mut *(list as *mut String);
-        let mut process = 0;
-        GetWindowThreadProcessId(hwnd, &mut process);
-        if process == std::process::id() {
-            let (mut class, mut title) = ([0u16; 64], [0u16; 64]);
-            let class_length = GetClassNameW(hwnd, class.as_mut_ptr(), 64).clamp(0, 64) as usize;
-            let title_length = GetWindowTextW(hwnd, title.as_mut_ptr(), 64).clamp(0, 64) as usize;
-            list.push_str(&format!(
-                "[{} {:?} visible={}] ",
-                String::from_utf16_lossy(&class[..class_length]),
-                String::from_utf16_lossy(&title[..title_length]),
-                IsWindowVisible(hwnd) != 0
-            ));
-            PostMessageW(hwnd, WM_CLOSE, 0, 0);
-        }
-        1
-    }
-    let mut list = String::new();
-    // SAFETY: `list` outlives the synchronous enumeration.
-    unsafe { EnumWindows(Some(each), &mut list as *mut String as LPARAM) };
-    list
-}
-
 /// A hidden window standing in for the settings or history window process, so that opening
 /// one finds it instead of starting another copy of the program.
 pub fn stub_window(identity: &str) -> windows_sys::Win32::Foundation::HWND {
@@ -205,43 +92,6 @@ pub fn stub_window(identity: &str) -> windows_sys::Win32::Foundation::HWND {
     }
 }
 
-/// Chooses an entry of the next menu this thread shows: `downs` presses Down before Enter;
-/// `usize::MAX` leaves the menu with Escape instead. Returns whether a menu appeared.
-pub fn answer_menu(downs: usize) -> std::thread::JoinHandle<bool> {
-    use windows_sys::Win32::UI::{
-        Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_RETURN},
-        WindowsAndMessaging::{PostThreadMessageW, WM_KEYDOWN},
-    };
-    extern "system" {
-        fn GetCurrentThreadId() -> u32;
-    }
-    // SAFETY: plain query of the calling thread.
-    let target = unsafe { GetCurrentThreadId() };
-    std::thread::spawn(move || {
-        for _ in 0..300 {
-            // 標準のメニューか、範囲のドロップダウンの窓。
-            if own_visible_window("#32768") + own_visible_window("SLAreaMenu") == 0 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                continue;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            let keys: Vec<u16> = if downs == usize::MAX {
-                vec![VK_ESCAPE]
-            } else {
-                std::iter::repeat_n(VK_DOWN, downs + 1)
-                    .chain([VK_RETURN])
-                    .collect()
-            };
-            for key in keys {
-                // SAFETY: posting a key to a thread's queue is always sound.
-                unsafe { PostThreadMessageW(target, WM_KEYDOWN, key as usize, 0) };
-                std::thread::sleep(std::time::Duration::from_millis(150));
-            }
-            return true;
-        }
-        false
-    })
-}
 /// The image on the clipboard as (width, height, top-down BGRA pixels), if there is one.
 pub fn clipboard_image() -> Option<(i32, i32, Vec<u8>)> {
     use windows_sys::Win32::{
@@ -364,6 +214,10 @@ pub fn clipboard_files() -> Vec<PathBuf> {
         files
     }
 }
+/// このプロセスが出すダイアログとメニューに、ほかのスレッドから答える仕組み。
+mod dialogs;
+pub use dialogs::{answer_dialog, answer_menu};
+
 /// An egui screen driven without a window: frames are run by hand, text is located
 /// from the painted shapes and the pointer and keyboard are simulated.
 pub mod screen;
