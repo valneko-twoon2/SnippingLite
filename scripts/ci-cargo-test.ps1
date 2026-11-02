@@ -30,6 +30,32 @@ function Format-TestEvent([string]$Line) {
     }
 }
 
+# 出力が 3 分止まったら、止まったテストの様子（窓、ダイアログの文字、デスクトップの画像）を出して
+# ダイアログを閉じる。10 分止まったままなら、テストのプロセスを終わらせる。画面のテストはダイアログが
+# 開いたまま戻らないことがあり、そのままだと、ジョブの上限まで何も分からず待つことになる。
+$watch = [hashtable]::Synchronized(@{ Last = [DateTime]::UtcNow; Done = $false })
+$watcher = Start-ThreadJob -ArgumentList $watch, $PSScriptRoot, $Log -ScriptBlock {
+    param($watch, $scripts, $log)
+    . (Join-Path $scripts 'ci-hang-report.ps1')
+    $reported = 0
+    while (-not $watch.Done) {
+        Start-Sleep -Seconds 10
+        $idle = ([DateTime]::UtcNow - $watch.Last).TotalSeconds
+        if ($idle -lt 180) { $reported = 0; continue }
+        if ($idle -ge 600) {
+            [Console]::WriteLine("::error title=$log::出力が $([int]$idle) 秒止まったので、テストのプロセスを終わらせる")
+            Get-TestProcess | Stop-Process -Force -ErrorAction SilentlyContinue
+            $watch.Last = [DateTime]::UtcNow
+            continue
+        }
+        if ($idle -ge 180 * ($reported + 1)) {
+            $reported++
+            [Console]::WriteLine("::warning title=$log::出力が $([int]$idle) 秒止まっている")
+            Write-HangReport -Name "$log-hang$reported" -Close
+        }
+    }
+}
+
 Push-Location $root
 try {
     # テストの出力は、通ったテストのものも含め、すべて残す。`--nocapture` で隠さず、JSON 形式で
@@ -39,7 +65,7 @@ try {
     $detail = '--nocapture', '--format', 'json', '-Z', 'unstable-options', '--report-time'
     # 標準エラーの行は ErrorRecord になるので、文字列にしてからログと画面へ流す。
     & cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked @TestArguments @detail 2>&1 |
-        ForEach-Object { Format-TestEvent "$_" } |
+        ForEach-Object { $watch.Last = [DateTime]::UtcNow; Format-TestEvent "$_" } |
         Tee-Object -FilePath (Join-Path $folder "$Log.log")
     $code = $LASTEXITCODE
     # 失敗したら、ログの末尾を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で原因が読める。
@@ -48,4 +74,9 @@ try {
         Write-Host "::error title=$Log::$($tail -replace "`r", '')"
     }
     exit $code
-} finally { Pop-Location }
+} finally {
+    $watch.Done = $true
+    Stop-Job $watcher -ErrorAction SilentlyContinue
+    Remove-Job $watcher -Force -ErrorAction SilentlyContinue
+    Pop-Location
+}
