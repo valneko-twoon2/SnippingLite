@@ -51,6 +51,13 @@ jobs:
         with:
           workspaces: src
           shared-key: windows
+      # 日本語の文字認識のテストは、日本語の OCR の言語が要る。入らなくても、ほかのテストは進める。
+      - name: Install the Japanese OCR language
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-WindowsCapability -Online -Name 'Language.OCR~~~ja-JP~0.0.1.0'
+          Get-WindowsCapability -Online -Name 'Language.OCR*ja-JP*' | Format-List Name, State
       # リークのテストはプロセス全体の GDI と USER のオブジェクトを数えるので、ほかと分けて走らせる。
       - name: Run the tests that cover the screen
         shell: pwsh

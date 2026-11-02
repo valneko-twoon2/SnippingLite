@@ -74,30 +74,44 @@ try {
         Tee-Object -FilePath (Join-Path $folder "$Log.log")
     $code = $LASTEXITCODE
     # 失敗したら、原因を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で読める。
-    # バックトレースは長くて原因を押し流すので、パニックの文（と続く数行）、失敗したテスト、
-    # 最後に始めたテスト、ログの末尾の短い抜粋だけを選ぶ。全文は成果物のログにある。
+    # バックトレースは長くて原因を押し流すので、選んで出す。全文は成果物のログにある。
+    # 注釈は 1 つが約 4 KB までで、超えた分は切られるので、話題ごとに分け、長ければ 4 KB ごとに割る。
     if ($code -ne 0) {
         $lines = @(Get-Content (Join-Path $folder "$Log.log"))
-        $summary = [System.Collections.Generic.List[string]]::new()
-        # 失敗したテストは、名前をすべて並べる（件数が多くても、原因ごとに分けて見られる）。
+        # 窓の撮影が拒まれた理由（`window capture:` の行）は、重複を除いて先頭から数行。
+        $capture = @($lines | Where-Object { $_ -like 'window capture:*' } | Select-Object -Unique -First 8)
+        # 失敗したテストは、名前（と所要時間）をすべて並べる。
         $failed = @($lines | Where-Object { $_ -match '^\[(FAILED|failed)\] ' } | ForEach-Object { $_ -replace '^\[[A-Za-z]+\] ', '' })
-        $summary.Add("失敗したテスト $($failed.Count) 件")
-        $summary.AddRange([string[]]@($failed | Select-Object -First 80))
-        # パニックの文は、場所と最初の 1 行だけ（バックトレースは成果物のログにある）。
-        $summary.Add('--- パニック')
+        # パニックの文は、場所と最初の 1 行だけ。
+        $panics = [System.Collections.Generic.List[string]]::new()
         for ($i = 0; $i -lt $lines.Count - 1; $i++) {
             if ($lines[$i] -match 'panicked at') {
-                $summary.Add(($lines[$i] -replace '^thread ', ''))
-                $summary.Add("  $($lines[$i + 1])")
+                $panics.Add(($lines[$i] -replace '^thread ', ''))
+                $panics.Add("  $($lines[$i + 1])")
             }
         }
-        # 窓の撮影が拒まれた理由（`window capture:` の行）は、重複を除いて先頭から数行。
-        $summary.AddRange([string[]]@($lines | Where-Object { $_ -like 'window capture:*' } | Select-Object -Unique -First 8))
         $started = $lines | Where-Object { $_ -like '`[開始`]*' } | Select-Object -Last 1
-        if ($started) { $summary.Add("最後に始めたテスト: $started") }
-        $tail = @($lines | Where-Object { $_ -notmatch '^\s+(\d+:|at )' } | Select-Object -Last 15)
-        $message = (@($summary | Select-Object -First 250) + '---' + $tail) -join '%0A'
-        Write-Host "::error title=$Log::$($message -replace "`r", '')"
+        $tail = @($lines | Where-Object { $_ -notmatch '^\s+(\d+:|at )' } | Select-Object -Last 12)
+        $groups = [ordered]@{
+            "$Log 窓の撮影" = @($capture + $(if ($started) { "最後に始めたテスト: $started" }))
+            "$Log 失敗したテスト $($failed.Count) 件" = $failed
+            "$Log パニック" = $panics
+            "$Log 末尾" = $tail
+        }
+        $sent = 0
+        foreach ($title in $groups.Keys) {
+            $chunk = [System.Collections.Generic.List[string]]::new()
+            $size = 0
+            foreach ($line in @($groups[$title]) + $null) {
+                $text = if ($null -ne $line) { ($line -replace "`r", '') } else { $null }
+                if ($chunk.Count -gt 0 -and ($null -eq $text -or $size + $text.Length + 1 -gt 3600)) {
+                    if ($sent -lt 10) { Write-Host "::error title=$title::$($chunk -join '%0A')" }
+                    $sent++
+                    $chunk.Clear(); $size = 0
+                }
+                if ($null -ne $text) { $chunk.Add($text.Substring(0, [math]::Min($text.Length, 600))); $size += [math]::Min($text.Length, 600) + 1 }
+            }
+        }
     }
     exit $code
 } finally {
