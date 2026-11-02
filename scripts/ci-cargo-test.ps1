@@ -84,6 +84,8 @@ try {
                 $summary.AddRange([string[]]$lines[$i..[math]::Min($i + 4, $lines.Count - 1)])
             }
         }
+        # 窓の撮影が拒まれた理由（`window capture:` の行）は、重複を除いて先頭から数行。
+        $summary.AddRange([string[]]@($lines | Where-Object { $_ -like 'window capture:*' } | Select-Object -Unique -First 8))
         $started = $lines | Where-Object { $_ -like '`[開始`]*' } | Select-Object -Last 1
         if ($started) { $summary.Add("最後に始めたテスト: $started") }
         $tail = @($lines | Where-Object { $_ -notmatch '^\s+(\d+:|at )' } | Select-Object -Last 15)
