@@ -68,10 +68,22 @@ try {
         ForEach-Object { $watch.Last = [DateTime]::UtcNow; Format-TestEvent "$_" } |
         Tee-Object -FilePath (Join-Path $folder "$Log.log")
     $code = $LASTEXITCODE
-    # 失敗したら、ログの末尾を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で原因が読める。
+    # 失敗したら、原因を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で読める。
+    # バックトレースは長くて原因を押し流すので、パニックの文（と続く数行）、失敗したテスト、
+    # 最後に始めたテスト、ログの末尾の短い抜粋だけを選ぶ。全文は成果物のログにある。
     if ($code -ne 0) {
-        $tail = (Get-Content (Join-Path $folder "$Log.log") -Tail 60) -join '%0A'
-        Write-Host "::error title=$Log::$($tail -replace "`r", '')"
+        $lines = @(Get-Content (Join-Path $folder "$Log.log"))
+        $summary = [System.Collections.Generic.List[string]]::new()
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match 'panicked at|^\[(FAILED|failed)\]|^failed:') {
+                $summary.AddRange([string[]]$lines[$i..[math]::Min($i + 4, $lines.Count - 1)])
+            }
+        }
+        $started = $lines | Where-Object { $_ -like '`[開始`]*' } | Select-Object -Last 1
+        if ($started) { $summary.Add("最後に始めたテスト: $started") }
+        $tail = @($lines | Where-Object { $_ -notmatch '^\s+(\d+:|at )' } | Select-Object -Last 15)
+        $message = (@($summary | Select-Object -First 40) + '---' + $tail) -join '%0A'
+        Write-Host "::error title=$Log::$($message -replace "`r", '')"
     }
     exit $code
 } finally {
