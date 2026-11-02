@@ -19,9 +19,8 @@ use windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{E_FAIL, HMODULE, HWND, RPC_E_CHANGED_MODE},
+        Foundation::{E_FAIL, HWND, RPC_E_CHANGED_MODE},
         Graphics::{
-            Direct3D::D3D_DRIVER_TYPE_HARDWARE,
             Direct3D11::*,
             Dxgi::{
                 Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC},
@@ -243,28 +242,26 @@ impl WindowCapture {
     pub fn new(target: Target, width: i32, height: i32, cursor: bool) -> Result<Self> {
         let apartment = Apartment::new()?;
         target.bounds()?;
-        if width < 1 || height < 1 || !GraphicsCaptureSession::IsSupported()? {
+        // 撮れないときの段階を標準エラーに残す（テストの出力や、手元の端末で原因を読める）。
+        let stage = |name: &str| {
+            let name = name.to_owned();
+            move |error: &Error| eprintln!("window capture: {name}: {error}")
+        };
+        if width < 1
+            || height < 1
+            || !GraphicsCaptureSession::IsSupported().inspect_err(stage("IsSupported"))?
+        {
+            eprintln!("window capture: unsupported or empty ({width}x{height})");
             return Err(Error::from_hresult(E_FAIL));
         }
         // SAFETY: D3D and WinRT objects remain on their creating thread.
         unsafe {
             let factory: IGraphicsCaptureItemInterop = factory::<GraphicsCaptureItem, _>()?;
-            let item: GraphicsCaptureItem = factory.CreateForWindow(HWND(target.id as *mut _))?;
+            let item: GraphicsCaptureItem = factory
+                .CreateForWindow(HWND(target.id as *mut _))
+                .inspect_err(stage("CreateForWindow"))?;
             let size = item.Size()?;
-            let (mut device, mut context) = (None, None);
-            D3D11CreateDevice(
-                None,
-                D3D_DRIVER_TYPE_HARDWARE,
-                HMODULE::default(),
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                None,
-                D3D11_SDK_VERSION,
-                Some(&mut device),
-                None,
-                Some(&mut context),
-            )?;
-            let device = device.ok_or_else(|| Error::from_hresult(E_FAIL))?;
-            let context = context.ok_or_else(|| Error::from_hresult(E_FAIL))?;
+            let (device, context) = create_device().inspect_err(stage("D3D11CreateDevice"))?;
             let dxgi: IDXGIDevice = device.cast()?;
             let winrt_device: IDirect3DDevice =
                 CreateDirect3D11DeviceFromDXGIDevice(&dxgi)?.cast()?;
@@ -339,6 +336,7 @@ impl WindowCapture {
                     return Ok(&self.pixels);
                 }
                 if Instant::now() >= deadline {
+                    eprintln!("window capture: no frame within 3 s");
                     return Err(Error::from_hresult(E_FAIL));
                 }
                 std::thread::sleep(Duration::from_millis(1));
@@ -475,6 +473,9 @@ pub fn snapshot(target: Target) -> Result<Snapshot> {
         pixels,
     })
 }
+
+mod device;
+use device::create_device;
 
 #[cfg(test)]
 pub(crate) mod test_support;
