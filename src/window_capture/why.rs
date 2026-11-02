@@ -62,7 +62,8 @@ pub(super) fn probe() -> String {
     use windows_sys::Win32::{
         Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTOPRIMARY},
         UI::WindowsAndMessaging::{
-            CreateWindowExW, DestroyWindow, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_VISIBLE,
+            CreateWindowExW, DestroyWindow, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+            WS_OVERLAPPEDWINDOW, WS_VISIBLE,
         },
     };
     let Ok(interop) = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>() else {
@@ -70,7 +71,16 @@ pub(super) fn probe() -> String {
     };
     let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
     let mut results = Vec::new();
-    for (name, extended) in [("plain window", 0), ("tool window", WS_EX_TOOLWINDOW)] {
+    let variants = [
+        ("plain window", 0),
+        ("tool window", WS_EX_TOOLWINDOW),
+        ("no-activate window", WS_EX_NOACTIVATE),
+        (
+            "topmost no-activate window",
+            WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        ),
+    ];
+    for (name, extended) in variants {
         // SAFETY: a private window of the system STATIC class, destroyed right after the attempt.
         unsafe {
             let hwnd = CreateWindowExW(

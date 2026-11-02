@@ -262,7 +262,8 @@ fn a_window_under_the_pointer_is_found_and_taken_with_or_without_its_title_bar()
     // SAFETY: a private topmost window the test creates and destroys.
     let window = unsafe {
         CreateWindowExW(
-            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            // 撮る窓にツール窓（WS_EX_TOOLWINDOW）は付けない。窓の撮影が拒む。
+            WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             w("STATIC").as_ptr(),
             w("overlay probe").as_ptr(),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
