@@ -107,7 +107,7 @@ pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
         UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE, WM_COMMAND},
     };
     std::thread::spawn(move || {
-        for _ in 0..300 {
+        for _ in 0..1200 {
             let found = own_visible_window("#32770");
             if found != 0 {
                 eprintln!("DIALOG {found:#x} for {command}");
@@ -126,8 +126,44 @@ pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        // 見つからなかった。ダイアログが開いたまま呼び出し側が戻らないと、テストが止まり続けるので、
+        // このプロセスの窓を一覧にして閉じ、テストを失敗させる（一覧は失敗の出力に残る）。
+        eprintln!("DIALOG not found for {command}: {}", close_own_windows());
         false
     })
+}
+
+/// このプロセスの最上位の窓（クラス、題名、見えているか）を一覧にして、すべて閉じる。
+fn close_own_windows() -> String {
+    use windows_sys::Win32::{
+        Foundation::{BOOL, HWND, LPARAM},
+        UI::WindowsAndMessaging::{
+            EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+            PostMessageW, WM_CLOSE,
+        },
+    };
+    unsafe extern "system" fn each(hwnd: HWND, list: LPARAM) -> BOOL {
+        let list = &mut *(list as *mut String);
+        let mut process = 0;
+        GetWindowThreadProcessId(hwnd, &mut process);
+        if process == std::process::id() {
+            let (mut class, mut title) = ([0u16; 64], [0u16; 64]);
+            let class_length = GetClassNameW(hwnd, class.as_mut_ptr(), 64).clamp(0, 64) as usize;
+            let title_length = GetWindowTextW(hwnd, title.as_mut_ptr(), 64).clamp(0, 64) as usize;
+            list.push_str(&format!(
+                "[{} {:?} visible={}] ",
+                String::from_utf16_lossy(&class[..class_length]),
+                String::from_utf16_lossy(&title[..title_length]),
+                IsWindowVisible(hwnd) != 0
+            ));
+            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+        }
+        1
+    }
+    let mut list = String::new();
+    // SAFETY: `list` outlives the synchronous enumeration.
+    unsafe { EnumWindows(Some(each), &mut list as *mut String as LPARAM) };
+    list
 }
 
 /// A hidden window standing in for the settings or history window process, so that opening

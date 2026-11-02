@@ -54,6 +54,7 @@ jobs:
       # リークのテストはプロセス全体の GDI と USER のオブジェクトを数えるので、ほかと分けて走らせる。
       - name: Run the tests that cover the screen
         shell: pwsh
+        timeout-minutes: 60
         run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks'
       - name: Take a screenshot of the desktop
         if: ${{ failure() || cancelled() }}
