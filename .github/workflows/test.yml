@@ -40,7 +40,8 @@ jobs:
         shell: pwsh
         run: scripts/check-workflows.ps1 -Strict
 
-  # 画面のテストは 3 つのジョブに分け、並べて走らせる。失敗したジョブの出力と、そのときの
+  # 画面のテストは 4 つのジョブに分け、並べて走らせる。窓の撮影（Windows Graphics Capture）、録画、動画、
+  # ランダム操作は capture に、ほかは screen に分け、窓の撮影の失敗に邪魔されず、ほかが通るか見えるようにする。失敗したジョブの出力と、そのときの
   # デスクトップの画像は、成果物（<名前>-logs）として持ち帰る。
   screen:
     runs-on: windows-2025
@@ -51,18 +52,11 @@ jobs:
         with:
           workspaces: src
           shared-key: windows
-      # 日本語の文字認識のテストは、日本語の OCR の言語が要る。入らなくても、ほかのテストは進める。
-      - name: Install the Japanese OCR language
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          Add-WindowsCapability -Online -Name 'Language.OCR~~~ja-JP~0.0.1.0'
-          Get-WindowsCapability -Online -Name 'Language.OCR*ja-JP*' | Format-List Name, State
       # リークのテストはプロセス全体の GDI と USER のオブジェクトを数えるので、ほかと分けて走らせる。
       - name: Run the tests that cover the screen
         shell: pwsh
         timeout-minutes: 60
-        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks'
+        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks','--skip','window_capture::','--skip','record::','--skip','video::','--skip','monkey::','--skip','markup::tests::modes::a_window_','--skip','overlay::display::tests::recording::a_window_','--skip','overlay::tests::a_window_under','--skip','screenshot::tests::a_window_','--skip','screenshot::tests::a_picked_window'
       - name: Take a screenshot of the desktop
         if: ${{ failure() || cancelled() }}
         continue-on-error: true
@@ -73,6 +67,33 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: screen-logs
+          path: ci-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  capture:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: windows
+      - name: Run the tests that capture windows and record
+        shell: pwsh
+        timeout-minutes: 60
+        run: scripts/ci-cargo-test.ps1 -Log capture -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','window_capture::','record::','video::','monkey::','markup::tests::modes::a_window_','overlay::display::tests::recording::a_window_','overlay::tests::a_window_under','screenshot::tests::a_window_','screenshot::tests::a_picked_window'
+      - name: Take a screenshot of the desktop
+        if: ${{ failure() || cancelled() }}
+        continue-on-error: true
+        shell: pwsh
+        run: scripts/ci-screenshot.ps1 -Name capture
+      - name: Keep the logs
+        if: ${{ failure() || cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: capture-logs
           path: ci-logs
           retention-days: 7
           if-no-files-found: ignore
