@@ -55,7 +55,7 @@ jobs:
       - name: Run the tests that cover the screen
         shell: pwsh
         timeout-minutes: 60
-        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--nocapture','--skip','leaks'
+        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks'
       - name: Take a screenshot of the desktop
         if: ${{ failure() || cancelled() }}
         continue-on-error: true
