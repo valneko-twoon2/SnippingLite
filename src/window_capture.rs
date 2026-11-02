@@ -259,7 +259,8 @@ impl WindowCapture {
             let factory: IGraphicsCaptureItemInterop = factory::<GraphicsCaptureItem, _>()?;
             let item: GraphicsCaptureItem = factory
                 .CreateForWindow(HWND(target.id as *mut _))
-                .inspect_err(stage("CreateForWindow"))?;
+                .inspect_err(stage("CreateForWindow"))
+                .inspect_err(|_| eprintln!("window capture: {}", why::describe(target.id)))?;
             let size = item.Size()?;
             let (device, context) = create_device().inspect_err(stage("D3D11CreateDevice"))?;
             let dxgi: IDXGIDevice = device.cast()?;
@@ -476,6 +477,7 @@ pub fn snapshot(target: Target) -> Result<Snapshot> {
 
 mod device;
 use device::create_device;
+mod why;
 
 #[cfg(test)]
 pub(crate) mod test_support;
