@@ -172,12 +172,14 @@ fn a_kept_toolbar_returns_moves_stays_out_of_screenshots_and_closes() {
         assert!(!dimmed(probe), "Escape ends the snip");
 
         // Drag the space between the buttons.
-        let moved = offset(home, -300, 250);
+        // 狭い画面でも、動かしたツールバーの周りの選択範囲が画面からはみ出さない距離にする。
+        let left = (home.left - backdrop.at(0, 0).x - 40).clamp(0, 300);
+        let moved = offset(home, -left, 250);
         let grip = backdrop.button(home, GAP);
         drag(&[
             grip,
             POINT {
-                x: grip.x - 300,
+                x: grip.x - left,
                 y: grip.y + 250,
             },
         ]);
