@@ -106,6 +106,11 @@ pub fn answer_dialog(command: usize) -> std::thread::JoinHandle<bool> {
         Foundation::HWND,
         UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE, WM_COMMAND},
     };
+    // 止まったテストの名前は、CI の画面には出ない（行が終わるまで出ない）ので、ここで知らせる。
+    eprintln!(
+        "DIALOG waiting for {command} in {:?}",
+        std::thread::current().name()
+    );
     std::thread::spawn(move || {
         for _ in 0..1200 {
             let found = own_visible_window("#32770");

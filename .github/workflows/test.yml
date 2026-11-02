@@ -24,7 +24,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # cargo install の結果（~/.cargo/bin）も、ここで一緒に保存される。
       - uses: Swatinem/rust-cache@v2
         with:
@@ -46,7 +46,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
@@ -55,7 +55,7 @@ jobs:
       - name: Run the tests that cover the screen
         shell: pwsh
         timeout-minutes: 60
-        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--skip','leaks'
+        run: scripts/ci-cargo-test.ps1 -Log screen -TestArguments '--bin','snippinglite','--','--ignored','--test-threads=1','--nocapture','--skip','leaks'
       - name: Take a screenshot of the desktop
         if: ${{ failure() || cancelled() }}
         continue-on-error: true
@@ -63,7 +63,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name screen
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: screen-logs
           path: ci-logs
@@ -74,7 +74,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
@@ -89,7 +89,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name leaks
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: leaks-logs
           path: ci-logs
@@ -100,7 +100,7 @@ jobs:
     runs-on: windows-2025
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
@@ -121,7 +121,7 @@ jobs:
         run: scripts/ci-screenshot.ps1 -Name e2e
       - name: Keep the logs
         if: ${{ failure() || cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: e2e-logs
           path: ci-logs
