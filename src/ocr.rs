@@ -218,9 +218,33 @@ mod tests {
         assert!(text.contains("123"), "{text:?}");
     }
 
+    /// このユーザーの文字認識の言語が日本語か。アプリはユーザーの言語から文字認識の機能を作るので、
+    /// 日本語を読むには、Windows の言語の一覧で日本語が先頭にある必要がある。英語のユーザー（GitHub
+    /// Actions のランナー）では、日本語の文字は読めない。
+    fn recognizes_japanese() -> bool {
+        std::thread::spawn(|| {
+            // SAFETY: a plain WinRT apartment for this thread.
+            unsafe {
+                let _ = RoInitialize(RO_INIT_MULTITHREADED);
+                let japanese = OcrEngine::TryCreateFromUserProfileLanguages()
+                    .and_then(|engine| engine.RecognizerLanguage())
+                    .and_then(|language| language.LanguageTag())
+                    .is_ok_and(|tag| tag.to_string().starts_with("ja"));
+                RoUninitialize();
+                japanese
+            }
+        })
+        .join()
+        .unwrap_or(false)
+    }
+
     #[test]
     #[ignore = "Requires the Japanese Windows text recognition language"]
     fn reads_rendered_japanese_without_spaces_between_characters() {
+        if !recognizes_japanese() {
+            eprintln!("skipped: the text recognition language of this user is not Japanese");
+            return;
+        }
         let text = spawn(render("日本語の文字認識"), 700, 120)
             .recv()
             .unwrap()
