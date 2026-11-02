@@ -33,7 +33,7 @@ function Format-TestEvent([string]$Line) {
 # 出力が 3 分止まったら、止まったテストの様子（窓、ダイアログの文字、デスクトップの画像）を出して
 # ダイアログを閉じる。10 分止まったままなら、テストのプロセスを終わらせる。画面のテストはダイアログが
 # 開いたまま戻らないことがあり、そのままだと、ジョブの上限まで何も分からず待つことになる。
-$watch = [hashtable]::Synchronized(@{ Last = [DateTime]::UtcNow; Done = $false })
+$watch = [hashtable]::Synchronized(@{ Last = [DateTime]::UtcNow; Done = $false; Test = '' })
 $watcher = Start-ThreadJob -ArgumentList $watch, $PSScriptRoot, $Log -ScriptBlock {
     param($watch, $scripts, $log)
     . (Join-Path $scripts 'ci-hang-report.ps1')
@@ -50,8 +50,8 @@ $watcher = Start-ThreadJob -ArgumentList $watch, $PSScriptRoot, $Log -ScriptBloc
         }
         if ($idle -ge 180 * ($reported + 1)) {
             $reported++
-            [Console]::WriteLine("::warning title=$log::出力が $([int]$idle) 秒止まっている")
-            Write-HangReport -Name "$log-hang$reported" -Close
+            $report = Write-HangReport -Name "$log-hang$reported" -Close
+            [Console]::WriteLine("::warning title=$log::出力が $([int]$idle) 秒止まっている。最後に始めたテスト: $($watch.Test)%0A$report")
         }
     }
 }
@@ -65,7 +65,12 @@ try {
     $detail = '--nocapture', '--format', 'json', '-Z', 'unstable-options', '--report-time'
     # 標準エラーの行は ErrorRecord になるので、文字列にしてからログと画面へ流す。
     & cargo test --config src/.cargo/config.toml --manifest-path src/Cargo.toml --locked @TestArguments @detail 2>&1 |
-        ForEach-Object { $watch.Last = [DateTime]::UtcNow; Format-TestEvent "$_" } |
+        ForEach-Object {
+            $watch.Last = [DateTime]::UtcNow
+            $line = Format-TestEvent "$_"
+            if ($line.StartsWith('[開始] ')) { $watch.Test = $line.Substring(5) }
+            $line
+        } |
         Tee-Object -FilePath (Join-Path $folder "$Log.log")
     $code = $LASTEXITCODE
     # 失敗したら、原因を注釈にも出す。成果物をダウンロードしなくても、実行の画面と API で読める。

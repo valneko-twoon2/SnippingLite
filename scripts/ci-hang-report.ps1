@@ -76,17 +76,21 @@ function Get-TestProcess {
     }
 }
 
+# 様子をログに出し、注釈に添えられるよう、同じ内容を `%0A` でつないだ 1 つの文字列で返す。
 function Write-HangReport {
     param([string]$Name = 'hang', [switch]$Close)
     $processes = @(Get-TestProcess)
-    [Console]::WriteLine("::group::出力が止まった: テストのプロセスの様子")
+    $report = [System.Collections.Generic.List[string]]::new()
     foreach ($process in $processes) {
-        [Console]::WriteLine("プロセス $($process.Id) $($process.ProcessName) 応答=$($process.Responding) CPU=$([math]::Round($process.CPU, 1)) s スレッド=$($process.Threads.Count)")
+        $report.Add("プロセス $($process.Id) $($process.ProcessName) 応答=$($process.Responding) CPU=$([math]::Round($process.CPU, 1)) s スレッド=$($process.Threads.Count)")
     }
     $ids = [System.Collections.Generic.HashSet[uint32]]::new()
     foreach ($process in $processes) { $null = $ids.Add([uint32]$process.Id) }
-    foreach ($line in [HangWindows]::Describe($ids, [bool]$Close)) { [Console]::WriteLine($line) }
+    foreach ($line in [HangWindows]::Describe($ids, [bool]$Close)) { $report.Add($line) }
+    [Console]::WriteLine('::group::出力が止まった: テストのプロセスの様子')
+    foreach ($line in $report) { [Console]::WriteLine($line) }
     [Console]::WriteLine('::endgroup::')
     try { & (Join-Path $PSScriptRoot 'ci-screenshot.ps1') -Name $Name | ForEach-Object { [Console]::WriteLine($_) } }
     catch { [Console]::WriteLine("画像を残せなかった: $_") }
+    return ($report -join '%0A')
 }
