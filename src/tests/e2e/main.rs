@@ -260,8 +260,11 @@ fn a_recording_ends_only_from_the_stop_button() {
         click(backdrop.button(indicator, STOP));
         let seconds =
             wait_for(15, || finished_video(&app)).expect("The Stop button finishes the recording");
+        // 録画は経過時間をクリックするまでの約 1 秒と、その後の約 1.5 秒。クリックで終わっていたら約 1 秒に
+        // なるので、1.5 秒あれば続いたと言える。遅い CI では動画が実時間より短くなる（1.97 秒になった）ので、
+        // 実時間の合計（約 2.5 秒）ぎりぎりの下限にはしない。
         assert!(
-            seconds >= 2.0,
+            seconds >= 1.5,
             "The video covers the whole recording: {seconds} s"
         );
         assert_eq!(app.files("videos", "mp4").len(), 1);
