@@ -1,11 +1,12 @@
 name: test
 
-# push と pull request のたびに、Windows のランナーでテストを走らせる。画面を覆うテスト、
+# どのブランチの push でも、Windows のランナーでテストを走らせる。画面を覆うテスト、
 # モンキーテスト、E2E は利用者の PC の画面とマウスを奪うので、手元ではなくここで走らせる。
 # release.yml からも呼び、タグのコミットがこのテストを通ってから公開する。
+# 二重に走らないよう、タグの push は除き（release.yml が呼ぶ）、pull_request は付けない（ブランチの push が走る）。
 on:
   push:
-  pull_request:
+    tags-ignore: ['**']
   workflow_dispatch:
   workflow_call:
 
@@ -102,7 +103,7 @@ jobs:
           if-no-files-found: ignore
 
   capture-excluded:
-    # 手動の実行（workflow_dispatch）でだけ走る。push や pull request では走らせない。
+    # 手動の実行（workflow_dispatch）でだけ走る。push では走らせない。
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: windows-2025
     timeout-minutes: 120
