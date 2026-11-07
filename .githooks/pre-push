@@ -1,4 +1,0 @@
-#!/bin/sh
-# 検証は push のときだけ走らせる。コミットのたびには走らせない。
-root=$(git rev-parse --show-toplevel) || exit 1
-exec pwsh -NoProfile -File "$root/scripts/validate.ps1" </dev/null
