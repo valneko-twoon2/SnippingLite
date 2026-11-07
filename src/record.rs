@@ -354,6 +354,8 @@ unsafe fn record(
     #[cfg(test)]
     let (mut captured_frames, mut capture_time, mut encode_time) =
         (1, Duration::ZERO, Duration::ZERO);
+    // 書いた映像のフレームの数。
+    let mut written = usize::from(wrote_first);
     while failure.is_none() && !stop.load(Ordering::Acquire) {
         #[cfg(test)]
         let capture_begin = Instant::now();
@@ -387,6 +389,7 @@ unsafe fn record(
         {
             encode_time += encode_begin.elapsed();
         }
+        written += 1;
         // Video frames are stamped one frame late, so the sound is too.
         write_audio(&mut audio, &writer, Instant::now(), duration, false);
         next += frame;
@@ -397,6 +400,14 @@ unsafe fn record(
             // Far behind: skip ahead instead of racing to catch up.
             next = now;
         }
+    }
+    // 始めてすぐ止めて 1 フレームしかないと、エンコーダーによってはそのフレームを出さずに終わり、
+    // Finalize が「サンプルが 1 つも処理されなかった」で失敗して録画が残らない（CI のソフトウェアの
+    // エンコーダーで起きた）。最初の画像をもう 1 フレーム書き足し、2 フレームにしてから仕上げる。
+    if failure.is_none() && written == 1 {
+        failure = write(&writer, &first, duration, duration)
+            .err()
+            .map(|e| format!("{}: {}", tr("Could not write a video frame"), e.message()));
     }
     drop(grabber);
     write_audio(&mut audio, &writer, Instant::now(), duration, true);
