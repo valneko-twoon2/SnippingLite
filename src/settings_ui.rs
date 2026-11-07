@@ -1,5 +1,6 @@
 //! Settings window. It runs in its own process (`--settings`) so the egui and
-//! OpenGL memory is released when the window closes and the tray process stays small.
+//! OpenGL memory stays out of the tray process. Closing it hides it for the next
+//! opening (`standby`), and the process ends after it has been hidden for a while.
 
 use eframe::egui::{
     self, epaint::text::VariationCoords, pos2, Align, Align2, Color32, CornerRadius, FontData,
@@ -14,13 +15,18 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::HWND,
-    UI::WindowsAndMessaging::{AllowSetForegroundWindow, PostMessageW, ASFW_ANY, WM_COMMAND},
+    UI::WindowsAndMessaging::{
+        AllowSetForegroundWindow, PostMessageW, RemovePropW, ASFW_ANY, WM_COMMAND,
+    },
 };
 
 use crate::i18n::tr;
 use crate::{
     config::{self, HISTORY_LIMITS},
-    imaging, ui, w, MAIN, SETTINGS_TITLE, SETTINGS_WINDOW, TRAY_HISTORY, TRAY_RELOAD,
+    imaging,
+    launch::{HOTKEY_BUSY, HOTKEY_OK, HOTKEY_STATE},
+    standby::Standby,
+    ui, w, MAIN, SETTINGS_TITLE, SETTINGS_WINDOW, TRAY_HISTORY, TRAY_RELOAD,
 };
 
 mod app;

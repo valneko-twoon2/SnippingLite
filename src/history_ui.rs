@@ -1,5 +1,6 @@
 //! The history window. It runs in its own process (`--history`), like the
-//! settings window, so its memory is released when it closes.
+//! settings window. Closing it hides it for the next opening (`standby`), and
+//! the process ends after it has been hidden for a while.
 
 use eframe::egui::{
     self, pos2, Align2, Color32, CornerRadius, FontFamily, FontId, Key, Rect, RichText, Sense,
@@ -10,7 +11,7 @@ use std::{
     path::Path,
     time::{Duration, Instant},
 };
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::{Foundation::HWND, UI::WindowsAndMessaging::RemovePropW};
 
 use crate::i18n::tr;
 use crate::{
@@ -18,7 +19,9 @@ use crate::{
     config,
     history::{self, Entry},
     imaging,
+    launch::LATEST_REQUEST,
     settings_ui::{apply_theme, install_fonts, install_visuals, semibold, Palette},
+    standby::Standby,
     ui, w, HISTORY_TITLE, HISTORY_WINDOW,
 };
 
@@ -152,6 +155,8 @@ struct HistoryApp {
     /// 今の時刻（Unix 紀元からのミリ秒）を返す時計。期間での絞り込みの基準になる。テストは決まった
     /// 時刻を返す時計に差し替え、実行した時刻によらず同じ結果にする。
     clock: fn() -> u128,
+    /// 閉じたときに隠して、次に開くときに表示し直す（`standby`）。
+    standby: Standby,
 }
 
 /// 実際の時計。
@@ -181,7 +186,22 @@ impl HistoryApp {
             notice: None,
             ocr: None,
             clock: now,
+            standby: Standby::default(),
         }
+    }
+
+    /// 隠していた窓を表示し直したとき、新しく開いたときと同じ一覧に戻す。読み込んだ縮小画像は
+    /// 使い回す。
+    fn reopen(&mut self) {
+        self.opened = None;
+        self.ocr = None;
+        self.confirm_clear = false;
+        self.query.clear();
+        self.range = Range::All;
+        self.tool = Tool::None;
+        (self.color, self.thickness) = config::load_pen();
+        self.notice = None;
+        self.refresh();
     }
 
     /// The entries that match the range and the search text.
@@ -316,6 +336,10 @@ fn time_label(id: u128) -> String {
 }
 
 impl eframe::App for HistoryApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.standby.hide_on_close(raw_input, window());
+    }
+
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         if self.mica {
             [0.0; 4]
@@ -345,6 +369,16 @@ impl eframe::App for HistoryApp {
         }
         if !self.mica {
             ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
+        }
+        let hwnd = window();
+        if self.standby.shown_again(hwnd) {
+            self.reopen();
+        }
+        // トレイが「最新を開く」を頼んだ（通知の「マークアップと共有」）。窓がもう開いていても従う。
+        // SAFETY: the property is removed from this process's own window.
+        if !hwnd.is_null() && unsafe { !RemovePropW(hwnd, w(LATEST_REQUEST).as_ptr()).is_null() } {
+            self.refresh();
+            self.open_latest = true;
         }
         if std::mem::take(&mut self.open_latest) {
             if let Some(entry) = self.entries.first().cloned() {

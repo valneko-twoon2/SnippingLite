@@ -21,6 +21,7 @@ mod record;
 mod screenshot;
 mod settings_ui;
 mod staging;
+mod standby;
 #[cfg(test)]
 mod test_support;
 mod toast;

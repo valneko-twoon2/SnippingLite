@@ -34,6 +34,8 @@ pub(super) struct SettingsApp {
     theme: config::AppTheme,
     framed: Option<bool>,
     mica: bool,
+    /// 閉じたときに隠して、次に開くときに表示し直す（`standby`）。
+    standby: Standby,
 }
 
 impl SettingsApp {
@@ -68,7 +70,18 @@ impl SettingsApp {
             video_notice: None,
             framed: None,
             mica,
+            standby: Standby::default(),
         }
+    }
+
+    /// 隠していた窓を表示し直したとき、保存された設定を読み直し、新しく開いたときと同じ状態に戻す。
+    fn reopen(&mut self) {
+        let standby = std::mem::take(&mut self.standby);
+        *self = SettingsApp {
+            framed: self.framed,
+            standby,
+            ..SettingsApp::new(self.hotkey_ok, self.mica)
+        };
     }
 
     fn settings(&self) -> config::Settings {
@@ -123,6 +136,12 @@ fn post(message: u32, wparam: usize) {
 }
 
 impl eframe::App for SettingsApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // SAFETY: plain window queries on this process's own window.
+        let hwnd = unsafe { ui::find_app_window(SETTINGS_WINDOW, Some(std::process::id())) };
+        self.standby.hide_on_close(raw_input, hwnd);
+    }
+
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
         if self.mica {
             [0.0; 4]
@@ -153,6 +172,20 @@ impl eframe::App for SettingsApp {
         }
         if !self.mica {
             ui.painter().rect_filled(ui.max_rect(), 0.0, p.bg);
+        }
+        // SAFETY: plain window queries on this process's own window.
+        let hwnd = unsafe { ui::find_app_window(SETTINGS_WINDOW, Some(std::process::id())) };
+        if self.standby.shown_again(hwnd) {
+            self.reopen();
+        }
+        // トレイが開くたびに、ショートカットを登録できているかを窓のプロパティで知らせる。
+        if !hwnd.is_null() {
+            // SAFETY: the property is removed from this process's own window.
+            match unsafe { RemovePropW(hwnd, w(HOTKEY_STATE).as_ptr()) } as usize {
+                HOTKEY_OK => self.hotkey_ok = true,
+                HOTKEY_BUSY => self.hotkey_ok = false,
+                _ => {}
+            }
         }
         let bounds = ui.max_rect();
         let header = egui::Rect::from_min_size(
