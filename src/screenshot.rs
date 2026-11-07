@@ -97,16 +97,7 @@ pub(crate) unsafe fn capture(flush: bool) {
             bottom: height,
         });
     }
-    // Paint while cloaked so the first visible frame is complete and never
-    // shows the previous capture.
-    ui::cloak(overlay, true);
-    ShowWindow(overlay, SW_SHOW);
-    UpdateWindow(overlay);
-    ShowWindow(toolbar, SW_SHOWNOACTIVATE);
-    UpdateWindow(toolbar);
-    ui::cloak(overlay, false);
-    SetForegroundWindow(overlay);
-    SetFocus(overlay);
+    show::show_overlay(overlay, toolbar);
     if hovers_windows() {
         hover_window(POINT {
             x: cursor.x - x,
@@ -491,6 +482,8 @@ pub(crate) unsafe fn restore_windows() {
         show_kept_toolbar();
     }
 }
+
+mod show;
 
 #[cfg(test)]
 mod tests;
