@@ -38,13 +38,16 @@ $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $probe.Start()
 $port = $probe.LocalEndpoint.Port
 $probe.Stop()
-$server = Start-Job -ArgumentList $port, $release -ScriptBlock {
-    param($port, $root)
-    $listener = [Net.HttpListener]::new()
-    $listener.Prefixes.Add("http://127.0.0.1:$port/")
-    $listener.Start()
-    while ($true) {
-        $context = $listener.GetContext()
+# 別プロセスのジョブにすると、待機中の子プロセスが終了後も標準出力のパイプを握り、git と TortoiseGit が終わらない。
+# 同じプロセスのランスペースで動かし、終了時にリスナーを閉じて待機を解く。
+$listener = [Net.HttpListener]::new()
+$listener.Prefixes.Add("http://127.0.0.1:$port/")
+$listener.Start()
+$server = [powershell]::Create()
+$null = $server.AddScript({
+    param($listener, $root)
+    while ($listener.IsListening) {
+        try { $context = $listener.GetContext() } catch { break }
         $file = Join-Path $root ($context.Request.Url.AbsolutePath.TrimStart('/'))
         if (Test-Path -LiteralPath $file -PathType Leaf) {
             $bytes = [IO.File]::ReadAllBytes($file)
@@ -54,7 +57,8 @@ $server = Start-Job -ArgumentList $port, $release -ScriptBlock {
         }
         $context.Response.Close()
     }
-}
+}).AddArgument($listener).AddArgument($release)
+$serverHandle = $server.BeginInvoke()
 $base = "http://127.0.0.1:$port"
 for ($i = 0; $i -lt 50; $i++) {
     try { $null = Invoke-WebRequest -UseBasicParsing -Uri "$base/ping" -ErrorAction Stop } catch { if ($_.Exception.Response) { break } }
@@ -183,8 +187,8 @@ try {
         Assert ($r.Code -ne 0 -and $r.Output -match 'not installed') "unexpected: $($r.Output)"
     }
 } finally {
-    Stop-Job $server -ErrorAction SilentlyContinue
-    Remove-Job $server -Force -ErrorAction SilentlyContinue
+    $listener.Close()
+    $server.Dispose()
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $registry -Recurse -Force -ErrorAction SilentlyContinue
 }
