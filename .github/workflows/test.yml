@@ -4,9 +4,10 @@ name: test
 # モンキーテスト、E2E は利用者の PC の画面とマウスを奪うので、手元ではなくここで走らせる。
 # release.yml からも呼び、タグのコミットがこのテストを通ってから公開する。
 # 二重に走らないよう、タグの push は除き（release.yml が呼ぶ）、pull_request は付けない（ブランチの push が走る）。
+# タグを除くには branches を書く。tags-ignore だけを書くと、ブランチの push でも走らなくなる。
 on:
   push:
-    tags-ignore: ['**']
+    branches: ['**']
   workflow_dispatch:
   workflow_call:
 
