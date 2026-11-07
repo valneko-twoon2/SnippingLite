@@ -106,18 +106,33 @@ pub fn stub_window(identity: &str) -> windows_sys::Win32::Foundation::HWND {
     }
 }
 
+/// クリップボードを開く。ほかのプロセス（クリップボードの履歴など）が少しの間開いていることがあるので、
+/// 開けるまで 1 秒ほど待つ。1 回の失敗で諦めると、中身がないのと見分けがつかない。
+pub fn open_clipboard() -> bool {
+    for _ in 0..40 {
+        // SAFETY: opening without an owner window is allowed.
+        if unsafe { windows_sys::Win32::System::DataExchange::OpenClipboard(std::ptr::null_mut()) }
+            != 0
+        {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    false
+}
+
 /// The image on the clipboard as (width, height, top-down BGRA pixels), if there is one.
 pub fn clipboard_image() -> Option<(i32, i32, Vec<u8>)> {
     use windows_sys::Win32::{
         Graphics::Gdi::BITMAPV5HEADER,
         System::{
-            DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+            DataExchange::{CloseClipboard, GetClipboardData},
             Memory::{GlobalLock, GlobalUnlock},
         },
     };
     // SAFETY: the clipboard is opened and closed here, and the data is copied out while locked.
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
+        if !open_clipboard() {
             return None;
         }
         let global = GetClipboardData(17);
@@ -179,12 +194,12 @@ pub fn take_shell_opened() -> Vec<(String, Option<String>)> {
 /// The Unicode text on the clipboard, if there is any.
 pub fn clipboard_text() -> Option<String> {
     use windows_sys::Win32::System::{
-        DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        DataExchange::{CloseClipboard, GetClipboardData},
         Memory::{GlobalLock, GlobalUnlock},
     };
     // SAFETY: the clipboard is opened and closed here, and the text is copied out while locked.
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
+        if !open_clipboard() {
             return None;
         }
         let global = GetClipboardData(13);
@@ -205,12 +220,12 @@ pub fn clipboard_text() -> Option<String> {
 /// クリップボードに置かれたファイル（CF_HDROP）の一覧。
 pub fn clipboard_files() -> Vec<PathBuf> {
     use windows_sys::Win32::{
-        System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        System::DataExchange::{CloseClipboard, GetClipboardData},
         UI::Shell::{DragQueryFileW, HDROP},
     };
     // SAFETY: the clipboard is opened and closed here, and the names are copied out meanwhile.
     unsafe {
-        if OpenClipboard(std::ptr::null_mut()) == 0 {
+        if !open_clipboard() {
             return Vec::new();
         }
         let drop = GetClipboardData(15) as HDROP;

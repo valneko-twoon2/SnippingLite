@@ -1,9 +1,9 @@
 use super::*;
-use crate::test_support::clipboard_text;
+use crate::test_support::{clipboard_text, open_clipboard};
 use windows_sys::Win32::{
     Graphics::Gdi::{BITMAPV5HEADER, BI_BITFIELDS},
     System::{
-        DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard},
+        DataExchange::{CloseClipboard, GetClipboardData},
         Memory::{GlobalLock, GlobalUnlock},
     },
 };
@@ -163,7 +163,7 @@ fn the_screenshot_folder_is_created_from_the_settings() {
 fn clipboard_image() -> Option<(i32, i32, Vec<u8>)> {
     // SAFETY: the clipboard is opened and closed here, and the data is copied out while locked.
     unsafe {
-        if OpenClipboard(null_mut()) == 0 {
+        if !open_clipboard() {
             return None;
         }
         let global = GetClipboardData(17);
@@ -199,7 +199,7 @@ fn clipboard_dib() -> Option<(i32, i32, Vec<u8>)> {
     use windows_sys::Win32::Graphics::Gdi::BITMAPINFOHEADER;
     // SAFETY: the clipboard is opened and closed here, and the data is copied out while locked.
     unsafe {
-        if OpenClipboard(null_mut()) == 0 {
+        if !open_clipboard() {
             return None;
         }
         let global = GetClipboardData(8);
@@ -280,7 +280,7 @@ fn clipboard_bitmap() -> Option<Vec<u8>> {
     // SAFETY: the clipboard is opened and closed here; the bitmap belongs to the clipboard and is
     // only read while it is open.
     unsafe {
-        if OpenClipboard(null_mut()) == 0 {
+        if !open_clipboard() {
             return None;
         }
         let bitmap = GetClipboardData(2);
