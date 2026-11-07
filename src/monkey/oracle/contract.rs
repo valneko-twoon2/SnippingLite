@@ -35,7 +35,7 @@ fn assert_toolbar_placed(before: &Snapshot) {
         );
         info.rcMonitor
     };
-    // README: 次に開くと上部中央に戻る（幅 376 DIP、上から 12 DIP）。
+    // docs/behavior.md: 次に開くと上部中央に戻る（幅 376 DIP、上から 12 DIP）。
     let width = (376.0 * st.scale).round() as i32;
     let expected = (
         (monitor.left + monitor.right - width) / 2,
@@ -67,7 +67,7 @@ pub(super) fn contract(
             .iter()
             .any(|(target, _)| target.ends_with("about.html"))
     };
-    // README: 録画を止めるのは、表示の停止のボタン、もう一度の開始（ショートカット、トレイの
+    // docs/behavior.md: 録画を止めるのは、表示の停止のボタン、もう一度の開始（ショートカット、トレイの
     // アイコン）、トレイのメニューの「録画を停止」（録画中だけ先頭に出る）だけ。
     if before.recording {
         let stops = matches!(
@@ -79,7 +79,7 @@ pub(super) fn contract(
         );
         assert_eq!(st.recording.is_none(), stops, "{action:?} while recording");
     }
-    // README: 残したツールバーは、× で閉じるまで移動した位置に出る（撮影を挟んでも）。
+    // docs/behavior.md: 残したツールバーは、× で閉じるまで移動した位置に出る（撮影を挟んでも）。
     if before.toolbar_open && st.toolbar_open && !matches!(action, Action::MoveToolbar(_)) {
         let was = (before.toolbar_rect.left, before.toolbar_rect.top);
         assert_eq!(

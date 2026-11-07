@@ -173,7 +173,7 @@ fn check(_: &Sandbox, crashed: &crash::Crash) {
 
 #[test]
 fn clearing_the_history_also_removes_what_a_stopped_process_left() {
-    // 履歴の消去は、残しておきたくない画像を消すためにある（README）。削除の途中で止まって残った
+    // 履歴の消去は、残しておきたくない画像を消すためにある（docs/behavior.md）。削除の途中で止まって残った
     // 縮小画像や、終わったプロセスの書きかけも消す。
     let sandbox = Sandbox::new();
     prepare(&sandbox);

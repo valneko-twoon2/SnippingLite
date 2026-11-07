@@ -403,7 +403,7 @@ fn run_case(
     oracle::after_step(&mut world, &scene, &before, &Action::Wait(0));
     assert!(!s().active, "the case ends idle");
     if s().recording.is_some() {
-        // 終了は、プロセスごと終わる前に録画をファイルに仕上げる（README）。終わったトレイには
+        // 終了は、プロセスごと終わる前に録画をファイルに仕上げる（docs/behavior.md）。終わったトレイには
         // もう手を送らない。
         let mut hands = drive::Hands {
             desk: &desk,

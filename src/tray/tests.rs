@@ -1,5 +1,5 @@
 //! トレイの状態とイベントの表。状態ごとに、`main_proc` に届く各イベントの期待される振る舞いと、
-//! それを確かめるテスト（なければ書かない理由）を並べる。期待値は README とコードの意図（コメント）
+//! それを確かめるテスト（なければ書かない理由）を並べる。期待値は docs/behavior.md とコードの意図（コメント）
 //! から決める。トレイのアイコンの左クリック、ショートカット、NEW はどれも `begin_capture` に届く
 //! 同値のクラスなので、まとめて「開始」と書き、1 つのテストの中で 3 つとも送る。
 //! 右クリックのメニューは録画中かどうかだけで変わる（`the_menu_offers_stop_recording_first_only_while_recording`）。
@@ -36,7 +36,7 @@
 //!   Ctrl+Z、Ctrl+Y → 元に戻す、やり直す（`markup::tests::keys`、既存の `markup::tests`）
 //! - TRAY_SETTINGS、TRAY_HISTORY → 切り取り中と同じ。書き込みは続き、Enter で確定できる
 //!   （`settings_or_history_asked_for_while_marking_up_bring_the_snip_back_instead`）
-//! - TRAY_EXIT → 書き込みを捨てて終わる（Escape と同じ。README）
+//! - TRAY_EXIT → 書き込みを捨てて終わる（Escape と同じ。docs/behavior.md）
 //!   （`markup::tests::tray::exiting_while_marking_up_throws_the_snip_away_like_escape`）
 //! - TRAY_RELOAD（コピー、保存、履歴、枠線）→ 確定したときの設定が効く
 //!   （`markup::tests::tray::settings_changed_while_marking_up_apply_when_it_is_captured`）
@@ -68,7 +68,7 @@
 //! - TRAY_EXIT → ファイルを仕上げて終わる（既存 `a_recording_is_finished_when_the_program_exits`）
 //! - TRAY_RELOAD（keep_toolbar をオフ）→ 停止の後に残したツールバーを出さない。オフにしなければ出す
 //!   （`recording::a_kept_toolbar_returns_after_a_recording_unless_switched_off_meanwhile`）
-//! - TRAY_SETTINGS、TRAY_HISTORY → 開く。開いた画面は録画に写ってよい（README）
+//! - TRAY_SETTINGS、TRAY_HISTORY → 開く。開いた画面は録画に写ってよい（docs/behavior.md）
 //!   （`recording::settings_and_history_open_while_recording`）
 
 use super::*;
@@ -131,7 +131,7 @@ fn the_menu_offers_stop_recording_first_only_while_recording() {
                 (TRAY_EXIT, tr("Exit").to_owned()),
             ];
             if recording {
-                // README: トレイのメニューの「録画を停止」で録画を終える。
+                // docs/behavior.md: トレイのメニューの「録画を停止」で録画を終える。
                 expected.insert(0, (TRAY_STOP, "録画を停止".to_owned()));
             }
             assert_eq!(entries(menu), expected, "recording={recording}");

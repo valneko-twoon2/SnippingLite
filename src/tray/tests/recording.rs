@@ -126,7 +126,7 @@ fn settings_or_history_asked_for_during_the_countdown_open_nothing() {
 #[test]
 #[ignore = "Records the screen"]
 fn settings_and_history_open_while_recording() {
-    // 録画中に開いた画面は、録画に写ってよい（README）。
+    // 録画中に開いた画面は、録画に写ってよい（docs/behavior.md）。
     let desk = Desk::start_with(|settings| {
         settings.countdown = false;
         settings.system_audio = false;

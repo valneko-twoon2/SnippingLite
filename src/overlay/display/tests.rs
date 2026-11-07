@@ -1,4 +1,4 @@
-//! 合成した WM_DISPLAYCHANGE を本物の窓に送り、規則（display.rs の表、README）どおりに応えるかを
+//! 合成した WM_DISPLAYCHANGE を本物の窓に送り、規則（display.rs の表、docs/behavior.md）どおりに応えるかを
 //! 確かめる。この PC の構成は変えない。覚えてある並びを偽物に替えてから送ると、届いた後に確かめる
 //! 今の並びと食い違うので、構成が変わったことになる。
 //!
@@ -300,7 +300,7 @@ fn a_kept_toolbar_comes_back_onto_a_monitor_only_when_it_was_pushed_off() {
             )
         };
     };
-    // 画面の上なら、置いた所を守る（README: × で閉じるまで、動かした所に出る）。
+    // 画面の上なら、置いた所を守る（docs/behavior.md: × で閉じるまで、動かした所に出る）。
     move_to(300, 80);
     remember(narrower());
     display_change(&desk);

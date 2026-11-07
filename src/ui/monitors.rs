@@ -194,7 +194,7 @@ pub fn keep_on_screen(monitors: &[Monitor], r: RECT) -> RECT {
 }
 
 /// モニターの上部中央に置く、幅 `width`、高さ `height` の窓。上端から 12 DIP 空ける
-/// （README: ツールバーは上部中央に出る。録画中の表示も同じ所に出る）。
+/// （docs/behavior.md: ツールバーは上部中央に出る。録画中の表示も同じ所に出る）。
 pub fn top_center(monitor: RECT, width: i32, height: i32, scale: f32) -> RECT {
     let left = (monitor.left + monitor.right - width) / 2;
     let top = monitor.top + (12.0 * scale).round() as i32;

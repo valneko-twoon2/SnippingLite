@@ -128,7 +128,7 @@ fn save(path: &Path, pixels: &[u8], width: i32, height: i32, bmp: bool) -> std::
         data3: 0x11d3,
         data4: [0x9a, 0x73, 0x00, 0x00, 0xf8, 0x1e, 0xf3, 0x2e],
     };
-    // BMP には透明がなく、GDI+ はアルファを捨てて色だけを書く。README のとおり透明な部分を白にし、
+    // BMP には透明がなく、GDI+ はアルファを捨てて色だけを書く。docs/behavior.md のとおり透明な部分を白にし、
     // 半透明の画素（自由形式の外側に描いた線）も、PNG を白い背景で見たときと同じ色にする。
     let flattened;
     let pixels = if bmp {
